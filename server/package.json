@@ -1,0 +1,12 @@
+{
+  "name": "applemusic-tv-proxy",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@syncfm/applemusic-api": "latest",
+    "hono": "^4.6.0"
+  }
+}

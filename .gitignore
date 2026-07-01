@@ -1,0 +1,36 @@
+# ─── Secrets / runtime state (NEVER commit) ───────────────────────────
+server/auth-state.json
+**/auth-state.json
+*.mut
+.env
+.env.local
+secrets.json
+
+# ─── Node / Bun ───────────────────────────────────────────────────────
+node_modules/
+bun.lockb
+npm-debug.log*
+yarn-error.log
+
+# ─── Android / Gradle ─────────────────────────────────────────────────
+android/.gradle/
+android/build/
+android/app/build/
+android/captures/
+android/local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+.cxx/
+
+# ─── IDE / OS ─────────────────────────────────────────────────────────
+.idea/
+*.iml
+.DS_Store
+*.log
+
+# ─── Caches / temp ────────────────────────────────────────────────────
+am_stream_cache/
+/tmp/
+scratchpad/
