@@ -1,15 +1,17 @@
 package com.applemusicktv.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -19,8 +21,20 @@ import com.applemusicktv.ui.navigation.TopNavTab
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun TopNavBar(selected: TopNavTab, onSelect: (TopNavTab) -> Unit, modifier: Modifier = Modifier) {
+    var isFocused by remember { mutableStateOf(false) }
+    val alpha by animateFloatAsState(
+        targetValue = if (selected == TopNavTab.NowPlaying && !isFocused) 0f else 1f,
+        animationSpec = tween(500),
+        label = "navBarAlpha"
+    )
+
     Box(
-        modifier = modifier.fillMaxWidth().background(Color(0xFF0A0A0A)).padding(vertical = 10.dp),
+        modifier = modifier
+            .onFocusChanged { isFocused = it.hasFocus }
+            .graphicsLayer { this.alpha = alpha }
+            .fillMaxWidth()
+            .background(Color(0xFF0A0A0A))
+            .padding(vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Surface(

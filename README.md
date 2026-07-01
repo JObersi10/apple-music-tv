@@ -52,23 +52,40 @@ progressive MP4, and serves it with HTTP Range support so ExoPlayer can scrub.
 
 ## Setup
 
-### 1. Server
+### 1. Server — one-shot setup
 
+The setup script installs everything (Bun, Python + gamdl + pywidevine, ffmpeg,
+Bento4 mp4decrypt) into normal locations and writes `server/.env` for you.
+gamdl ships its own embedded Widevine device, so no `.wvd` file is needed.
+
+**macOS:**
 ```bash
 cd server
-cp .env.example .env      # then edit .env with your gamdl venv + binary paths
-bun install
+./setup-mac.sh
 bun run src/index.ts      # http://0.0.0.0:3000
 ```
 
-`.env` (gitignored) holds machine-specific paths:
+**Windows (PowerShell):**
+```powershell
+cd server
+powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1
+bun run src/index.ts
+```
+
+<details>
+<summary>Manual setup / what the script does</summary>
+
+Install `bun`, `ffmpeg`, `mp4decrypt` (Bento4), and Python; create a venv and
+`pip install gamdl pywidevine httpx`; then copy `.env.example` to `.env` and set
+the paths. `.env` (gitignored) holds machine-specific values:
 
 ```
-GAMDL_SITE=/path/to/pipx/venvs/gamdl/lib/pythonX.Y/site-packages
-PYTHON_BIN=/path/to/pipx/venvs/gamdl/bin/python3
+GAMDL_SITE=              # empty when PYTHON_BIN is a venv that already has gamdl
+PYTHON_BIN=/path/to/.venv/bin/python
 MP4DECRYPT_BIN=mp4decrypt
 FFMPEG_BIN=ffmpeg
 ```
+</details>
 
 ### 2. Android
 
