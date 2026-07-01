@@ -8,24 +8,31 @@ Native Android TV / Fire TV Apple Music client.
 ## Key paths
 - Android: `android/app/src/main/java/com/applemusicktv/`
 - Server: `server/src/`
-- ADB target: `192.168.1.246:5555` — always `adb connect 192.168.1.246` first
-- Proxy URL: `http://192.168.1.190:3000/` (hardcoded in `app/build.gradle.kts` as `PROXY_BASE_URL`)
+- ADB target: your Fire TV's LAN IP — `adb connect <FIRE_TV_IP>` first
+- Proxy URL: set `proxyBaseUrl` in `android/local.properties` (gitignored); `app/build.gradle.kts` reads it into `PROXY_BASE_URL` (default `http://10.0.2.2:3000/` for the emulator). Also overridable at runtime in the Dev menu.
+
+## Config files (gitignored — never commit)
+- `server/.env` — machine paths (`GAMDL_SITE`, `PYTHON_BIN`, `MP4DECRYPT_BIN`, `FFMPEG_BIN`). Bun auto-loads it. Create via `server/setup-mac.sh` or `setup-windows.ps1`, or copy `server/.env.example`.
+- `server/auth-state.json` — persisted bearer + MUT.
+- `android/local.properties` — SDK path + `proxyBaseUrl`.
 
 ## Build commands
 ```bash
-# Android (SABRENT external drive must be mounted for SDK)
+# One-shot server setup (installs bun/python/gamdl/ffmpeg/mp4decrypt, writes .env)
+cd server && ./setup-mac.sh        # or: powershell -File setup-windows.ps1
+bun run --watch src/index.ts
+
+# Android
 cd android
 JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug --no-daemon
-adb connect 192.168.1.246 && adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-# Server
-cd server && bun run --watch src/index.ts
+adb connect <FIRE_TV_IP> && adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+GitHub Actions (`.github/workflows/android.yml`) builds the debug APK on every push and uploads it as an artifact.
 
 ## Build config
 - AGP 8.7.0, Kotlin 2.1.20, KSP 2.1.20-1.0.31, Gradle 8.9, Hilt 2.56
-- JDK: `/Applications/Android Studio.app/Contents/jbr/Contents/Home`
-- Android SDK: `/Volumes/SABRENT/Applications/AndroidSDK` (on external drive — must be mounted)
+- JDK: Android Studio's bundled JBR (`.../Contents/Home`)
+- Android SDK: set `sdk.dir` in `android/local.properties`
 - minSdk 23 (tv-foundation requirement), compileSdk 35
 - `TvLazyVerticalGrid` does NOT exist in tv-material 1.0.0 — use standard `LazyVerticalGrid`
 - Clickable `Surface` → `ClickableSurfaceDefaults.*`, non-clickable → `SurfaceDefaults.*`
@@ -51,9 +58,13 @@ cd server && bun run --watch src/index.ts
 - When MUT set → always full stream. When no MUT → preview URL fallback
 - `playAlbum(songs, idx)` defaults `useFullStream = hasMUT()`
 - State (queue + position) persisted to SharedPreferences on `onCleared()`
-- Remote media buttons (play/pause/next/prev) handled in `MainActivity.dispatchKeyEvent`
-- **Standalone mode**: if no PC server IP set in Dev menu → `PlayerViewModel` uses `AppleDirectClient` (bearer scrape + webPlayback API) + `AppleMusicDrmCallback` (Widevine via Apple license server) — no laptop needed
-- PC server IP stored in `ServerPreferences`, set via Dev menu bottom field
+- Stream serves a **remuxed progressive MP4** (ffmpeg `+faststart` after mp4decrypt) with HTTP Range → ExoPlayer seeks instantly. Apple's decrypted output is fragmented `hlsf`, which ExoPlayer plays unreliably — the remux is required.
+- ExoPlayer built with a 60s connect/read `DefaultHttpDataSource` (first decrypt is slow) + one-shot re-prepare on error.
+- Remote/controller media buttons: handled in `MainActivity.dispatchKeyEvent` AND via a Media3 `MediaSession` (external/Bluetooth controllers route through MediaSession, not dispatchKeyEvent). Rewind/FF keys mapped to prev/next.
+- `next()`/`prev()` use `seekToNext/Previous` (smart, wrap at ends); bare `*MediaItem` no-op at boundaries.
+- **Standalone (on-device) fallback**: `useStandalone() = !serverPrefs.serverReachable` (health-checked at startup; flipped on a network `onPlayerError`). Uses `AppleDirectClient` (bearer scrape + webPlayback, tries both `universalLibraryId`/`salableAdamId` forms) + `AppleMusicDrmCallback` (Widevine). `usingStandalone` guards against proxy↔standalone loops.
+- **KNOWN LIMIT**: standalone only covers *playback decryption* — browse/library/search/lyrics/artwork still need the proxy. So with the server off, the app has no data. True "no-PC" mode (Option A) requires porting all `server/src/routes/` data endpoints to on-device Kotlin.
+- PC server IP stored in `ServerPreferences`, set via Dev menu; empty = use `PROXY_BASE_URL` default.
 
 ## Server routes
 - `GET /api/search?term=` — catalog search
@@ -86,9 +97,20 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - NowPlayingBar hidden when on Now Playing screen
 
 ## Library
-- Sort bar above content: SortField (DEFAULT/NAME/ARTIST/DATE) × SortDir (ASC/DESC)
+- Sort bar above content: SortField (DEFAULT/NAME/ARTIST/DATE) × SortDir (ASC/DESC), reversal applies to all fields incl. DEFAULT
 - Playlist cards have ▶ button on right side of name row
 - Play + Shuffle buttons at top of album/playlist track lists
+- **Persistent cache**: `LibraryViewModel` serializes lists to `library_cache` SharedPreferences (Moshi) → shows instantly on cold start, refreshes in background. Don't blank content to a spinner while `isLoading` if cached data exists (focus escapes to top bar otherwise).
+- Long-press (hold OK) a song → context menu (Play Next / Add to Queue); menu auto-focuses first item.
+- Library album/artist IDs (`l.`/`r.`) need library endpoints, not catalog — `albums.ts`/`artists.ts` branch on the prefix and resolve to catalog where needed.
+
+## Artist page
+- `ArtistDetailScreen` + `ArtistDetailViewModel`, fed by `GET /api/artists/:id/full` (raw amp-api with `views=top-songs,latest-release,full-albums,featured-albums,similar-artists`).
+- Library artist ids (`r.`) resolve to catalog first. Sections: hero header, bio, top songs (play/shuffle), latest release, albums, featured, similar artists.
+
+## Now Playing background
+- Animated **color-pool visualizer** (`DynamicBackground`): several drifting/pulsing radial blobs of Palette swatches from the cover, over black. No artwork image → never pixelated. Fullscreen (AppShell overlays nav bar on top layer with `padding(top=0)` for Now Playing).
+- Motion (animated) album art plays as a muted looping video over the cover when `GET /api/motion/:songId` returns one.
 
 ## Phone web server (port 8080)
 - Runs on Fire TV, open on phone to manage token
