@@ -136,32 +136,18 @@ class PlayerViewModel @Inject constructor(
                 // to recover ONCE by re-preparing (a stalled first-decrypt often
                 // succeeds on the retry, now that it's cached). Bounded so a
                 // genuinely broken track doesn't loop forever.
-                Log.e("PlayerVM", "Playback error [${error.errorCodeName}] for " +
-                    "${_state.value.currentSong?.title}: ${error.message}")
+                val msg = "${error.errorCodeName}: ${error.message}"
+                Log.e("PlayerVM", "Playback error for ${_state.value.currentSong?.title}: $msg")
+                com.applemusicktv.data.NetworkLog.add(
+                    "ERR", repo.streamUrl(_state.value.currentSong?.id ?: "?"), error.errorCode, 0
+                )
                 val song = _state.value.currentSong ?: return
                 if (lastErrorKey != song.id) {
                     lastErrorKey = song.id
-                    val isNetwork = error.errorCode ==
-                        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
-                        error.errorCode ==
-                        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT
-                    // A network failure means the proxy server is unreachable.
-                    // If we have a token, decrypt on-device instead. This must
-                    // NOT be gated on isStandalone() — that's true whenever no
-                    // Dev-menu IP is set (i.e. the default-proxy case), which is
-                    // exactly when we still need the fallback.
-                    if (isNetwork && hasMUT() && !usingStandalone) {
-                        serverPrefs.serverReachable = false
-                        Log.i("PlayerVM", "Proxy unreachable — switching to on-device standalone")
-                        playStandalone(song)
-                    } else {
-                        // Don't re-prepare if we're at/near the end — that replays the song.
-                        val dur = player.duration
-                        val pos = player.currentPosition
-                        if (dur <= 0L || pos < dur - 5_000L) {
-                            player.prepare()
-                        }
-                    }
+                    // Retry once — first decrypt is slow; a timeout often succeeds on retry.
+                    val dur = player.duration
+                    val pos = player.currentPosition
+                    if (dur <= 0L || pos < dur - 5_000L) player.prepare()
                 }
             }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -253,11 +239,6 @@ class PlayerViewModel @Inject constructor(
         usingStandalone = false
         lastErrorKey = null
         _state.update { it.copy(currentSong = song, song = song, queue = listOf(song), queueIndex = 0, lyrics = emptyList(), isFullStream = useFullStream, motionUrl = null) }
-        // Server down + we have a token → decrypt on-device instead of proxy.
-        if (useFullStream && useStandalone() && hasMUT()) {
-            playStandalone(song)
-            return
-        }
         val uri = if (useFullStream) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         player.setMediaItem(buildMediaItem(song, uri))
         player.prepare()
@@ -272,13 +253,6 @@ class PlayerViewModel @Inject constructor(
         lastErrorKey = null
         val idx = startIndex.coerceIn(0, songs.lastIndex)
         _state.update { it.copy(queue = songs, currentSong = songs[idx], song = songs[idx], queueIndex = idx, lyrics = emptyList(), isFullStream = useFullStream, motionUrl = null) }
-        // Server down → decrypt the selected track on-device. (Standalone plays
-        // one DRM track at a time; queue continues once the server is back.)
-        if (useFullStream && useStandalone() && hasMUT()) {
-            Log.i("PlayerVM", "Server down — standalone playback of selected track")
-            playStandalone(songs[idx])
-            return
-        }
         player.setMediaItems(songs.map { s ->
             buildMediaItem(s, if (useFullStream) repo.streamUrl(s.id) else (s.previewUrl ?: repo.streamUrl(s.id)))
         }, idx, 0L)
@@ -333,32 +307,11 @@ class PlayerViewModel @Inject constructor(
     // how the hardware media keys behave. The bare *MediaItem variants no-op
     // at boundaries, which is why the on-screen buttons appeared dead.
     fun next() {
-        if (usingStandalone) {
-            val q = _state.value.queue
-            val nextIdx = _state.value.queueIndex + 1
-            if (nextIdx <= q.lastIndex) {
-                val song = q[nextIdx]
-                _state.update { it.copy(queueIndex = nextIdx, currentSong = song, song = song, lyrics = emptyList(), motionUrl = null) }
-                playStandalone(song)
-            }
-            return
-        }
         if (player.hasNextMediaItem()) player.seekToNextMediaItem() else player.seekToNext()
         player.play()
     }
 
     fun prev() {
-        if (usingStandalone) {
-            val q = _state.value.queue
-            if (player.currentPosition > 3_000L) {
-                player.seekTo(0L); player.play(); return
-            }
-            val prevIdx = (_state.value.queueIndex - 1).coerceAtLeast(0)
-            val song = q[prevIdx]
-            _state.update { it.copy(queueIndex = prevIdx, currentSong = song, song = song, lyrics = emptyList(), motionUrl = null) }
-            playStandalone(song)
-            return
-        }
         if (player.currentPosition > 3_000L || !player.hasPreviousMediaItem()) {
             player.seekTo(0L)
         } else {

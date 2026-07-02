@@ -105,30 +105,28 @@ async function getStreamParams(songId: string, mut: string) {
   await ensureBearer();
 
   const isLibrary = songId.startsWith("i.");
-  // Apple webPlayback expects a plain numeric ID for salableAdamId;
-  // some catalog IDs arrive with a letter prefix (e.g. "a.12345") — strip it.
   const numericId = songId.replace(/^[a-z]+\./, "");
 
   const WEB_PLAYBACK = "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback";
 
-  // Try primary form, then alternate form on empty songList.
   const bodies = isLibrary
     ? [{ universalLibraryId: songId }, { salableAdamId: numericId }]
     : [{ salableAdamId: numericId }, { universalLibraryId: songId }];
 
   let entry: any;
   for (const bodyBase of bodies) {
+    console.log(`[stream] webPlayback body:`, JSON.stringify(bodyBase));
     const res = await axios.post(WEB_PLAYBACK, { ...bodyBase, language: "en-US" }, { headers: playHeaders(mut) });
+    console.log(`[stream] webPlayback status=${res.status} songList.length=${res.data?.songList?.length ?? 0}`);
     entry = res.data?.songList?.[0];
     if (entry) break;
   }
-  if (!entry) throw new Error("No songList in webPlayback");
+  if (!entry) throw new Error("No songList in webPlayback — MUT may be invalid or expired");
 
   const adamId = String(entry.songId);
-
-  // Prefer ctrp256 (CENC 256kbps), then any ctrp flavor, then any asset that
-  // has a URL at all (some tracks expose different flavor labels by region).
   const assets: any[] = entry.assets ?? [];
+  console.log(`[stream] adamId=${adamId} assets=${assets.map((a: any) => a.flavor).join(", ")}`);
+
   const asset =
     assets.find((a: any) => a.flavor === "28:ctrp256") ||
     assets.find((a: any) => a.flavor?.includes("ctrp")) ||
@@ -139,12 +137,19 @@ async function getStreamParams(songId: string, mut: string) {
     throw new Error(`No playable asset (flavors: ${flavors})`);
   }
 
-  // Resolve to media playlist (handles both master and direct media playlists)
-  const { url: mediaUrl, text: hlsText } = await resolveMediaPlaylist(asset.URL);
+  console.log(`[stream] asset flavor=${asset.flavor} url=${asset.URL.substring(0, 80)}…`);
 
-  const keyMatch = hlsText.match(/URI="(data:[^"]+)"/);
+  const { url: mediaUrl, text: hlsText } = await resolveMediaPlaylist(asset.URL);
+  console.log(`[stream] mediaUrl=${mediaUrl.substring(0, 80)}… hlsLen=${hlsText.length}`);
+
+  // Try data: URI first (CENC/Widevine), then any URI="..." key
+  const keyMatch = hlsText.match(/URI="(data:[^"]+)"/) ?? hlsText.match(/URI="([^"]+)"/);
   const keyUri = keyMatch?.[1];
-  if (!keyUri) throw new Error(`No key URI in HLS manifest (${mediaUrl})`);
+  if (!keyUri) {
+    console.error(`[stream] No key URI — first 300 chars of manifest:\n${hlsText.substring(0, 300)}`);
+    throw new Error(`No key URI in HLS manifest`);
+  }
+  console.log(`[stream] keyUri type=${keyUri.startsWith("data:") ? "data" : "url"} len=${keyUri.length}`);
 
   return { streamUrl: mediaUrl, adamId, keyUri };
 }
