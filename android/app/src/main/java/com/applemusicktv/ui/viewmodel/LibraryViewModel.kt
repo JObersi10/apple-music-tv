@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class SortField { DEFAULT, NAME, ARTIST, DATE, RECENT }
+enum class SortField { DEFAULT, NAME, ARTIST, DATE }
 enum class SortDir   { ASC, DESC }
 
 data class SortState(val field: SortField = SortField.DEFAULT, val dir: SortDir = SortDir.ASC)
@@ -103,35 +103,34 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
-    private fun playHistory(): Map<String, Long> {
-        val json = cachePrefs.getString("play_history", null) ?: return emptyMap()
-        return try {
-            val type = Types.newParameterizedType(Map::class.java, String::class.java, Long::class.javaObjectType)
-            moshi.adapter<Map<String, Long>>(type).fromJson(json) ?: emptyMap()
-        } catch (_: Exception) { emptyMap() }
+    private val _pinnedIds = MutableStateFlow(loadPinnedIds())
+    val pinnedIds: StateFlow<Set<String>> = _pinnedIds
+
+    private fun loadPinnedIds(): Set<String> {
+        val raw = cachePrefs.getString("pinned_playlists", "") ?: ""
+        return if (raw.isEmpty()) emptySet() else raw.split(",").toSet()
     }
 
-    fun recordPlaylistPlay(id: String) {
-        val history = playHistory().toMutableMap()
-        history[id] = System.currentTimeMillis()
-        try {
-            val type = Types.newParameterizedType(Map::class.java, String::class.java, Long::class.javaObjectType)
-            cachePrefs.edit { putString("play_history", moshi.adapter<Map<String, Long>>(type).toJson(history)) }
-        } catch (_: Exception) {}
+    fun togglePin(id: String) {
+        val cur = _pinnedIds.value.toMutableSet()
+        if (id in cur) cur.remove(id) else cur.add(id)
+        _pinnedIds.value = cur
+        cachePrefs.edit { putString("pinned_playlists", cur.joinToString(",")) }
     }
+
+    fun isPinned(id: String) = id in _pinnedIds.value
 
     fun sortedPlaylists(): List<PlaylistDto> {
         val s = _state.value
+        val pinned = _pinnedIds.value
         val list = s.playlists
         val sorted = when (s.sort.field) {
-            SortField.NAME   -> list.sortedBy { it.name.lowercase() }
-            SortField.RECENT -> {
-                val h = playHistory()
-                list.sortedByDescending { h[it.id] ?: 0L }
-            }
-            else -> list
+            SortField.NAME -> list.sortedBy { it.name.lowercase() }
+            else           -> list
         }
-        return if (s.sort.dir == SortDir.DESC) sorted.reversed() else sorted
+        val ordered = if (s.sort.dir == SortDir.DESC) sorted.reversed() else sorted
+        val (pins, rest) = ordered.partition { it.id in pinned }
+        return pins.sortedBy { it.name.lowercase() } + rest
     }
 
     fun sortedAlbums(): List<Album> {
@@ -168,10 +167,7 @@ class LibraryViewModel @Inject constructor(
 
     fun playPlaylist(id: String, playerVm: PlayerViewModel) = viewModelScope.launch {
         repo.getPlaylistTracks(id).onSuccess { songs ->
-            if (songs.isNotEmpty()) {
-                recordPlaylistPlay(id)
-                playerVm.playAlbum(songs, 0)
-            }
+            if (songs.isNotEmpty()) playerVm.playAlbum(songs, 0)
         }
     }
 

@@ -80,11 +80,16 @@ fun LibraryScreen(
                     SortBar(section, state.sort.field, state.sort.dir.name) { vm.setSort(it) }
                     Box(Modifier.weight(1f)) {
                         when (section) {
-                            LibrarySection.Playlists -> PlaylistGrid(
-                                playlists = vm.sortedPlaylists(),
-                                onOpen    = { onPlaylistClick(it.id, it.name, it.artworkUrl) },
-                                onPlay    = { vm.playPlaylist(it.id, playerVm) },
-                            )
+                            LibrarySection.Playlists -> {
+                                val pinnedIds by vm.pinnedIds.collectAsState()
+                                PlaylistGrid(
+                                    playlists  = vm.sortedPlaylists(),
+                                    pinnedIds  = pinnedIds,
+                                    onOpen     = { onPlaylistClick(it.id, it.name, it.artworkUrl) },
+                                    onPlay     = { vm.playPlaylist(it.id, playerVm) },
+                                    onTogglePin = { vm.togglePin(it.id) },
+                                )
+                            }
                             LibrarySection.Albums  -> AlbumGrid(vm.sortedAlbums(), onAlbumClick)
                             LibrarySection.Artists -> ArtistList(vm.sortedArtists(), onArtistClick)
                             LibrarySection.Songs   -> SongList(vm.sortedSongs(), playerVm)
@@ -105,7 +110,7 @@ private fun SortBar(
     onSort: (SortField) -> Unit,
 ) {
     val fields = when (section) {
-        LibrarySection.Playlists -> listOf(SortField.DEFAULT to "Playlist Order", SortField.NAME to "Name", SortField.RECENT to "Recently Played")
+        LibrarySection.Playlists -> listOf(SortField.DEFAULT to "Playlist Order", SortField.NAME to "Name")
         LibrarySection.Albums    -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Name", SortField.ARTIST to "Artist")
         LibrarySection.Artists   -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Name")
         LibrarySection.Songs     -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Title", SortField.ARTIST to "Artist")
@@ -143,8 +148,10 @@ private fun SortBar(
 @Composable
 private fun PlaylistGrid(
     playlists: List<PlaylistDto>,
+    pinnedIds: Set<String>,
     onOpen: (PlaylistDto) -> Unit,
     onPlay: (PlaylistDto) -> Unit,
+    onTogglePin: (PlaylistDto) -> Unit,
 ) {
     if (playlists.isEmpty()) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No playlists", color = Color(0xFF555555)) }
@@ -158,16 +165,29 @@ private fun PlaylistGrid(
         modifier = Modifier.fillMaxSize(),
     ) {
         items(playlists, key = { it.id }) { playlist ->
-            PlaylistCard(playlist, onOpen = { onOpen(playlist) }, onPlay = { onPlay(playlist) })
+            PlaylistCard(
+                playlist    = playlist,
+                pinned      = playlist.id in pinnedIds,
+                onOpen      = { onOpen(playlist) },
+                onPlay      = { onPlay(playlist) },
+                onTogglePin = { onTogglePin(playlist) },
+            )
         }
     }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun PlaylistCard(playlist: PlaylistDto, onOpen: () -> Unit, onPlay: () -> Unit) {
+private fun PlaylistCard(
+    playlist: PlaylistDto,
+    pinned: Boolean,
+    onOpen: () -> Unit,
+    onPlay: () -> Unit,
+    onTogglePin: () -> Unit,
+) {
     Surface(
-        onClick = onOpen,
+        onClick      = onOpen,
+        onLongClick  = onTogglePin,
         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1A1A1A), focusedContainerColor = Color(0xFF252525)),
         scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
@@ -188,6 +208,18 @@ private fun PlaylistCard(playlist: PlaylistDto, onOpen: () -> Unit, onPlay: () -
                 } else {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
                         Text("♪", fontSize = 32.sp, color = Color(0xFF444444))
+                    }
+                }
+                if (pinned) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xCC000000))
+                            .padding(horizontal = 5.dp, vertical = 3.dp),
+                    ) {
+                        Text("📌", fontSize = 10.sp)
                     }
                 }
             }

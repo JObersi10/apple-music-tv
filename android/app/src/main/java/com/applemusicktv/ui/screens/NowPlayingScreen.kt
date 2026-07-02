@@ -413,34 +413,28 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
 
 @Composable
 private fun MusicalDots(fraction: Float, outerAlpha: Float = 1f, modifier: Modifier = Modifier) {
-    val infinite = rememberInfiniteTransition(label = "dots")
+    // Each dot grows sequentially, then all shrink together.
+    val dotStarts = floatArrayOf(0f, 0.24f, 0.48f)
+    val dotDur    = 0.28f
+    val shrinkStart = 0.82f
+
     Row(
         modifier = modifier.graphicsLayer { alpha = outerAlpha },
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         for (i in 0 until 3) {
-            val pulse by infinite.animateFloat(
-                initialValue = 0.5f,
-                targetValue = 1f,
-                // Stagger each dot by 300ms for sequential pulse effect.
-                animationSpec = infiniteRepeatable(
-                    tween(900, delayMillis = i * 300, easing = LinearEasing),
-                    RepeatMode.Reverse,
-                ),
-                label = "dot$i",
-            )
-            val revealed = fraction > (i * 0.25f)
+            val growFrac   = ((fraction - dotStarts[i]) / dotDur).coerceIn(0f, 1f)
+            val shrinkFrac = if (fraction >= shrinkStart)
+                ((fraction - shrinkStart) / (1f - shrinkStart)).coerceIn(0f, 1f) else 0f
+            val lit = if (fraction >= shrinkStart) 1f - shrinkFrac else growFrac
+            val dotColor = lerp(Color(0xFF444444), Color.White, lit)
             Box(
                 Modifier
                     .size(10.dp)
-                    .graphicsLayer {
-                        val s = if (revealed) 0.85f + 0.25f * pulse else 0.7f
-                        scaleX = s; scaleY = s
-                        alpha = if (revealed) 0.35f + 0.65f * pulse else 0.2f
-                    }
+                    .graphicsLayer { val s = 0.55f + 0.65f * lit; scaleX = s; scaleY = s }
                     .clip(RoundedCornerShape(50))
-                    .background(Color.White),
+                    .background(dotColor),
             )
         }
     }
@@ -499,8 +493,9 @@ private fun LyricLineRow(
                                 isCurrent -> lerp(Color(0xFF8E8E93), Color.White, frac)
                                 else -> Color(0xFF8E8E93)
                             }
-                            val glow = if (isCurrent && dur > 700L)
-                                Shadow(color = Color.White.copy(alpha = 0.55f * frac), blurRadius = 18f)
+                            val glowFrac = if (isCurrent && dur > 700L) (1f - kotlin.math.abs(frac * 2f - 1f)) else 0f
+                            val glow = if (glowFrac > 0f)
+                                Shadow(color = Color.White.copy(alpha = 0.55f * glowFrac), blurRadius = 18f)
                             else null
                             withStyle(SpanStyle(color = color, shadow = glow)) {
                                 append(word.text)
@@ -520,18 +515,34 @@ private fun LyricLineRow(
                 val bg = line.background
                 if (bg != null && bg.text.isNotEmpty()) {
                     Spacer(Modifier.height(2.dp))
-                    val bgLive = progressMs <= bg.endMs + 500L
-                    val bgText: AnnotatedString? = if (bgLive && bg.words.isNotEmpty()) {
-                        val bgActiveIdx = bg.words.indexOfLast { it.startMs <= progressMs }
+                    val bgProgress = progressMs + 300L  // -300ms early start
+                    val bgLive = bgProgress in bg.startMs..(bg.endMs + 600L)
+                    val bgTargetScale = if (bgLive) 1.08f else 0.93f
+                    val bgScale by animateFloatAsState(bgTargetScale, tween(250), label = "bgScale")
+
+                    val bgText: AnnotatedString? = if (bg.words.isNotEmpty()) {
+                        val bgActiveIdx = bg.words.indexOfLast { it.startMs <= bgProgress }
                         buildAnnotatedString {
                             bg.words.forEachIndexed { i, word ->
                                 if (i > 0) append(" ")
-                                withStyle(SpanStyle(color = if (i <= bgActiveIdx) Color(0xFFE0E0E0) else Color(0xFF6E6E73))) {
-                                    append(word.text)
+                                val dur = (word.endMs - word.startMs).coerceAtLeast(1L)
+                                val isCurrent = i == bgActiveIdx
+                                val frac = if (isCurrent && bgLive)
+                                    ((bgProgress - word.startMs).toFloat() / dur).coerceIn(0f, 1f) else 0f
+                                val col = when {
+                                    !bgLive && i <= bgActiveIdx -> Color(0xFF6E6E73)
+                                    i < bgActiveIdx -> Color(0xFFE0E0E0)
+                                    isCurrent && bgLive -> lerp(Color(0xFF6E6E73), Color(0xFFE0E0E0), frac)
+                                    else -> Color(0xFF6E6E73)
                                 }
+                                val bgGlowFrac = if (isCurrent && bgLive && dur > 700L) (1f - kotlin.math.abs(frac * 2f - 1f)) else 0f
+                                val glow = if (bgGlowFrac > 0f)
+                                    Shadow(color = Color.White.copy(alpha = 0.4f * bgGlowFrac), blurRadius = 14f) else null
+                                withStyle(SpanStyle(color = col, shadow = glow)) { append(word.text) }
                             }
                         }
                     } else null
+
                     Text(
                         text = bgText ?: AnnotatedString(bg.text),
                         style = TextStyle(
@@ -539,6 +550,10 @@ private fun LyricLineRow(
                             fontWeight = FontWeight.SemiBold,
                             color = if (bgText == null) (if (bgLive) Color(0xFFE0E0E0) else Color(0xFF6E6E73)) else Color.Unspecified,
                         ),
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = bgScale; scaleY = bgScale
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                        },
                     )
                 }
             }
