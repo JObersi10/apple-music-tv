@@ -86,7 +86,7 @@ class PlayerViewModel @Inject constructor(
         // songs don't play."
         val httpFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(60_000)
-            .setReadTimeoutMs(120_000)
+            .setReadTimeoutMs(60_000)
             .setAllowCrossProtocolRedirects(true)
         val dataSourceFactory =
             androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)

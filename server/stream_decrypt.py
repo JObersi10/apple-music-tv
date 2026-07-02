@@ -109,13 +109,20 @@ async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str)
     is_multi_seg = init_url is not None and len(seg_urls) > 1
     urls = ([init_url] if init_url else []) + seg_urls
 
+    async def _dl(client, url):
+        chunks = []
+        async with client.stream('GET', url, headers=headers, timeout=120.0) as resp:
+            resp.raise_for_status()
+            async for chunk in resp.aiter_bytes(65536):
+                chunks.append(chunk)
+        return b''.join(chunks)
+
     async with httpx.AsyncClient() as client:
-        with open(enc_path, 'wb') as f:
-            for url in urls:
-                async with client.stream('GET', url, headers=headers, timeout=120.0) as resp:
-                    resp.raise_for_status()
-                    async for chunk in resp.aiter_bytes(65536):
-                        f.write(chunk)
+        data_list = await asyncio.gather(*[_dl(client, url) for url in urls])
+
+    with open(enc_path, 'wb') as f:
+        for data in data_list:
+            f.write(data)
 
     return is_multi_seg
 
