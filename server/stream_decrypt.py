@@ -167,7 +167,7 @@ async def run(args: dict):
         # the moov moved to the front (+faststart). This is what makes seeking
         # instant and playback reliable on the Fire TV.
         tmp_remux = dec_path + '.remux.mp4'
-        audio_flags = ['-vn', '-c:a', 'aac', '-b:a', '256k'] if is_multi_seg else ['-c', 'copy']
+        audio_flags = ['-c', 'copy']
         t3 = time.time()
         ff = subprocess.run(
             [FFMPEG, '-y', '-v', 'error', '-i', tmp_dec]
