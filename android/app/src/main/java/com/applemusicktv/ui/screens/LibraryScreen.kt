@@ -105,7 +105,7 @@ private fun SortBar(
     onSort: (SortField) -> Unit,
 ) {
     val fields = when (section) {
-        LibrarySection.Playlists -> listOf(SortField.DEFAULT to "Playlist Order", SortField.NAME to "Name")
+        LibrarySection.Playlists -> listOf(SortField.DEFAULT to "Playlist Order", SortField.NAME to "Name", SortField.RECENT to "Recently Played")
         LibrarySection.Albums    -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Name", SortField.ARTIST to "Artist")
         LibrarySection.Artists   -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Name")
         LibrarySection.Songs     -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Title", SortField.ARTIST to "Artist")

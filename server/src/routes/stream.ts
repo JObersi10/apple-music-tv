@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import axios from "axios";
-import { getMUT, getBearerToken } from "../auth";
+import { getMUT, getBearerToken, ensureBearer } from "../auth";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -95,18 +95,26 @@ async function resolveMediaPlaylist(url: string): Promise<{ url: string; text: s
 }
 
 async function getStreamParams(songId: string, mut: string) {
+  await ensureBearer();
+
   const isLibrary = songId.startsWith("i.");
-  const body = isLibrary
-    ? { universalLibraryId: songId, language: "en-US" }
-    : { salableAdamId: songId, language: "en-US" };
+  // Apple webPlayback expects a plain numeric ID for salableAdamId;
+  // some catalog IDs arrive with a letter prefix (e.g. "a.12345") — strip it.
+  const numericId = songId.replace(/^[a-z]+\./, "");
 
-  const res = await axios.post(
-    "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback",
-    body,
-    { headers: playHeaders(mut) }
-  );
+  const WEB_PLAYBACK = "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback";
 
-  const entry = res.data?.songList?.[0];
+  // Try primary form, then alternate form on empty songList.
+  const bodies = isLibrary
+    ? [{ universalLibraryId: songId }, { salableAdamId: numericId }]
+    : [{ salableAdamId: numericId }, { universalLibraryId: songId }];
+
+  let entry: any;
+  for (const bodyBase of bodies) {
+    const res = await axios.post(WEB_PLAYBACK, { ...bodyBase, language: "en-US" }, { headers: playHeaders(mut) });
+    entry = res.data?.songList?.[0];
+    if (entry) break;
+  }
   if (!entry) throw new Error("No songList in webPlayback");
 
   const adamId = String(entry.songId);

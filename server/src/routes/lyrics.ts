@@ -19,6 +19,8 @@ lyrics.get("/:songId", async (c) => {
   try {
     const appleLines = await fetchAppleLyrics(songId, headers);
     if (appleLines && appleLines.length > 0) {
+      const wordCount = appleLines.reduce((n, l) => n + l.words.length, 0)
+      console.log(`[lyrics] ${songId} apple ${wordCount > 0 ? `word-by-word (${wordCount} words)` : "line-synced only"}`)
       return c.json({ lines: appleLines, source: "apple" });
     }
   } catch (_) {}
@@ -39,6 +41,25 @@ lyrics.get("/:songId", async (c) => {
   return c.json({ lines: [], source: "none" });
 });
 
+/** Fetch TTML from an endpoint, trying syllable-lyrics then lyrics. */
+async function fetchTTML(
+  baseUrl: string,
+  headers: Record<string, string>
+): Promise<LyricLine[] | null> {
+  // Try word-level syllable endpoint first, fall back to line-level.
+  for (const suffix of ["syllable-lyrics", "lyrics"]) {
+    try {
+      const res = await axios.get(`${baseUrl}/${suffix}`, { headers });
+      const ttml = res.data?.data?.[0]?.attributes?.ttml ?? null;
+      if (ttml) {
+        const lines = parseTTML(ttml);
+        if (lines.length > 0) return lines;
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
 /** Apple Music TTML lyrics (library id resolves to catalog if needed). */
 async function fetchAppleLyrics(
   songId: string,
@@ -48,35 +69,20 @@ async function fetchAppleLyrics(
   const sf = getStorefront();
 
   if (isLibrary) {
-    try {
-      const res = await axios.get(
-        `https://amp-api-edge.music.apple.com/v1/me/library/songs/${songId}/lyrics`,
-        { headers }
-      );
-      const ttml = res.data?.data?.[0]?.attributes?.ttml ?? null;
-      if (ttml) return parseTTML(ttml);
-    } catch (_) {}
+    const libBase = `https://amp-api-edge.music.apple.com/v1/me/library/songs/${songId}`;
+    const libLines = await fetchTTML(libBase, headers);
+    if (libLines) return libLines;
 
     const catalogId = await resolveCatalogId(songId, headers);
     if (catalogId) {
-      try {
-        const res = await axios.get(
-          `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/songs/${catalogId}/lyrics`,
-          { headers }
-        );
-        const ttml = res.data?.data?.[0]?.attributes?.ttml ?? null;
-        if (ttml) return parseTTML(ttml);
-      } catch (_) {}
+      const catBase = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/songs/${catalogId}`;
+      return fetchTTML(catBase, headers);
     }
     return null;
   }
 
-  const res = await axios.get(
-    `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/songs/${songId}/lyrics`,
-    { headers }
-  );
-  const ttml = res.data?.data?.[0]?.attributes?.ttml ?? null;
-  return ttml ? parseTTML(ttml) : null;
+  const catBase = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/songs/${songId}`;
+  return fetchTTML(catBase, headers);
 }
 
 async function resolveCatalogId(
@@ -130,6 +136,22 @@ async function fetchSongMeta(
   }
 }
 
+function normalizeArtist(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isGoodLrclibMatch(data: any, meta: SongMeta): boolean {
+  // Artist must loosely match — reject clear mismatches.
+  const got  = normalizeArtist(data.artistName ?? "");
+  const want = normalizeArtist(meta.artist);
+  if (got && want && !got.includes(want) && !want.includes(got)) return false;
+  // Duration must be within 10 seconds.
+  if (meta.durationSec > 0 && typeof data.duration === "number") {
+    if (Math.abs(data.duration - meta.durationSec) > 10) return false;
+  }
+  return true;
+}
+
 /** lrclib.net — line-synced LRC lyrics, converted to our LyricLine shape. */
 async function fetchLrclibLyrics(meta: SongMeta): Promise<LyricLine[] | null> {
   const params = new URLSearchParams({
@@ -141,15 +163,18 @@ async function fetchLrclibLyrics(meta: SongMeta): Promise<LyricLine[] | null> {
 
   const lrcHeaders = { "User-Agent": "AppleMusicTV (github.com/applemusicktv)" };
 
-  // Prefer the exact /get match; fall back to /search's best hit.
+  // Prefer the exact /get match; validate it's actually the right song.
   let synced: string | null = null;
   try {
     const res = await axios.get(`https://lrclib.net/api/get?${params.toString()}`, {
       headers: lrcHeaders,
     });
-    synced = res.data?.syncedLyrics ?? null;
+    if (res.data?.syncedLyrics && isGoodLrclibMatch(res.data, meta)) {
+      synced = res.data.syncedLyrics;
+    }
   } catch (_) {}
 
+  // Fall back to /search — pick only a hit that passes artist+duration check.
   if (!synced) {
     try {
       const q = new URLSearchParams({ track_name: meta.title, artist_name: meta.artist });
@@ -157,7 +182,7 @@ async function fetchLrclibLyrics(meta: SongMeta): Promise<LyricLine[] | null> {
         headers: lrcHeaders,
       });
       const hit = Array.isArray(res.data)
-        ? res.data.find((r: any) => r?.syncedLyrics)
+        ? res.data.find((r: any) => r?.syncedLyrics && isGoodLrclibMatch(r, meta))
         : null;
       synced = hit?.syncedLyrics ?? null;
     } catch (_) {}
@@ -299,7 +324,7 @@ function isBackgroundSpan(attrs: string): boolean {
 // Direct child <span> elements of a node, in document order.
 function childSpans(node: TagNode): TagNode[] {
   return node.children.filter(
-    (c): c is TagNode => typeof c !== "string" && c.tag === "span"
+    (c): c is TagNode => typeof c !== "string" && (c.tag === "span" || c.tag.endsWith(":span"))
   );
 }
 
@@ -316,6 +341,8 @@ function spanToWord(span: TagNode): LyricWord | null {
 }
 
 function parseTTML(ttml: string): LyricLine[] {
+  const timing = ttml.match(/itunes:timing="([^"]+)"/)?.[1] ?? "unknown"
+  console.log("[ttml] timing:", timing)
   const tree = buildTree(tokenize(ttml));
   const pNodes = findAll(tree, "p");
   const lines: LyricLine[] = [];
@@ -349,7 +376,7 @@ function parseTTML(ttml: string): LyricLine[] {
           background = {
             startMs: bgBeginAttr ? parseTime(bgBeginAttr) : bgWords[0].startMs,
             endMs: bgEndAttr ? parseTime(bgEndAttr) : bgWords[bgWords.length - 1].endMs,
-            text: bgWords.map((w) => w.text).join(" "),
+            text: bgWords.map((w) => w.text.trim()).join(" "),
             words: bgWords,
           };
         }
@@ -359,7 +386,7 @@ function parseTTML(ttml: string): LyricLine[] {
       }
     }
 
-    const lineText = words.length > 0 ? words.map((w) => w.text).join(" ") : flattenText(p);
+    const lineText = words.length > 0 ? words.map((w) => w.text.trim()).join(" ") : flattenText(p);
     if (!lineText) continue;
 
     lines.push({ startMs, endMs, text: lineText, words, background });
@@ -369,7 +396,8 @@ function parseTTML(ttml: string): LyricLine[] {
 }
 
 function parseTime(t: string): number {
-  const parts = t.split(":").map(Number);
+  const clean = t.replace(/s$/, "");
+  const parts = clean.split(":").map(Number);
   if (parts.length === 3) return Math.round((parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000);
   if (parts.length === 2) return Math.round((parts[0] * 60 + parts[1]) * 1000);
   return Math.round(parts[0] * 1000);

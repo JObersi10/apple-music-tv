@@ -59,7 +59,8 @@ GitHub Actions (`.github/workflows/android.yml`) builds the debug APK on every p
 - `playAlbum(songs, idx)` defaults `useFullStream = hasMUT()`
 - State (queue + position) persisted to SharedPreferences on `onCleared()`
 - Stream serves a **remuxed progressive MP4** (ffmpeg `+faststart` after mp4decrypt) with HTTP Range → ExoPlayer seeks instantly. Apple's decrypted output is fragmented `hlsf`, which ExoPlayer plays unreliably — the remux is required.
-- ExoPlayer built with a 60s connect/read `DefaultHttpDataSource` (first decrypt is slow) + one-shot re-prepare on error.
+- **Multi-segment HLS**: some tracks (e.g. Eminem, Toby Fox) use fMP4 HLS with init-segment + multiple audio segments. `stream_decrypt.py:fetch_encrypted` downloads ALL segments and concatenates them before decryption. Grabbing only `#EXT-X-MAP` (init) was the root cause of choppy/silent audio on those tracks.
+- ExoPlayer built with a 60s connect/read `DefaultHttpDataSource` (first decrypt is slow) + one-shot re-prepare on error. `DefaultLoadControl`: min 15s / max 60s buffer. `DefaultRenderersFactory` with `EXTENSION_RENDERER_MODE_PREFER` + decoder fallback.
 - Remote/controller media buttons: handled in `MainActivity.dispatchKeyEvent` AND via a Media3 `MediaSession` (external/Bluetooth controllers route through MediaSession, not dispatchKeyEvent). Rewind/FF keys mapped to prev/next.
 - `next()`/`prev()` use `seekToNext/Previous` (smart, wrap at ends); bare `*MediaItem` no-op at boundaries.
 - **Standalone (on-device) fallback**: `useStandalone() = !serverPrefs.serverReachable` (health-checked at startup; flipped on a network `onPlayerError`). Uses `AppleDirectClient` (bearer scrape + webPlayback, tries both `universalLibraryId`/`salableAdamId` forms) + `AppleMusicDrmCallback` (Widevine). `usingStandalone` guards against proxy↔standalone loops.
@@ -68,7 +69,7 @@ GitHub Actions (`.github/workflows/android.yml`) builds the debug APK on every p
 
 ## Server routes
 - `GET /api/search?term=` — catalog search
-- `GET /api/stream/:songId` — decrypts CENC to a **seekable cache file** (`$TMPDIR/am_stream_cache/`) then serves it with HTTP **Range support** (206) so ExoPlayer can scrub instantly. `stream_decrypt.py` takes `outPath` arg → writes file + prints `ok` (no stdout piping). Concurrent Range requests share one decrypt via `inFlight` map. Asset pick: `28:ctrp256` → any `ctrp` → any URL'd asset (region fallback).
+- `GET /api/stream/:songId` — decrypts CENC to a **seekable cache file** (`$TMPDIR/am_stream_cache/`) then serves it with HTTP **Range support** (206) so ExoPlayer can scrub instantly. `stream_decrypt.py` takes `outPath` arg → writes file + prints `ok` (no stdout piping). Concurrent Range requests share one decrypt via `inFlight` map. Asset pick: `28:ctrp256` → any `ctrp` → any URL'd asset (region fallback). On boot, calls `ensureBearer()` (scrapes if empty) and strips non-numeric prefixes (e.g. `a.12345`) from catalog IDs before sending to webPlayback. Falls back to alternate ID form (library↔catalog) if songList is empty.
 - `GET /api/lyrics/:songId` — **Apple first** (word-by-word TTML, parsed via real tag-tree walk that separates `ttm:role="x-bg"` background-vocal spans). **Fallback: lrclib.net** (line-synced LRC, no auth) when Apple has none — resolves song meta (title/artist/album/duration) to query lrclib. Returns `{lines, source: apple|lrclib|none}`. TTML spans → `words[]`, bg vocals → `background{words[]}`.
 - `GET /api/motion/:songId` — resolves song→album, requests album `?extend=editorialVideo`, returns `{video}` = square motion-art HLS loop URL (or null). Powers animated Now Playing cover.
 - `GET /api/library/songs|albums|playlists|artists` — personal library (needs MUT)
@@ -95,6 +96,9 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - Default view: lyrics (synced timed, past dimmed, active white+large, future dark)
 - Menu button toggles to queue view (odd toggleCount = queue, even = lyrics)
 - NowPlayingBar hidden when on Now Playing screen
+- **Lyrics engine**: kinetic/karaoke word-level wipe animation. Active line scales to 1.12× with tempo-aware spring (high wps → `StiffnessHigh`/no-bounce; slow → `StiffnessMediumLow`/low-bounce). Inactive future lines blurred 1.5dp. Gap ≥4s → pulsing 3-dot placeholder with sequential stagger; fades out 500ms before next lyric. Lyrics jump-scroll instantly on first load (no "scroll from top" animation); animate after.
+- Long-press context menu: `delay(150)` before `requestFocus()` so touch-up from long-press doesn't auto-trigger the first item.
+- Transport buttons: `border = ClickableSurfaceDefaults.border(noBorder, noBorder)` to suppress yellow focus border.
 
 ## Library
 - Sort bar above content: SortField (DEFAULT/NAME/ARTIST/DATE) × SortDir (ASC/DESC), reversal applies to all fields incl. DEFAULT

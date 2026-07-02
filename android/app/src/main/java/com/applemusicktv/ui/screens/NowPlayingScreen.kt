@@ -10,6 +10,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -24,21 +25,27 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.palette.graphics.Palette
 import androidx.tv.material3.*
+import androidx.tv.material3.Border
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.applemusicktv.data.network.LyricLine
-import com.applemusicktv.data.network.LyricWord
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import kotlinx.coroutines.isActive
@@ -340,8 +347,10 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String) {
     }
 }
 
-private const val GAP_THRESHOLD_MS = 3000L
+private const val GAP_THRESHOLD_MS = 4000L
 private const val LINE_END_GRACE_MS = 250L
+private const val GAP_FADEOUT_MS    = 500L
+
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -349,29 +358,25 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    // Last line whose start has passed.
     val passedIndex = lyrics.indexOfLast { it.startMs <= progressMs }
-    // Only actually "focused" while inside that line's own time window —
-    // during instrumental gaps nothing is focused.
-    val activeIndex = if (passedIndex >= 0 && progressMs <= lyrics[passedIndex].endMs + LINE_END_GRACE_MS) {
-        passedIndex
-    } else {
-        -1
-    }
+    val activeIndex = if (passedIndex >= 0 && progressMs <= lyrics[passedIndex].endMs + LINE_END_GRACE_MS) passedIndex else -1
 
     val scrollAnchor = passedIndex.coerceAtLeast(0)
-    LaunchedEffect(scrollAnchor) {
-        scope.launch {
-            listState.animateScrollToItem((scrollAnchor - 2).coerceAtLeast(0))
+    val firstLoad = remember { mutableStateOf(true) }
+    LaunchedEffect(scrollAnchor, lyrics.size) {
+        val target = (scrollAnchor - 3).coerceAtLeast(0)
+        if (firstLoad.value && lyrics.isNotEmpty()) {
+            listState.scrollToItem(target)
+            firstLoad.value = false
+        } else if (!firstLoad.value) {
+            scope.launch { listState.animateScrollToItem(target) }
         }
     }
 
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
-        // Push the active line into the upper-middle of the panel (Apple-style)
-        // instead of pinning it to the very top.
-        contentPadding = PaddingValues(top = 120.dp, bottom = 220.dp),
+        modifier = Modifier.fillMaxSize().padding(end = 16.dp),
+        contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         items(lyrics.size) { idx ->
@@ -379,14 +384,18 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
             val isActive = idx == activeIndex
             val isPast = idx < passedIndex || (idx == passedIndex && activeIndex == -1)
 
-            // Instrumental gap indicator before this line, if long enough
-            // and we're currently sitting inside it.
             val prevEnd = if (idx > 0) lyrics[idx - 1].endMs else 0L
             val gapMs = line.startMs - prevEnd
             val inGap = progressMs in prevEnd until line.startMs
+
             if (gapMs >= GAP_THRESHOLD_MS && inGap && idx == passedIndex + 1) {
+                // Fade out dots 500ms before next lyric starts.
+                val dotsAlpha = if (line.startMs - progressMs < GAP_FADEOUT_MS)
+                    ((line.startMs - progressMs).toFloat() / GAP_FADEOUT_MS).coerceIn(0f, 1f)
+                else 1f
                 MusicalDots(
                     fraction = ((progressMs - prevEnd).toFloat() / gapMs).coerceIn(0f, 1f),
+                    outerAlpha = dotsAlpha,
                     modifier = Modifier.padding(bottom = 10.dp),
                 )
             }
@@ -403,30 +412,32 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
 }
 
 @Composable
-private fun MusicalDots(fraction: Float, modifier: Modifier = Modifier) {
+private fun MusicalDots(fraction: Float, outerAlpha: Float = 1f, modifier: Modifier = Modifier) {
     val infinite = rememberInfiniteTransition(label = "dots")
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        modifier = modifier.graphicsLayer { alpha = outerAlpha },
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         for (i in 0 until 3) {
             val pulse by infinite.animateFloat(
                 initialValue = 0.5f,
                 targetValue = 1f,
+                // Stagger each dot by 300ms for sequential pulse effect.
                 animationSpec = infiniteRepeatable(
-                    tween(900, easing = LinearEasing),
+                    tween(900, delayMillis = i * 300, easing = LinearEasing),
                     RepeatMode.Reverse,
                 ),
                 label = "dot$i",
             )
-            // Dots "fill in" one by one as the gap elapses, and pulse gently.
             val revealed = fraction > (i * 0.25f)
-            val alpha = (if (revealed) 0.35f + 0.65f * pulse else 0.2f)
             Box(
                 Modifier
                     .size(10.dp)
                     .graphicsLayer {
                         val s = if (revealed) 0.85f + 0.25f * pulse else 0.7f
-                        scaleX = s
-                        scaleY = s
-                        this.alpha = alpha
+                        scaleX = s; scaleY = s
+                        alpha = if (revealed) 0.35f + 0.65f * pulse else 0.2f
                     }
                     .clip(RoundedCornerShape(50))
                     .background(Color.White),
@@ -446,154 +457,93 @@ private fun LyricLineRow(
 ) {
     val targetOpacity = when {
         isActive -> 1f
-        isPast -> 0.32f
-        else -> 0.42f
+        isPast   -> 0.28f
+        else     -> 0.38f
     }
-    val targetScale = if (isActive) 1f else 0.94f
+    val targetScale = if (isActive) 1.08f else 0.93f
+    val opacity by animateFloatAsState(targetOpacity, tween(200), label = "lineOpacity")
+    val scale   by animateFloatAsState(targetScale,   tween(200), label = "lineScale")
 
-    val opacity by animateFloatAsState(targetOpacity, tween(260), label = "lineOpacity")
-    val scale by animateFloatAsState(targetScale, tween(260), label = "lineScale")
-
-    Surface(
-        onClick = onSeek,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color(0x1AFFFFFF),
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-    ) {
-        Column(
-            Modifier
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-                .graphicsLayer {
-                    alpha = opacity
-                    scaleX = scale
-                    scaleY = scale
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
-                },
-        ) {
-            if (line.words.isNotEmpty()) {
-                KaraokeLine(
-                    words = line.words,
-                    progressMs = progressMs,
-                    fontSize = 27.sp,
-                    baseColor = Color(0xFF8E8E93),
-                    litColor = Color.White,
-                    fontWeight = FontWeight.Bold,
-                )
-            } else {
-                Text(
-                    text = line.text,
-                    fontSize = if (isActive) 27.sp else 19.sp,
-                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isActive) Color.White else Color(0xFFCCCCCC),
-                    lineHeight = if (isActive) 34.sp else 26.sp,
-                )
-            }
-
-            val bg = line.background
-            if (bg != null && bg.words.isNotEmpty()) {
-                Spacer(Modifier.height(2.dp))
-                KaraokeLine(
-                    words = bg.words,
-                    progressMs = progressMs,
-                    fontSize = 20.sp,
-                    baseColor = Color(0xFF6E6E73),
-                    litColor = Color(0xFFE0E0E0),
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
-    }
-}
-
-/** A single row of words, each independently wiped left→right as it's sung. */
-@Composable
-private fun KaraokeLine(
-    words: List<LyricWord>,
-    progressMs: Long,
-    fontSize: androidx.compose.ui.unit.TextUnit,
-    baseColor: Color,
-    litColor: Color,
-    fontWeight: FontWeight,
-) {
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        for (word in words) {
-            KaraokeWord(word, progressMs, fontSize, baseColor, litColor, fontWeight)
-        }
-    }
-}
-
-@Composable
-private fun KaraokeWord(
-    word: LyricWord,
-    progressMs: Long,
-    fontSize: androidx.compose.ui.unit.TextUnit,
-    baseColor: Color,
-    litColor: Color,
-    fontWeight: FontWeight,
-) {
-    val duration = (word.endMs - word.startMs).coerceAtLeast(1L)
-    val fraction = ((progressMs - word.startMs).toFloat() / duration).coerceIn(0f, 1f)
-
-    // Scale: dips slightly below rest, overshoots past 1x mid-word, settles.
-    val scale = when {
-        fraction <= 0f -> 0.96f
-        fraction >= 1f -> 1f
-        fraction < 0.7f -> lerp(0.96f, 1.06f, easeOutCubic(fraction / 0.7f))
-        else -> lerp(1.06f, 1f, (fraction - 0.7f) / 0.3f)
-    }
-    // Slight upward bounce while singing, settling back to baseline.
-    val yOffsetFraction = when {
-        fraction <= 0f || fraction >= 1f -> 0f
-        fraction < 0.9f -> lerp(0.01f, -0.14f, fraction / 0.9f)
-        else -> lerp(-0.14f, 0f, (fraction - 0.9f) / 0.1f)
-    }
-    // Glow ramps up fast, holds, fades near the end of the word.
-    val glow = when {
-        fraction <= 0f || fraction >= 1f -> 0f
-        fraction < 0.15f -> fraction / 0.15f
-        fraction < 0.6f -> 1f
-        else -> 1f - (fraction - 0.6f) / 0.4f
-    }
-
-    val brush = Brush.horizontalGradient(
-        colorStops = arrayOf(
-            0f to litColor,
-            (fraction).coerceIn(0f, 1f) to litColor,
-            (fraction + 0.001f).coerceIn(0f, 1f) to baseColor,
-            1f to baseColor,
-        ),
-    )
-
-    val shadow = Shadow(
-        color = Color.White.copy(alpha = 0.55f * glow),
-        blurRadius = 18f * glow,
-    )
-    val textStyle = if (fraction <= 0f) {
-        TextStyle(color = baseColor, fontSize = fontSize, fontWeight = fontWeight, shadow = shadow)
-    } else {
-        TextStyle(brush = brush, fontSize = fontSize, fontWeight = fontWeight, shadow = shadow)
-    }
-
-    Text(
-        text = word.text,
-        style = textStyle,
-        modifier = Modifier.graphicsLayer {
+    Box(
+        Modifier.fillMaxWidth().graphicsLayer {
+            alpha = opacity
             scaleX = scale
             scaleY = scale
-            translationY = yOffsetFraction * fontSize.value * density
-        },
-    )
-}
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+            clip = false
+        }
+    ) {
+        Surface(
+            onClick = onSeek,
+            modifier = Modifier.fillMaxWidth(),
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Color.Transparent,
+                focusedContainerColor = Color(0x1AFFFFFF),
+            ),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                val mainText: AnnotatedString? = if (isActive && line.words.isNotEmpty()) {
+                    val activeIdx = line.words.indexOfLast { it.startMs <= progressMs }
+                    buildAnnotatedString {
+                        line.words.forEachIndexed { i, word ->
+                            if (i > 0) append(" ")
+                            val dur = (word.endMs - word.startMs).coerceAtLeast(1L)
+                            val isCurrent = i == activeIdx
+                            val frac = if (isCurrent)
+                                ((progressMs - word.startMs).toFloat() / dur).coerceIn(0f, 1f)
+                            else 0f
+                            val color = when {
+                                i < activeIdx -> Color.White
+                                isCurrent -> lerp(Color(0xFF8E8E93), Color.White, frac)
+                                else -> Color(0xFF8E8E93)
+                            }
+                            val glow = if (isCurrent && dur > 700L)
+                                Shadow(color = Color.White.copy(alpha = 0.55f * frac), blurRadius = 18f)
+                            else null
+                            withStyle(SpanStyle(color = color, shadow = glow)) {
+                                append(word.text)
+                            }
+                        }
+                    }
+                } else null
 
-private fun easeOutCubic(t: Float): Float {
-    val f = t - 1f
-    return f * f * f + 1f
+                val mainStyle = when {
+                    isActive -> TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold, lineHeight = 34.sp,
+                        color = if (mainText == null) Color.White else Color.Unspecified)
+                    isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 27.sp)
+                    else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 27.sp)
+                }
+                Text(text = mainText ?: AnnotatedString(line.text), style = mainStyle)
+
+                val bg = line.background
+                if (bg != null && bg.text.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
+                    val bgLive = progressMs <= bg.endMs + 500L
+                    val bgText: AnnotatedString? = if (bgLive && bg.words.isNotEmpty()) {
+                        val bgActiveIdx = bg.words.indexOfLast { it.startMs <= progressMs }
+                        buildAnnotatedString {
+                            bg.words.forEachIndexed { i, word ->
+                                if (i > 0) append(" ")
+                                withStyle(SpanStyle(color = if (i <= bgActiveIdx) Color(0xFFE0E0E0) else Color(0xFF6E6E73))) {
+                                    append(word.text)
+                                }
+                            }
+                        }
+                    } else null
+                    Text(
+                        text = bgText ?: AnnotatedString(bg.text),
+                        style = TextStyle(
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (bgText == null) (if (bgLive) Color(0xFFE0E0E0) else Color(0xFF6E6E73)) else Color.Unspecified,
+                        ),
+                    )
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -634,6 +584,7 @@ private fun QueuePanel(queue: List<com.applemusicktv.data.model.Song>, currentIn
 @Composable
 private fun TransportButton(icon: String, onClick: () -> Unit, large: Boolean = false, modifier: Modifier = Modifier) {
     val size = if (large) 52.dp else 40.dp
+    val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
     Surface(
         onClick = onClick,
         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
@@ -641,8 +592,9 @@ private fun TransportButton(icon: String, onClick: () -> Unit, large: Boolean = 
             containerColor        = if (large) Color(0xFFFA233B) else Color(0x26FFFFFF),
             focusedContainerColor = if (large) Color(0xFFE01F33) else Color(0x40FFFFFF),
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.12f),
-        glow  = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color(0xFFFA233B).copy(alpha = 0.5f), 12.dp)),
+        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.12f),
+        glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color(0xFFFA233B).copy(alpha = 0.5f), 12.dp)),
+        border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
         modifier = modifier.size(size),
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {

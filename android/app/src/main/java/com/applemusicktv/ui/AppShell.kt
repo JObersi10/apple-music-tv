@@ -1,10 +1,13 @@
 package com.applemusicktv.ui
 
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -35,6 +38,16 @@ fun AppShell(modifier: Modifier = Modifier) {
     val isOnNowPlaying = currentRoute == Screen.NowPlaying.route
 
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
+
+    // Keep screen on while music is playing; stay on indefinitely on Now Playing tab.
+    val playerState by playerVm.state.collectAsState()
+    val keepScreenOn = playerState.isPlaying || isOnNowPlaying
+    val activity = LocalContext.current as? Activity
+    DisposableEffect(keepScreenOn) {
+        if (keepScreenOn) activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
 
     val goToNowPlaying by navVm.goToNowPlaying.collectAsState()
     LaunchedEffect(goToNowPlaying) {

@@ -1,24 +1,12 @@
 import { Hono } from "hono";
-import { setMUT, getBearerToken, getStatus, setBearerToken, setStorefront, getMUT, getStorefront } from "../auth";
+import { setMUT, getBearerToken, getStatus, setBearerToken, setStorefront, getMUT, getStorefront, scrapeBearerFromWeb } from "../auth";
 import axios from "axios";
 
 const auth = new Hono();
 
-// Scrape bearer JWT directly from music.apple.com (same method the library uses)
-async function scrapeBearerToken(): Promise<string> {
-  const ax = axios.create({ baseURL: "https://music.apple.com", headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15" } });
-  const html: string = (await ax.get("/")).data;
-  const scriptMatch = html.match(/crossorigin src="(\/assets\/index.+?\.js)"/);
-  if (!scriptMatch) throw new Error("Could not find script asset URL");
-  const js: string = (await ax.get(scriptMatch[1])).data;
-  const tokenMatch = js.match(/(eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*)/);
-  if (!tokenMatch) throw new Error("Could not find JWT in script");
-  return tokenMatch[1];
-}
-
 auth.get("/status", async (c) => {
   if (!getBearerToken()) {
-    try { const token = await scrapeBearerToken(); if (token) setBearerToken(token); } catch (e) { console.warn("Bearer scrape failed:", e); }
+    try { const token = await scrapeBearerFromWeb(); if (token) setBearerToken(token); } catch (e) { console.warn("Bearer scrape failed:", e); }
   }
   if (getMUT() && getBearerToken() && getStorefront() === "us") {
     detectStorefront(getMUT(), getBearerToken()).catch(() => {});

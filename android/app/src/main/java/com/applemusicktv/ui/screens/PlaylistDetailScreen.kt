@@ -10,12 +10,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
@@ -170,9 +173,11 @@ private enum class PlaylistSort(val label: String) {
 private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel) {
     items(tracks.size) { idx ->
         val song = tracks[idx]
+        var menuSongState by remember { mutableStateOf<Song?>(null) }
         @OptIn(ExperimentalTvMaterial3Api::class)
         Surface(
-            onClick = { playerVm.playAlbum(tracks, idx) },
+            onClick     = { playerVm.playAlbum(tracks, idx) },
+            onLongClick = { menuSongState = song },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
@@ -198,5 +203,43 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
                 Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFF555555))
             }
         }
+        menuSongState?.let { s ->
+            PlaylistTrackContextMenu(
+                song        = s,
+                onDismiss   = { menuSongState = null },
+                onPlayNext  = { playerVm.playNext(s); menuSongState = null },
+                onAddToQueue = { playerVm.addToQueue(s); menuSongState = null },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PlaylistTrackContextMenu(song: Song, onDismiss: () -> Unit, onPlayNext: () -> Unit, onAddToQueue: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        val firstFocus = remember { FocusRequester() }
+        LaunchedEffect(Unit) { kotlinx.coroutines.delay(500); runCatching { firstFocus.requestFocus() } }
+        Column(
+            Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(song.title, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(12.dp))
+            PlaylistContextItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
+            PlaylistContextItem("Add to Queue", onAddToQueue)
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PlaylistContextItem(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+    ) {
+        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp))
     }
 }

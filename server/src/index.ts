@@ -16,6 +16,21 @@ export const music = new AppleMusic({ region: Region.US, authType: AuthType.Scra
 await music.init()
 console.log("✓ Apple Music client initialised")
 
+// Clear stream cache on startup so stale files don't persist across restarts.
+import fs from "fs"
+import os from "os"
+import path from "path"
+const STREAM_CACHE = path.join(os.tmpdir(), "am_stream_cache")
+try {
+  if (fs.existsSync(STREAM_CACHE)) {
+    fs.rmSync(STREAM_CACHE, { recursive: true, force: true })
+  }
+  fs.mkdirSync(STREAM_CACHE, { recursive: true })
+  console.log("✓ Stream cache cleared")
+} catch (e: any) {
+  console.warn("⚠ Could not clear stream cache:", e.message)
+}
+
 // Scrape bearer JWT at startup so stream routes work immediately
 import { setBearerToken } from "./auth"
 import axios from "axios"

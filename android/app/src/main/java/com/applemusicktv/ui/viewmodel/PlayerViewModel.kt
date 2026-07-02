@@ -65,10 +65,10 @@ class PlayerViewModel @Inject constructor(
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state
 
-    // Guards the one-shot auto-retry in onPlayerError.
     private var lastErrorKey: String? = null
-
     private var mediaSession: androidx.media3.session.MediaSession? = null
+    private var lyricsJob: kotlinx.coroutines.Job? = null
+    private var motionJob: kotlinx.coroutines.Job? = null
 
     // True while the on-device (Widevine) path is driving playback, so the
     // error handler doesn't bounce back to the proxy in a loop.
@@ -89,8 +89,24 @@ class PlayerViewModel @Inject constructor(
             androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                15_000,  // min buffer before playback starts
+                60_000,  // max buffer (pre-cache 60s ahead)
+                1_500,   // buffer to start after initial load
+                3_000,   // buffer to restart after rebuffer
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
+            .setRenderersFactory(
+                DefaultRenderersFactory(context)
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                    .setEnableDecoderFallback(true)
+            )
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -130,7 +146,12 @@ class PlayerViewModel @Inject constructor(
                         Log.i("PlayerVM", "Proxy unreachable — switching to on-device standalone")
                         playStandalone(song)
                     } else {
-                        player.prepare()
+                        // Don't re-prepare if we're at/near the end — that replays the song.
+                        val dur = player.duration
+                        val pos = player.currentPosition
+                        if (dur <= 0L || pos < dur - 5_000L) {
+                            player.prepare()
+                        }
                     }
                 }
             }
@@ -323,30 +344,32 @@ class PlayerViewModel @Inject constructor(
         _state.update { it.copy(queue = q) }
     }
 
-    private fun loadLyrics(songId: String) = viewModelScope.launch {
-        repo.getLyrics(songId).onSuccess { lines ->
-            // Only apply if we're still on the song we fetched for — otherwise a
-            // slow fetch could drop the previous song's lyrics onto a new one.
-            if (_state.value.currentSong?.id == songId) {
-                _state.update { it.copy(lyrics = lines) }
+    private fun loadLyrics(songId: String) {
+        lyricsJob?.cancel()
+        lyricsJob = viewModelScope.launch {
+            repo.getLyrics(songId).onSuccess { lines ->
+                if (_state.value.currentSong?.id == songId)
+                    _state.update { it.copy(lyrics = lines) }
             }
         }
     }
 
-    private fun loadMotion(songId: String) = viewModelScope.launch {
-        _state.update { it.copy(motionUrl = null) }
-        repo.getMotion(songId).onSuccess { url ->
-            // Only apply if the song hasn't changed since we started fetching.
-            if (_state.value.currentSong?.id == songId) {
-                _state.update { it.copy(motionUrl = url) }
+    private fun loadMotion(songId: String) {
+        motionJob?.cancel()
+        motionJob = viewModelScope.launch {
+            _state.update { it.copy(motionUrl = null) }
+            repo.getMotion(songId).onSuccess { url ->
+                if (_state.value.currentSong?.id == songId)
+                    _state.update { it.copy(motionUrl = url) }
             }
         }
     }
 
     private fun pollProgress() = viewModelScope.launch {
         while (true) {
-            _state.update { it.copy(progressMs = player.currentPosition) }
-            delay(200)
+            if (player.isPlaying)
+                _state.update { it.copy(progressMs = player.currentPosition) }
+            delay(if (player.isPlaying) 200L else 1_000L)
         }
     }
 
@@ -363,7 +386,12 @@ class PlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         saveState()
+        lyricsJob?.cancel()
+        motionJob?.cancel()
         mediaSession?.release()
+        mediaSession = null
+        player.stop()
+        player.clearMediaItems()
         player.release()
         super.onCleared()
     }

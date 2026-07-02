@@ -16,10 +16,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class SortField { DEFAULT, NAME, ARTIST, DATE }
+enum class SortField { DEFAULT, NAME, ARTIST, DATE, RECENT }
 enum class SortDir   { ASC, DESC }
 
 data class SortState(val field: SortField = SortField.DEFAULT, val dir: SortDir = SortDir.ASC)
@@ -53,8 +54,17 @@ class LibraryViewModel @Inject constructor(
     private val songsAdapter     = moshi.adapter<List<Song>>(Types.newParameterizedType(List::class.java, Song::class.java))
 
     init {
-        loadCache()   // show last-known library instantly
-        refresh()     // then fetch fresh in the background and update
+        loadCache()
+        loadSavedSort()
+        refresh()
+    }
+
+    private fun loadSavedSort() {
+        val fieldIdx = cachePrefs.getInt("sort_field", -1)
+        if (fieldIdx < 0) return
+        val field = SortField.entries.getOrNull(fieldIdx) ?: return
+        val dir = SortDir.entries.getOrNull(cachePrefs.getInt("sort_dir", 0)) ?: SortDir.ASC
+        _state.value = _state.value.copy(sort = SortState(field, dir))
     }
 
     /** Load the persisted library so content shows immediately on cold start. */
@@ -85,15 +95,41 @@ class LibraryViewModel @Inject constructor(
     fun setSort(field: SortField) {
         val cur = _state.value.sort
         val newDir = if (cur.field == field && cur.dir == SortDir.ASC) SortDir.DESC else SortDir.ASC
-        _state.value = _state.value.copy(sort = SortState(field, newDir))
+        val newSort = SortState(field, newDir)
+        _state.value = _state.value.copy(sort = newSort)
+        cachePrefs.edit {
+            putInt("sort_field", newSort.field.ordinal)
+            putInt("sort_dir", newSort.dir.ordinal)
+        }
+    }
+
+    private fun playHistory(): Map<String, Long> {
+        val json = cachePrefs.getString("play_history", null) ?: return emptyMap()
+        return try {
+            val type = Types.newParameterizedType(Map::class.java, String::class.java, Long::class.javaObjectType)
+            moshi.adapter<Map<String, Long>>(type).fromJson(json) ?: emptyMap()
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    fun recordPlaylistPlay(id: String) {
+        val history = playHistory().toMutableMap()
+        history[id] = System.currentTimeMillis()
+        try {
+            val type = Types.newParameterizedType(Map::class.java, String::class.java, Long::class.javaObjectType)
+            cachePrefs.edit { putString("play_history", moshi.adapter<Map<String, Long>>(type).toJson(history)) }
+        } catch (_: Exception) {}
     }
 
     fun sortedPlaylists(): List<PlaylistDto> {
         val s = _state.value
         val list = s.playlists
         val sorted = when (s.sort.field) {
-            SortField.NAME -> list.sortedBy { it.name.lowercase() }
-            else           -> list
+            SortField.NAME   -> list.sortedBy { it.name.lowercase() }
+            SortField.RECENT -> {
+                val h = playHistory()
+                list.sortedByDescending { h[it.id] ?: 0L }
+            }
+            else -> list
         }
         return if (s.sort.dir == SortDir.DESC) sorted.reversed() else sorted
     }
@@ -132,7 +168,10 @@ class LibraryViewModel @Inject constructor(
 
     fun playPlaylist(id: String, playerVm: PlayerViewModel) = viewModelScope.launch {
         repo.getPlaylistTracks(id).onSuccess { songs ->
-            if (songs.isNotEmpty()) playerVm.playAlbum(songs, 0)
+            if (songs.isNotEmpty()) {
+                recordPlaylistPlay(id)
+                playerVm.playAlbum(songs, 0)
+            }
         }
     }
 
@@ -142,15 +181,34 @@ class LibraryViewModel @Inject constructor(
             _state.value = LibraryState(hasMut = false)
             return
         }
-        viewModelScope.launch {
-            // Keep any cached content visible while we refresh.
-            _state.value = _state.value.copy(isLoading = true, hasMut = true)
-            val playlists = repo.getLibraryPlaylists().getOrDefault(emptyList())
-            val albums    = repo.getLibraryAlbums().getOrDefault(emptyList())
-            val artists   = repo.getLibraryArtists().getOrDefault(emptyList())
-            val songs     = repo.getLibrarySongs().getOrDefault(emptyList())
-            _state.value = LibraryState(hasMut = true, playlists = playlists, albums = albums, artists = artists, songs = songs, sort = _state.value.sort)
-            saveCache(playlists, albums, artists, songs)
+        _state.update { it.copy(isLoading = true, hasMut = true) }
+        // Fetch each section independently — each shows up the moment it arrives.
+        val job = viewModelScope.launch {
+            launch {
+                repo.getLibraryPlaylists().onSuccess { p ->
+                    _state.update { it.copy(playlists = p) }
+                    cachePrefs.edit { putString("playlists", playlistsAdapter.toJson(p)) }
+                }
+            }
+            launch {
+                repo.getLibraryAlbums().onSuccess { a ->
+                    _state.update { it.copy(albums = a) }
+                    cachePrefs.edit { putString("albums", albumsAdapter.toJson(a)) }
+                }
+            }
+            launch {
+                repo.getLibraryArtists().onSuccess { art ->
+                    _state.update { it.copy(artists = art) }
+                    cachePrefs.edit { putString("artists", artistsAdapter.toJson(art)) }
+                }
+            }
+            launch {
+                repo.getLibrarySongs().onSuccess { s ->
+                    _state.update { it.copy(songs = s) }
+                    cachePrefs.edit { putString("songs", songsAdapter.toJson(s)) }
+                }
+            }
         }
+        job.invokeOnCompletion { _state.update { it.copy(isLoading = false) } }
     }
 }

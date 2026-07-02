@@ -7,12 +7,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -42,6 +45,16 @@ fun AlbumDetailScreen(
     }
 
     val album = state.album ?: return
+    var menuSong by remember { mutableStateOf<Song?>(null) }
+
+    menuSong?.let { s ->
+        AlbumTrackContextMenu(
+            song         = s,
+            onDismiss    = { menuSong = null },
+            onPlayNext   = { playerVm.playNext(s); menuSong = null },
+            onAddToQueue = { playerVm.addToQueue(s); menuSong = null },
+        )
+    }
 
     Row(modifier = modifier.fillMaxSize().padding(48.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
         // Left: artwork + info only
@@ -108,9 +121,10 @@ fun AlbumDetailScreen(
 
             itemsIndexed(state.tracks, key = { _, t -> t.id }) { index, track ->
                 TrackRow(
-                    track   = track,
-                    index   = index + 1,
-                    onClick = { playerVm.playAlbum(state.tracks, index) },
+                    track       = track,
+                    index       = index + 1,
+                    onClick     = { playerVm.playAlbum(state.tracks, index) },
+                    onLongClick = { menuSong = track },
                 )
             }
         }
@@ -119,9 +133,40 @@ fun AlbumDetailScreen(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TrackRow(track: Song, index: Int, onClick: () -> Unit) {
+private fun AlbumTrackContextMenu(song: Song, onDismiss: () -> Unit, onPlayNext: () -> Unit, onAddToQueue: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        val firstFocus = remember { FocusRequester() }
+        LaunchedEffect(Unit) { kotlinx.coroutines.delay(500); runCatching { firstFocus.requestFocus() } }
+        Column(
+            Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(song.title, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(12.dp))
+            AlbumContextItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
+            AlbumContextItem("Add to Queue", onAddToQueue)
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun AlbumContextItem(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+    ) {
+        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp))
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun TrackRow(track: Song, index: Int, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
+    Surface(
+        onClick     = onClick,
+        onLongClick = onLongClick,
         modifier = Modifier.fillMaxWidth(),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
         colors   = ClickableSurfaceDefaults.colors(
