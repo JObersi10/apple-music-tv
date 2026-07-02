@@ -55,7 +55,13 @@ home.get("/", async (c) => {
   if (mut) {
     try {
       const res = await axios.get(`${APPLE}/v1/me/recommendations`, {
-        params: { limit: 20 },
+        params: {
+          limit: 20,
+          "include[personal-recommendation]": "contents",
+          "fields[albums]": "artistName,artwork,name,releaseDate,trackCount,genreNames",
+          "fields[playlists]": "artwork,curatorName,name,playlistType",
+          "fields[stations]": "artwork,editorialNotes,name",
+        },
         headers: h,
       });
       const topPicks: any[] = [];
@@ -66,7 +72,11 @@ home.get("/", async (c) => {
         const title: string = rec.attributes?.title?.stringForDisplay ?? "For You";
         const contents: any[] = rec.relationships?.contents?.data ?? [];
         const recType: string = rec.attributes?.resourceTypes?.[0] ?? "";
-        const items: any[] = contents.map(itemFromRaw).filter(Boolean);
+        const items: any[] = contents.map((item: any) => {
+          if (item.type === "albums") { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }
+          if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName } : null; }
+          return itemFromRaw(item);
+        }).filter(Boolean);
         if (items.length === 0) continue;
 
         if (recType === "stations" || title.toLowerCase().includes("station")) {
