@@ -59,7 +59,7 @@ GitHub Actions (`.github/workflows/android.yml`) builds the debug APK on every p
 - `playAlbum(songs, idx)` defaults `useFullStream = hasMUT()`
 - State (queue + position) persisted to SharedPreferences on `onCleared()`
 - Stream serves a **remuxed progressive MP4** (ffmpeg `+faststart` after mp4decrypt) with HTTP Range → ExoPlayer seeks instantly. Apple's decrypted output is fragmented `hlsf`, which ExoPlayer plays unreliably — the remux is required.
-- **Multi-segment HLS**: some tracks (e.g. Eminem, Toby Fox) use fMP4 HLS with init-segment + multiple audio segments. `stream_decrypt.py:fetch_encrypted` downloads ALL segments and concatenates them before decryption. Grabbing only `#EXT-X-MAP` (init) was the root cause of choppy/silent audio on those tracks.
+- **Multi-segment HLS**: some tracks (e.g. Drake, Eminem) use fMP4 HLS with init-segment + multiple audio segments. `stream_decrypt.py:fetch_encrypted` downloads ALL segments and concatenates them before decryption. Grabbing only `#EXT-X-MAP` (init) causes choppy/silent audio. Variant selection capped at 500 kbps to avoid lossless ALAC variants (which would produce huge files). fMP4 multi-seg tracks get AAC re-encode (`-c:a aac -b:a 256k`) to fix `C2SoftAacDec 0x4004` errors from per-segment header variations; regular HLS uses `-c copy`.
 - ExoPlayer built with a 60s connect/read `DefaultHttpDataSource` (first decrypt is slow) + one-shot re-prepare on error. `DefaultLoadControl`: min 15s / max 60s buffer. `DefaultRenderersFactory` with `EXTENSION_RENDERER_MODE_PREFER` + decoder fallback.
 - Remote/controller media buttons: handled in `MainActivity.dispatchKeyEvent` AND via a Media3 `MediaSession` (external/Bluetooth controllers route through MediaSession, not dispatchKeyEvent). Rewind/FF keys mapped to prev/next.
 - `next()`/`prev()` use `seekToNext/Previous` (smart, wrap at ends); bare `*MediaItem` no-op at boundaries.
@@ -70,7 +70,7 @@ GitHub Actions (`.github/workflows/android.yml`) builds the debug APK on every p
 ## Server routes
 - `GET /api/search?term=` — catalog search
 - `GET /api/stream/:songId` — decrypts CENC to a **seekable cache file** (`$TMPDIR/am_stream_cache/`) then serves it with HTTP **Range support** (206) so ExoPlayer can scrub instantly. `stream_decrypt.py` takes `outPath` arg → writes file + prints `ok` (no stdout piping). Concurrent Range requests share one decrypt via `inFlight` map. Asset pick: `28:ctrp256` → any `ctrp` → any URL'd asset (region fallback). On boot, calls `ensureBearer()` (scrapes if empty) and strips non-numeric prefixes (e.g. `a.12345`) from catalog IDs before sending to webPlayback. Falls back to alternate ID form (library↔catalog) if songList is empty.
-- `GET /api/lyrics/:songId` — **Apple first** (word-by-word TTML, parsed via real tag-tree walk that separates `ttm:role="x-bg"` background-vocal spans). **Fallback: lrclib.net** (line-synced LRC, no auth) when Apple has none — resolves song meta (title/artist/album/duration) to query lrclib. Returns `{lines, source: apple|lrclib|none}`. TTML spans → `words[]`, bg vocals → `background{words[]}`.
+- `GET /api/lyrics/:songId` — **Apple first**: tries `/syllable-lyrics` (word-level TTML) then `/lyrics` (line-level). TTML parsed via tag-tree walk that separates `ttm:role="x-bg"` bg-vocal spans → `words[]`. Timestamps strip trailing `s` suffix; span matching is namespace-tolerant (`tt:span`). `itunes:timing="Word"` = word-by-word; `"Line"` = line-sync only. **Fallback: lrclib.net** (line-synced LRC, no auth). Returns `{lines, source: apple|lrclib|none}`.
 - `GET /api/motion/:songId` — resolves song→album, requests album `?extend=editorialVideo`, returns `{video}` = square motion-art HLS loop URL (or null). Powers animated Now Playing cover.
 - `GET /api/library/songs|albums|playlists|artists` — personal library (needs MUT)
 - `GET /api/library/playlists/:id/tracks` — playlist tracks. `p.xxx` → library endpoint; `pl.xxx` → catalog endpoint (editorial/shared/generated playlists)
@@ -96,13 +96,13 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - Default view: lyrics (synced timed, past dimmed, active white+large, future dark)
 - Menu button toggles to queue view (odd toggleCount = queue, even = lyrics)
 - NowPlayingBar hidden when on Now Playing screen
-- **Lyrics engine**: kinetic/karaoke word-level wipe animation. Active line scales to 1.12× with tempo-aware spring (high wps → `StiffnessHigh`/no-bounce; slow → `StiffnessMediumLow`/low-bounce). Inactive future lines blurred 1.5dp. Gap ≥4s → pulsing 3-dot placeholder with sequential stagger; fades out 500ms before next lyric. Lyrics jump-scroll instantly on first load (no "scroll from top" animation); animate after.
+- **Lyrics engine**: per-word color via `AnnotatedString` + `SpanStyle`. Active word lerps grey→white over its duration; slow words (>700ms) get a white glow shadow with triangle envelope (fades out before next word). Active line scales 1.08×. Background vocals: -300ms offset, stay active size until their own `endMs`, same lerp/glow as main. Gap ≥4s → 3-dot placeholder (sequential grey→white grow, then all shrink together). Lyrics jump-scroll instantly on first load; animate after. Only active line receives live `progressMs` — inactive lines get clamped values to skip per-word work.
 - Long-press context menu: `delay(150)` before `requestFocus()` so touch-up from long-press doesn't auto-trigger the first item.
 - Transport buttons: `border = ClickableSurfaceDefaults.border(noBorder, noBorder)` to suppress yellow focus border.
 
 ## Library
 - Sort bar above content: SortField (DEFAULT/NAME/ARTIST/DATE) × SortDir (ASC/DESC), reversal applies to all fields incl. DEFAULT
-- Playlist cards have ▶ button on right side of name row
+- Playlist cards have ▶ button on right side of name row; long-press to **pin** → pin floats to top (alphabetical among pins), pin icon overlay top-right. Pins persisted to `library_cache` SharedPreferences (`pinned_playlists` key, comma-separated IDs).
 - Play + Shuffle buttons at top of album/playlist track lists
 - **Persistent cache**: `LibraryViewModel` serializes lists to `library_cache` SharedPreferences (Moshi) → shows instantly on cold start, refreshes in background. Don't blank content to a spinner while `isLoading` if cached data exists (focus escapes to top bar otherwise).
 - Long-press (hold OK) a song → context menu (Play Next / Add to Queue); menu auto-focuses first item.
@@ -113,7 +113,7 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - Library artist ids (`r.`) resolve to catalog first. Sections: hero header, bio, top songs (play/shuffle), latest release, albums, featured, similar artists.
 
 ## Now Playing background
-- Animated **color-pool visualizer** (`DynamicBackground`): several drifting/pulsing radial blobs of Palette swatches from the cover, over black. No artwork image → never pixelated. Fullscreen (AppShell overlays nav bar on top layer with `padding(top=0)` for Now Playing).
+- Animated **color-pool visualizer** (`DynamicBackground`): 3 radial blobs (reduced from 5 for Fire TV perf) driven by 2 infinite animators. Palette swatches from cover art, over black. No artwork image → never pixelated. Fullscreen (AppShell overlays nav bar on top layer with `padding(top=0)` for Now Playing). Stream cache cleared on server startup.
 - Motion (animated) album art plays as a muted looping video over the cover when `GET /api/motion/:songId` returns one.
 
 ## Phone web server (port 8080)

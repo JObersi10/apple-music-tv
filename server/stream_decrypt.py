@@ -55,41 +55,69 @@ async def get_kid_and_key(adam_id: str, key_uri: str, bearer: str, mut: str):
     finally:
         cdm.close(session)
 
-async def get_mp4_url(stream_url: str, bearer: str, mut: str) -> str:
-    """Resolve the actual MP4 file URL from the HLS playlist (follows master → media)."""
-    headers = {'Authorization': f'Bearer {bearer}', 'Cookie': f'media-user-token={mut}'}
-    async with httpx.AsyncClient() as client:
-        pl = (await client.get(stream_url, headers=headers)).text
+import re as _re
 
+async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str) -> bool:
+    """Download encrypted audio; returns True if fMP4 multi-seg (needs AAC re-encode)."""
+    headers = {'Authorization': f'Bearer {bearer}', 'Cookie': f'media-user-token={mut}'}
+
+    async with httpx.AsyncClient() as client:
+        pl_text = (await client.get(stream_url, headers=headers, timeout=60.0)).text
     base = stream_url.rsplit('/', 1)[0] + '/'
 
-    # If master playlist, follow the best-bandwidth variant
-    if '#EXT-X-STREAM-INF' in pl:
+    # Follow master playlist; cap at 500 kbps to skip lossless ALAC variants.
+    MAX_BW = 500_000
+    if '#EXT-X-STREAM-INF' in pl_text:
         best_bw, best_url = -1, ''
-        lines = pl.splitlines()
+        fallback_bw, fallback_url = 999_999_999, ''
+        lines = pl_text.splitlines()
         for i, line in enumerate(lines):
             if line.startswith('#EXT-X-STREAM-INF'):
-                import re
-                bw_m = re.search(r'BANDWIDTH=(\d+)', line)
+                bw_m = _re.search(r'BANDWIDTH=(\d+)', line)
                 bw = int(bw_m.group(1)) if bw_m else 0
                 if i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if next_line and not next_line.startswith('#') and bw >= best_bw:
-                        best_bw = bw
-                        best_url = next_line if next_line.startswith('http') else base + next_line
+                    nxt = lines[i + 1].strip()
+                    if not nxt or nxt.startswith('#'):
+                        continue
+                    url = nxt if nxt.startswith('http') else base + nxt
+                    if bw <= MAX_BW and bw >= best_bw:
+                        best_bw, best_url = bw, url
+                    if bw < fallback_bw:
+                        fallback_bw, fallback_url = bw, url
+        best_url = best_url or fallback_url
         if not best_url:
             raise ValueError("No variant in master playlist")
         async with httpx.AsyncClient() as client:
-            pl = (await client.get(best_url, headers=headers)).text
+            pl_text = (await client.get(best_url, headers=headers, timeout=60.0)).text
         base = best_url.rsplit('/', 1)[0] + '/'
 
-    for line in pl.splitlines():
+    init_url = None
+    seg_urls = []
+    for line in pl_text.splitlines():
+        line = line.strip()
         if line.startswith('#EXT-X-MAP:URI="'):
             uri = line.split('"')[1]
-            return uri if uri.startswith('http') else base + uri
-        if line and not line.startswith('#'):
-            return line if line.startswith('http') else base + line
-    raise ValueError(f"No media URL found in playlist:\n{pl[:500]}")
+            init_url = uri if uri.startswith('http') else base + uri
+        elif line and not line.startswith('#'):
+            seg_urls.append(line if line.startswith('http') else base + line)
+
+    if not init_url and not seg_urls:
+        raise ValueError(f"No media URLs in playlist:\n{pl_text[:500]}")
+
+    # fMP4 multi-seg: explicit init segment + multiple audio segments.
+    # Regular HLS has no init segment — single download, no re-encode needed.
+    is_multi_seg = init_url is not None and len(seg_urls) > 1
+    urls = ([init_url] if init_url else []) + seg_urls
+
+    async with httpx.AsyncClient() as client:
+        with open(enc_path, 'wb') as f:
+            for url in urls:
+                async with client.stream('GET', url, headers=headers, timeout=120.0) as resp:
+                    resp.raise_for_status()
+                    async for chunk in resp.aiter_bytes(65536):
+                        f.write(chunk)
+
+    return is_multi_seg
 
 async def run(args: dict):
     adam_id    = args['adamId']
@@ -103,20 +131,11 @@ async def run(args: dict):
     out_path   = args.get('outPath')
 
     kid_hex, key_hex = await get_kid_and_key(adam_id, key_uri, bearer, mut)
-    mp4_url = await get_mp4_url(stream_url, bearer, mut)
 
     enc_path = f'/tmp/am_enc_{adam_id}.mp4'
     dec_path = out_path or f'/tmp/am_dec_{adam_id}.mp4'
     try:
-        # Download encrypted MP4
-        async with httpx.AsyncClient() as client:
-            async with client.stream('GET', mp4_url, timeout=120.0,
-                                     headers={'Authorization': f'Bearer {bearer}',
-                                              'Cookie': f'media-user-token={mut}'}) as resp:
-                resp.raise_for_status()
-                with open(enc_path, 'wb') as f:
-                    async for chunk in resp.aiter_bytes(65536):
-                        f.write(chunk)
+        is_multi_seg = await fetch_encrypted(stream_url, bearer, mut, enc_path)
 
         # Decrypt with mp4decrypt to a .part file.
         tmp_dec = dec_path + '.part'
@@ -134,9 +153,11 @@ async def run(args: dict):
         # the moov moved to the front (+faststart). This is what makes seeking
         # instant and playback reliable on the Fire TV.
         tmp_remux = dec_path + '.remux.mp4'
+        audio_flags = ['-vn', '-c:a', 'aac', '-b:a', '256k'] if is_multi_seg else ['-c', 'copy']
         ff = subprocess.run(
-            [FFMPEG, '-y', '-v', 'error', '-i', tmp_dec,
-             '-c', 'copy', '-movflags', '+faststart', tmp_remux],
+            [FFMPEG, '-y', '-v', 'error', '-i', tmp_dec]
+            + audio_flags
+            + ['-movflags', '+faststart', tmp_remux],
             capture_output=True,
         )
         if ff.returncode == 0 and os.path.exists(tmp_remux) and os.path.getsize(tmp_remux) > 0:

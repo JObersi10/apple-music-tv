@@ -300,37 +300,32 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String) {
         animateColorAsState(c, tween(1200), label = "blob$i").value
     }
 
+    // Two slow drift timers instead of four — halves animator count on Fire TV.
     val infinite = rememberInfiniteTransition(label = "pool")
-    // A few independent drift phases so blobs move at different rates.
-    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(17_000, easing = LinearEasing), RepeatMode.Reverse), label = "t1")
-    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(23_000, easing = LinearEasing), RepeatMode.Reverse), label = "t2")
-    val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(29_000, easing = LinearEasing), RepeatMode.Reverse), label = "t3")
-    val pulse by infinite.animateFloat(0.85f, 1.15f, infiniteRepeatable(tween(9_000, easing = LinearEasing), RepeatMode.Reverse), label = "pulse")
+    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), RepeatMode.Reverse), label = "t1")
+    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), RepeatMode.Reverse), label = "t2")
 
     Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
         Box(
             Modifier.fillMaxSize().drawBehind {
                 val w = size.width
                 val h = size.height
-                // Blob anchor points drift across the canvas.
+                // 3 blobs instead of 5 — enough visual richness, lighter GPU load.
                 val centers = listOf(
-                    androidx.compose.ui.geometry.Offset(lerp(0.15f, 0.35f, t1) * w, lerp(0.20f, 0.40f, t2) * h),
-                    androidx.compose.ui.geometry.Offset(lerp(0.85f, 0.65f, t2) * w, lerp(0.25f, 0.15f, t3) * h),
-                    androidx.compose.ui.geometry.Offset(lerp(0.20f, 0.40f, t3) * w, lerp(0.80f, 0.65f, t1) * h),
-                    androidx.compose.ui.geometry.Offset(lerp(0.80f, 0.60f, t1) * w, lerp(0.75f, 0.90f, t2) * h),
-                    androidx.compose.ui.geometry.Offset(0.5f * w, lerp(0.45f, 0.55f, t3) * h),
+                    androidx.compose.ui.geometry.Offset(lerp(0.15f, 0.40f, t1) * w, lerp(0.20f, 0.45f, t2) * h),
+                    androidx.compose.ui.geometry.Offset(lerp(0.85f, 0.60f, t2) * w, lerp(0.20f, 0.55f, t1) * h),
+                    androidx.compose.ui.geometry.Offset(lerp(0.30f, 0.55f, t1) * w, lerp(0.80f, 0.60f, t2) * h),
                 )
-                val baseRadius = maxOf(w, h) * 0.55f
-                animated.forEachIndexed { i, color ->
-                    val center = centers[i % centers.size]
-                    val r = baseRadius * (if (i % 2 == 0) pulse else (2f - pulse))
+                val baseRadius = maxOf(w, h) * 0.60f
+                animated.take(3).forEachIndexed { i, color ->
+                    val center = centers[i]
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(color.copy(alpha = 0.55f), color.copy(alpha = 0.0f)),
+                            colors = listOf(color.copy(alpha = 0.50f), color.copy(alpha = 0.0f)),
                             center = center,
-                            radius = r,
+                            radius = baseRadius,
                         ),
-                        radius = r,
+                        radius = baseRadius,
                         center = center,
                     )
                 }
@@ -379,17 +374,18 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
         contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        items(lyrics.size) { idx ->
+        items(lyrics.size, key = { lyrics[it].startMs }) { idx ->
             val line = lyrics[idx]
             val isActive = idx == activeIndex
             val isPast = idx < passedIndex || (idx == passedIndex && activeIndex == -1)
+            // Only pass progressMs into active line — inactive lines skip per-word work.
+            val lineProgress = if (isActive) progressMs else if (isPast) line.endMs else line.startMs - 1L
 
             val prevEnd = if (idx > 0) lyrics[idx - 1].endMs else 0L
             val gapMs = line.startMs - prevEnd
             val inGap = progressMs in prevEnd until line.startMs
 
             if (gapMs >= GAP_THRESHOLD_MS && inGap && idx == passedIndex + 1) {
-                // Fade out dots 500ms before next lyric starts.
                 val dotsAlpha = if (line.startMs - progressMs < GAP_FADEOUT_MS)
                     ((line.startMs - progressMs).toFloat() / GAP_FADEOUT_MS).coerceIn(0f, 1f)
                 else 1f
@@ -404,7 +400,7 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
                 line = line,
                 isActive = isActive,
                 isPast = isPast,
-                progressMs = progressMs,
+                progressMs = lineProgress,
                 onSeek = { onSeek(line.startMs) },
             )
         }
