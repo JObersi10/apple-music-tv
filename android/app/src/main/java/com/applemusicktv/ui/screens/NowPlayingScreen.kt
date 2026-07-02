@@ -12,8 +12,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -48,6 +53,9 @@ import coil.request.ImageRequest
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -353,25 +361,57 @@ private const val GAP_FADEOUT_MS    = 500L
 private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long) -> Unit) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
 
     val passedIndex = lyrics.indexOfLast { it.startMs <= progressMs }
     val activeIndex = if (passedIndex >= 0 && progressMs <= lyrics[passedIndex].endMs + LINE_END_GRACE_MS) passedIndex else -1
 
     val scrollAnchor = passedIndex.coerceAtLeast(0)
     val firstLoad = remember { mutableStateOf(true) }
+
+    // Track user-initiated scrolls so auto-scroll doesn't fight them.
+    // Re-enable auto-scroll 5s after the user stops touching the list.
+    var userScrolled by remember { mutableStateOf(false) }
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput) userScrolled = true
+                return Offset.Zero
+            }
+        }
+    }
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (!listState.isScrollInProgress && userScrolled) {
+            kotlinx.coroutines.delay(5_000)
+            userScrolled = false
+        }
+    }
+
     LaunchedEffect(scrollAnchor, lyrics.size) {
         val target = (scrollAnchor - 3).coerceAtLeast(0)
-        if (firstLoad.value && lyrics.isNotEmpty()) {
+        if (lyrics.isEmpty()) return@LaunchedEffect
+        if (firstLoad.value) {
             listState.scrollToItem(target)
             firstLoad.value = false
-        } else if (!firstLoad.value) {
+        } else if (!userScrolled) {
             scope.launch { listState.animateScrollToItem(target) }
+        }
+    }
+
+    // When navigating back to this screen, scroll to the active line.
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (!firstLoad.value && lyrics.isNotEmpty()) {
+                val target = (passedIndex - 3).coerceAtLeast(0)
+                userScrolled = false
+                listState.scrollToItem(target)
+            }
         }
     }
 
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().padding(end = 16.dp),
+        modifier = Modifier.fillMaxSize().padding(end = 16.dp).nestedScroll(nestedScrollConnection),
         contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
@@ -448,8 +488,8 @@ private fun LyricLineRow(
 ) {
     val targetOpacity = when {
         isActive -> 1f
-        isPast   -> 0.28f
-        else     -> 0.38f
+        isPast   -> 0.18f
+        else     -> 0.25f
     }
     val targetScale = if (isActive) 1.08f else 0.93f
     val opacity by animateFloatAsState(targetOpacity, tween(200), label = "lineOpacity")
