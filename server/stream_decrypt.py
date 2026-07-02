@@ -4,7 +4,7 @@ Decrypts Apple Music CENC audio and writes it to stdout.
 Usage: stream_decrypt.py '<json_args>'
   json_args: {adamId, keyUri, streamUrl, bearer, mut}
 """
-import sys, asyncio, base64, json, subprocess, os, tempfile
+import sys, asyncio, base64, json, subprocess, os, tempfile, time
 
 # Path to the gamdl venv site-packages (provides gamdl + pywidevine). Set via
 # GAMDL_SITE env var in your local .env — never hard-code a personal path here.
@@ -137,19 +137,26 @@ async def run(args: dict):
     # stream to stdout (legacy, non-seekable) and clean up.
     out_path   = args.get('outPath')
 
+    t0 = time.time()
     kid_hex, key_hex = await get_kid_and_key(adam_id, key_uri, bearer, mut)
+    print(f'[timing] license: {time.time()-t0:.1f}s', flush=True)
 
     enc_path = f'/tmp/am_enc_{adam_id}.mp4'
     dec_path = out_path or f'/tmp/am_dec_{adam_id}.mp4'
     try:
+        t1 = time.time()
         is_multi_seg = await fetch_encrypted(stream_url, bearer, mut, enc_path)
+        enc_size = os.path.getsize(enc_path)
+        print(f'[timing] download: {time.time()-t1:.1f}s  multi_seg={is_multi_seg}  enc={enc_size//1024}KB', flush=True)
 
         # Decrypt with mp4decrypt to a .part file.
         tmp_dec = dec_path + '.part'
+        t2 = time.time()
         result = subprocess.run(
             [MP4DECRYPT, '--key', f'{kid_hex}:{key_hex}', enc_path, tmp_dec],
             capture_output=True,
         )
+        print(f'[timing] mp4decrypt: {time.time()-t2:.1f}s  rc={result.returncode}', flush=True)
         if result.returncode != 0:
             sys.stderr.write(result.stderr.decode())
             sys.exit(1)
@@ -161,12 +168,14 @@ async def run(args: dict):
         # instant and playback reliable on the Fire TV.
         tmp_remux = dec_path + '.remux.mp4'
         audio_flags = ['-vn', '-c:a', 'aac', '-b:a', '256k'] if is_multi_seg else ['-c', 'copy']
+        t3 = time.time()
         ff = subprocess.run(
             [FFMPEG, '-y', '-v', 'error', '-i', tmp_dec]
             + audio_flags
             + ['-movflags', '+faststart', tmp_remux],
             capture_output=True,
         )
+        print(f'[timing] ffmpeg: {time.time()-t3:.1f}s  rc={ff.returncode}  flags={audio_flags}', flush=True)
         if ff.returncode == 0 and os.path.exists(tmp_remux) and os.path.getsize(tmp_remux) > 0:
             try:
                 os.remove(tmp_dec)
