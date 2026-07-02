@@ -40,8 +40,7 @@ object DirectNetworkModule {
             val t0 = System.currentTimeMillis()
             val resp = chain.proceed(req)
             val ms = System.currentTimeMillis() - t0
-            val mark = if (resp.isSuccessful) "✓" else "✗"
-            NetworkLog.add("$mark [direct] ${req.method} ${req.url.encodedPath} ${resp.code} ${ms}ms")
+            NetworkLog.add(req.method, req.url.toString(), resp.code, ms)
             resp
         }
         .build()
