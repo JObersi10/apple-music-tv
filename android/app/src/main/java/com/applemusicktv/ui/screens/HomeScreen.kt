@@ -61,7 +61,7 @@ fun HomeScreen(
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
         items(state.sections, key = { it.title }) { section ->

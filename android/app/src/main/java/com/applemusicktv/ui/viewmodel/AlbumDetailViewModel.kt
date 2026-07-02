@@ -17,6 +17,7 @@ data class AlbumDetailUiState(
     val album:         Album?      = null,
     val tracks:        List<Song>  = emptyList(),
     val relatedAlbums: List<Album> = emptyList(),
+    val motionUrl:     String?     = null,
     val error:         String?     = null,
 )
 
@@ -38,11 +39,14 @@ class AlbumDetailViewModel @Inject constructor(
                 val albumD   = async { repo.getAlbum(albumId) }
                 val tracksD  = async { repo.getAlbumTracks(albumId) }
                 val relatedD = async { repo.getRelatedAlbums(albumId) }
+                val tracks = tracksD.await().getOrDefault(emptyList())
+                val motionUrl = tracks.firstOrNull()?.id?.let { repo.getMotion(it).getOrNull() }
                 _state.value = AlbumDetailUiState(
                     isLoading     = false,
                     album         = albumD.await().getOrNull(),
-                    tracks        = tracksD.await().getOrDefault(emptyList()),
+                    tracks        = tracks,
                     relatedAlbums = relatedD.await().getOrDefault(emptyList()),
+                    motionUrl     = motionUrl,
                 )
             } catch (e: Exception) {
                 _state.update { it.copy(isLoading = false, error = e.message) }

@@ -230,7 +230,7 @@ private fun rememberSmoothProgressMs(reportedMs: Long, isPlaying: Boolean): Long
 /** Looping, muted motion album-art video layered over the static cover. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun MotionCover(url: String, modifier: Modifier = Modifier) {
+internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var ready by remember(url) { mutableStateOf(false) }
 

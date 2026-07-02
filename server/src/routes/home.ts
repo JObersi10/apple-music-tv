@@ -68,7 +68,10 @@ home.get("/", async (c) => {
       const stationsForYou: any[] = [];
       const genreSections: Map<string, any[]> = new Map();
 
-      for (const rec of res.data?.data ?? []) {
+      const recs = res.data?.data ?? [];
+      console.log(`[home] recommendations count=${recs.length}`);
+      if (recs[0]) console.log(`[home] first rec:`, JSON.stringify(recs[0]).substring(0, 300));
+      for (const rec of recs) {
         const title: string = rec.attributes?.title?.stringForDisplay ?? "For You";
         const contents: any[] = rec.relationships?.contents?.data ?? [];
         const recType: string = rec.attributes?.resourceTypes?.[0] ?? "";

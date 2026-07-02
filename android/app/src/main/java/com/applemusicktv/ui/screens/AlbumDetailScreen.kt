@@ -68,6 +68,7 @@ fun AlbumDetailScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
+                state.motionUrl?.let { MotionCover(url = it, modifier = Modifier.fillMaxSize()) }
             }
             Spacer(Modifier.height(20.dp))
             Text(album.title, fontSize = 20.sp, fontWeight = FontWeight.Bold,
