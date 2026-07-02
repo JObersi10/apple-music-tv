@@ -76,4 +76,4 @@ app.onError((err, c) => {
 
 const PORT = Number(process.env.PORT ?? 3000)
 console.log(`🎵 Proxy running on http://0.0.0.0:${PORT}`)
-export default { port: PORT, fetch: app.fetch }
+export default { port: PORT, fetch: app.fetch, idleTimeout: 0 }
