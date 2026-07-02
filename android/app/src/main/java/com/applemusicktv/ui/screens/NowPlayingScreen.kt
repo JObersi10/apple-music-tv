@@ -65,6 +65,7 @@ fun NowPlayingScreen(
     val showQueue = toggleCount % 2 == 1
 
     val smoothProgressMs = rememberSmoothProgressMs(state.progressMs, state.isPlaying)
+    val adjustedProgressMs = smoothProgressMs + state.lyricsOffsetMs
 
     Box(modifier = modifier.fillMaxSize()) {
         DynamicBackground(artworkUrl = song?.artworkUrl(1200), songKey = song?.id ?: "")
@@ -163,7 +164,7 @@ fun NowPlayingScreen(
                 } else if (state.lyrics.isNotEmpty()) {
                     LyricsPanel(
                         lyrics = state.lyrics,
-                        progressMs = smoothProgressMs,
+                        progressMs = adjustedProgressMs,
                         onSeek = { ms -> playerVm.player.seekTo(ms) },
                     )
                 } else {

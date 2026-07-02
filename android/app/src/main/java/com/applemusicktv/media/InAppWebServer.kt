@@ -2,6 +2,7 @@ package com.applemusicktv.media
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import com.applemusicktv.data.LyricsOffsetPreferences
 import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.NetworkLog
 import com.applemusicktv.data.repository.MusicRepository
@@ -21,6 +22,7 @@ class InAppWebServer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val prefs: MutPreferences,
     private val repo: MusicRepository,
+    private val lyricsOffsetPrefs: LyricsOffsetPreferences,
 ) {
     private val logs = ArrayDeque<String>(300)
     private var job: Job? = null
@@ -83,12 +85,20 @@ class InAppWebServer @Inject constructor(
                 method == "GET"  && path == "/status"      -> send(out, 200, "application/json", status())
                 method == "GET"  && path == "/logs"        -> send(out, 200, "application/json", logsJson())
                 method == "GET"  && path == "/netlogs"     -> send(out, 200, "application/json", netLogsJson())
-                method == "POST" && path == "/set-token"   -> { applyToken(parseField(body, "mut")); redirect(out, "/") }
-                method == "POST" && path == "/clear-token" -> { prefs.setMUT(""); addLog("WARN","Token cleared"); redirect(out, "/") }
+                method == "POST" && path == "/set-token"          -> { applyToken(parseField(body, "mut")); redirect(out, "/") }
+                method == "POST" && path == "/clear-token"         -> { prefs.setMUT(""); addLog("WARN","Token cleared"); redirect(out, "/") }
+                method == "POST" && path == "/set-lyrics-offset"   -> { applyLyricsOffset(parseField(body, "offset")); redirect(out, "/") }
                 else -> send(out, 404, "text/plain", "Not found")
             }
             out.flush(); socket.close()
         } catch (_: Exception) {}
+    }
+
+    private fun applyLyricsOffset(raw: String) {
+        val ms = raw.trim().toLongOrNull()
+        if (ms == null) { addLog("ERROR", "Invalid offset: $raw"); return }
+        lyricsOffsetPrefs.setOffset(ms)
+        addLog("OK", "Lyrics offset set to ${ms}ms")
     }
 
     private fun applyToken(mut: String) {
@@ -120,6 +130,7 @@ class InAppWebServer @Inject constructor(
     private fun html(): String {
         val has = prefs.hasMUT()
         val preview = if (has) prefs.getMUT().take(32) + "…" else ""
+        val currentOffset = lyricsOffsetPrefs.getOffset()
         val logRows = getLogs().reversed().take(80).joinToString("") { log ->
             val cls = when { log.contains("[OK]") -> "g"; log.contains("[ERROR]") -> "r"; log.contains("[WARN]") -> "y"; else -> "d" }
             "<div class=$cls>${log.replace("<","&lt;")}</div>"
@@ -187,6 +198,16 @@ setInterval(refresh,3000);
 <button class="btn btn-p" type=submit>Save Token</button>
 </form>
 ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=submit>Clear Token</button></form>" else ""}
+</div>
+
+<div class=card>
+<h2>Lyrics Offset</h2>
+<div class=row><div class=label>Current offset</div><div class=sub2 style=color:#aaa>${currentOffset}ms</div></div>
+<form method=POST action=/set-lyrics-offset>
+<input name=offset type=number value="$currentOffset" placeholder="0" style="width:100%;background:#1c1c1e;border:1.5px solid #2c2c2e;border-radius:8px;color:#e5e5e7;font-family:monospace;font-size:13px;padding:10px;outline:none;margin-top:4px">
+<button class="btn btn-p" type=submit style=margin-top:8px>Set Offset (ms)</button>
+</form>
+<div style="font-size:10px;color:#555;margin-top:8px">Positive = lyrics show earlier. Negative = later. Try +200 if lyrics feel late.</div>
 </div>
 
 <div class=card>

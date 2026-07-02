@@ -6,6 +6,7 @@ sealed class Screen(val route: String) {
     object Search         : Screen("search")
     object NowPlaying     : Screen("now_playing")
     object DevMenu        : Screen("dev_menu")
+    object Browse         : Screen("browse")
     object AlbumDetail    : Screen("album/{albumId}") {
         fun route(id: String) = "album/$id"
     }

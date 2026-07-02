@@ -18,6 +18,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.applemusicktv.data.LyricsOffsetPreferences
 import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.ServerPreferences
 import com.applemusicktv.data.model.Song
@@ -35,15 +36,16 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class PlayerState(
-    val currentSong:  Song?           = null,
-    val song:         Song?           = null,
-    val isPlaying:    Boolean         = false,
-    val progressMs:   Long            = 0L,
-    val queue:        List<Song>      = emptyList(),
-    val queueIndex:   Int             = 0,
-    val lyrics:       List<LyricLine> = emptyList(),
-    val isFullStream: Boolean         = false,
-    val motionUrl:    String?         = null,
+    val currentSong:    Song?           = null,
+    val song:           Song?           = null,
+    val isPlaying:      Boolean         = false,
+    val progressMs:     Long            = 0L,
+    val queue:          List<Song>      = emptyList(),
+    val queueIndex:     Int             = 0,
+    val lyrics:         List<LyricLine> = emptyList(),
+    val isFullStream:   Boolean         = false,
+    val motionUrl:      String?         = null,
+    val lyricsOffsetMs: Long            = 0L,
 )
 
 @HiltViewModel
@@ -54,6 +56,7 @@ class PlayerViewModel @Inject constructor(
     private val mutPrefs: com.applemusicktv.data.MutPreferences,
     private val serverPrefs: ServerPreferences,
     private val appleClient: AppleDirectClient,
+    private val lyricsOffsetPrefs: LyricsOffsetPreferences,
 ) : ViewModel() {
 
     private fun hasMUT() = mutPrefs.hasMUT()
@@ -117,7 +120,13 @@ class PlayerViewModel @Inject constructor(
             .build()
     }
 
+    fun setLyricsOffset(ms: Long) {
+        lyricsOffsetPrefs.setOffset(ms)
+        _state.update { it.copy(lyricsOffsetMs = ms) }
+    }
+
     init {
+        _state.update { it.copy(lyricsOffsetMs = lyricsOffsetPrefs.getOffset()) }
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _state.update { it.copy(isPlaying = isPlaying) }
@@ -181,7 +190,11 @@ class PlayerViewModel @Inject constructor(
     private fun checkServerReachable() = viewModelScope.launch {
         val up = repo.pingServer()
         serverPrefs.serverReachable = up
-        Log.i("PlayerVM", if (up) "Server reachable — using proxy" else "Server DOWN — using on-device standalone")
+        Log.i("PlayerVM", if (up) "Server reachable — using proxy" else "Server DOWN — standalone mode")
+        if (!up) {
+            // Scrape bearer + detect storefront for standalone mode.
+            repo.prepareStandalone()
+        }
     }
 
     // True only when the configured server (default proxy OR a Dev-menu IP)
@@ -307,16 +320,32 @@ class PlayerViewModel @Inject constructor(
     // how the hardware media keys behave. The bare *MediaItem variants no-op
     // at boundaries, which is why the on-screen buttons appeared dead.
     fun next() {
-        if (player.hasNextMediaItem()) {
-            player.seekToNextMediaItem()
-        } else {
-            player.seekToNext()
+        if (usingStandalone) {
+            val q = _state.value.queue
+            val nextIdx = _state.value.queueIndex + 1
+            if (nextIdx <= q.lastIndex) {
+                val song = q[nextIdx]
+                _state.update { it.copy(queueIndex = nextIdx, currentSong = song, song = song, lyrics = emptyList(), motionUrl = null) }
+                playStandalone(song)
+            }
+            return
         }
+        if (player.hasNextMediaItem()) player.seekToNextMediaItem() else player.seekToNext()
         player.play()
     }
 
     fun prev() {
-        // If we're more than 3s in, first press restarts the song.
+        if (usingStandalone) {
+            val q = _state.value.queue
+            if (player.currentPosition > 3_000L) {
+                player.seekTo(0L); player.play(); return
+            }
+            val prevIdx = (_state.value.queueIndex - 1).coerceAtLeast(0)
+            val song = q[prevIdx]
+            _state.update { it.copy(queueIndex = prevIdx, currentSong = song, song = song, lyrics = emptyList(), motionUrl = null) }
+            playStandalone(song)
+            return
+        }
         if (player.currentPosition > 3_000L || !player.hasPreviousMediaItem()) {
             player.seekTo(0L)
         } else {
@@ -346,8 +375,14 @@ class PlayerViewModel @Inject constructor(
 
     private fun loadLyrics(songId: String) {
         lyricsJob?.cancel()
+        val song = _state.value.currentSong
         lyricsJob = viewModelScope.launch {
-            repo.getLyrics(songId).onSuccess { lines ->
+            repo.getLyrics(
+                songId,
+                title      = song?.title ?: "",
+                artist     = song?.artistName ?: "",
+                durationSec = (song?.durationMs ?: 0L) / 1000,
+            ).onSuccess { lines ->
                 if (_state.value.currentSong?.id == songId)
                     _state.update { it.copy(lyrics = lines) }
             }

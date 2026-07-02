@@ -58,6 +58,14 @@ fun DevMenuScreen(modifier: Modifier = Modifier) {
             StatusChip("Server reachable", state.serverOk)
             StatusChip("Bearer token", state.hasBearer, if (!state.hasBearer) "Refresh to scrape" else null)
             StatusChip("Music-User-Token", state.hasMUT, state.mutSetAt?.let { "Set $it" } ?: if (!state.hasMUT) "Set via phone web server" else null)
+            StatusChip(
+                label = if (state.standaloneMode) "Standalone mode" else "Proxy mode",
+                ok = !state.standaloneMode,
+                sub = if (state.standaloneMode) "Direct Apple API — stream unavailable" else "PC server routing traffic",
+            )
+            if (state.lyricsOffsetMs != 0L) {
+                StatusChip("Lyrics offset", true, "${state.lyricsOffsetMs}ms — adjust at ${state.webServerUrl}")
+            }
 
             Spacer(Modifier.weight(1f))
             ActionBtn("Refresh Status", Color(0xFF2A2A2A)) { vm.refresh() }

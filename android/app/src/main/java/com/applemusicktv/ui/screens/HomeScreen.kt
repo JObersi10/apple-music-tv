@@ -17,11 +17,17 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.*
 import com.applemusicktv.data.model.Album
 import com.applemusicktv.ui.components.AlbumCard
+import com.applemusicktv.ui.viewmodel.HomeSection
 import com.applemusicktv.ui.viewmodel.HomeViewModel
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun HomeScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, modifier: Modifier = Modifier) {
+fun HomeScreen(
+    playerVm: PlayerViewModel,
+    onAlbumClick: (String) -> Unit = {},
+    onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
+    modifier: Modifier = Modifier,
+) {
     val vm: HomeViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
 
@@ -46,31 +52,33 @@ fun HomeScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, m
         return
     }
 
+    if (state.sections.isEmpty()) {
+        Box(modifier.fillMaxSize(), Alignment.Center) {
+            Text("No content — set your Music User Token", color = Color(0xFF555555), fontSize = 14.sp)
+        }
+        return
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 28.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        if (state.topPicks.isNotEmpty()) item {
-            ContentRow("Top Picks", state.topPicks, cardSize = 120, onAlbumClick = onAlbumClick)
-        }
-        if (state.madeForYou.isNotEmpty()) item {
-            ContentRow("Made For You", state.madeForYou, cardSize = 150, onAlbumClick = onAlbumClick)
-        }
-        if (state.recentlyAdded.isNotEmpty()) item {
-            ContentRow("Recently Added", state.recentlyAdded, cardSize = 120, onAlbumClick = onAlbumClick)
-        }
-        if (state.newReleases.isNotEmpty()) item {
-            ContentRow("New Releases", state.newReleases, cardSize = 130, onAlbumClick = onAlbumClick)
+        items(state.sections, key = { it.title }) { section ->
+            ContentRow(section, onAlbumClick, onPlaylistClick)
         }
     }
 }
 
 @Composable
-private fun ContentRow(title: String, albums: List<Album>, cardSize: Int, onAlbumClick: (String) -> Unit) {
+private fun ContentRow(
+    section: HomeSection,
+    onAlbumClick: (String) -> Unit,
+    onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text       = title,
+            text       = section.title,
             fontSize   = 18.sp,
             fontWeight = FontWeight.SemiBold,
             color      = Color.White,
@@ -80,8 +88,12 @@ private fun ContentRow(title: String, albums: List<Album>, cardSize: Int, onAlbu
             contentPadding        = PaddingValues(horizontal = 48.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            items(albums, key = { it.id }) { album ->
-                AlbumCard(album = album, size = cardSize, onClick = { onAlbumClick(album.id) })
+            items(section.albums, key = { it.id }) { album ->
+                val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                AlbumCard(album = album, size = 130, onClick = {
+                    if (isPlaylist) onPlaylistClick(album.id, album.title, album.artworkUrl ?: "")
+                    else onAlbumClick(album.id)
+                })
             }
         }
     }

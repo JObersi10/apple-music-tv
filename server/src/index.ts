@@ -11,6 +11,7 @@ import lyricsRoutes from "./routes/lyrics"
 import libraryRoutes from "./routes/library"
 import streamRoutes from "./routes/stream"
 import motionRoutes from "./routes/motion"
+import homeRoutes from "./routes/home"
 
 export const music = new AppleMusic({ region: Region.US, authType: AuthType.Scraped })
 await music.init()
@@ -64,6 +65,7 @@ app.route("/api/lyrics",    lyricsRoutes)
 app.route("/api/library",   libraryRoutes)
 app.route("/api/stream",    streamRoutes)
 app.route("/api/motion",    motionRoutes)
+app.route("/api/home",      homeRoutes)
 
 app.onError((err, c) => {
   console.error(err)

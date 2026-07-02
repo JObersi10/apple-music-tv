@@ -75,7 +75,16 @@ fun AppShell(modifier: Modifier = Modifier) {
                 .padding(top = if (isOnNowPlaying) 0.dp else navBarHeight),
         ) {
             composable(Screen.Home.route) {
-                HomeScreen(playerVm = playerVm, onAlbumClick = { navController.navigate(Screen.AlbumDetail.route(it)) })
+                HomeScreen(
+                    playerVm = playerVm,
+                    onAlbumClick = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onPlaylistClick = { id, name, artworkUrl ->
+                        navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
+                    },
+                )
+            }
+            composable(Screen.Browse.route) {
+                BrowseScreen(playerVm = playerVm, onAlbumClick = { navController.navigate(Screen.AlbumDetail.route(it)) })
             }
             composable(Screen.Library.route) {
                 LibraryScreen(
@@ -138,11 +147,11 @@ fun AppShell(modifier: Modifier = Modifier) {
                     selectedTab = tab
                     val route = when (tab) {
                         TopNavTab.ListenNow  -> Screen.Home.route
+                        TopNavTab.Browse     -> Screen.Browse.route
                         TopNavTab.Library    -> Screen.Library.route
                         TopNavTab.Search     -> Screen.Search.route
                         TopNavTab.NowPlaying -> Screen.NowPlaying.route
                         TopNavTab.Dev        -> Screen.DevMenu.route
-                        else                 -> Screen.Home.route
                     }
                     // Don't re-navigate to the tab we're already on — that
                     // rebuilds the screen and resets Library's sub-section back

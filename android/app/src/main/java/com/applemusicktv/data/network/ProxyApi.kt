@@ -132,6 +132,12 @@ data class LyricsResponse(val lines: List<LyricLine> = emptyList(), val source: 
 data class MotionResponse(val video: String? = null)
 
 @JsonClass(generateAdapter = true)
+data class HomeSection(val title: String, val albums: List<AlbumDto> = emptyList())
+
+@JsonClass(generateAdapter = true)
+data class HomeResponse(val sections: List<HomeSection> = emptyList())
+
+@JsonClass(generateAdapter = true)
 data class AuthStatus(
     val hasMUT:     Boolean,
     val mutSetAt:   String?,
@@ -170,6 +176,10 @@ interface ProxyApi {
 
     @GET("api/artists/{id}/full")
     suspend fun getArtistFull(@Path("id") id: String): ArtistFullDto
+
+    // ── Home / Listen Now ─────────────────────────────────────────────────
+    @GET("api/home")
+    suspend fun getHome(): HomeResponse
 
     // ── Lyrics ────────────────────────────────────────────────────────────
     @GET("api/lyrics/{id}")

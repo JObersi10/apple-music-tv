@@ -25,8 +25,12 @@ class PlaylistDetailViewModel @Inject constructor(
     private val _state = MutableStateFlow(PlaylistDetailState())
     val state: StateFlow<PlaylistDetailState> = _state
 
+    private var loadedId: String? = null
+
     fun load(playlistId: String, initialArtworkUrl: String? = null) {
-        if (_state.value.loading || _state.value.tracks.isNotEmpty()) return
+        // Allow reloading only if it's a different playlist.
+        if (loadedId == playlistId && (_state.value.loading || _state.value.tracks.isNotEmpty())) return
+        loadedId = playlistId
         viewModelScope.launch {
             _state.value = PlaylistDetailState(loading = true, artworkUrl = initialArtworkUrl)
             repo.getPlaylistTracks(playlistId).onSuccess { songs ->
