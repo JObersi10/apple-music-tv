@@ -37,7 +37,7 @@ class DirectLyricsSource @Inject constructor(
 
         val headers = mapOf(
             "Authorization" to "Bearer $bearer",
-            "Music-User-Token" to mut,
+            "Media-User-Token" to mut,
             "Origin" to "https://music.apple.com",
             "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
         )

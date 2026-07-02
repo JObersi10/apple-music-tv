@@ -22,10 +22,11 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.*
 import com.applemusicktv.ui.viewmodel.DevMenuViewModel
+import com.applemusicktv.ui.viewmodel.PlayerViewModel
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun DevMenuScreen(modifier: Modifier = Modifier) {
+fun DevMenuScreen(playerVm: PlayerViewModel, modifier: Modifier = Modifier) {
     val vm: DevMenuViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     var pcIpDraft by remember(state.pcServerIp) { mutableStateOf(state.pcServerIp) }
@@ -68,6 +69,7 @@ fun DevMenuScreen(modifier: Modifier = Modifier) {
             }
 
             Spacer(Modifier.weight(1f))
+            ActionBtn("Re-check Server", Color(0xFF1A2A1A)) { vm.recheckServer(playerVm) }
             ActionBtn("Refresh Status", Color(0xFF2A2A2A)) { vm.refresh() }
 
             // PC Server field — bottom of left panel

@@ -62,6 +62,12 @@ class DevMenuViewModel @Inject constructor(
         }
     }
 
+    fun recheckServer(playerVm: PlayerViewModel) = viewModelScope.launch {
+        log("INFO", "Re-checking server...")
+        playerVm.recheckServer().join()
+        refresh()
+    }
+
     fun setPcServerIp(ip: String) {
         serverPrefs.setPcServerIp(ip)
         _state.update { it.copy(pcServerIp = ip) }

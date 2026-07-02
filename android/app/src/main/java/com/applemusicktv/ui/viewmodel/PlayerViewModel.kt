@@ -186,14 +186,27 @@ class PlayerViewModel @Inject constructor(
         checkServerReachable()
     }
 
-    /** Health-check the configured server; flips to standalone if it's down. */
-    private fun checkServerReachable() = viewModelScope.launch {
+    /** Health-check the configured server; flips to/from standalone accordingly. */
+    fun recheckServer() = viewModelScope.launch {
         val up = repo.pingServer()
+        val wasDown = !serverPrefs.serverReachable
         serverPrefs.serverReachable = up
-        Log.i("PlayerVM", if (up) "Server reachable — using proxy" else "Server DOWN — standalone mode")
+        Log.i("PlayerVM", if (up) "Server reachable — proxy mode" else "Server DOWN — standalone mode")
         if (!up) {
-            // Scrape bearer + detect storefront for standalone mode.
             repo.prepareStandalone()
+        } else if (wasDown) {
+            // Recovered — reset standalone flag so next play uses proxy.
+            usingStandalone = false
+            Log.i("PlayerVM", "Server recovered — returning to proxy mode")
+        }
+    }
+
+    private fun checkServerReachable() = viewModelScope.launch {
+        recheckServer()
+        // Recheck every 30s so the app recovers when the PC comes back online.
+        while (true) {
+            kotlinx.coroutines.delay(30_000)
+            recheckServer()
         }
     }
 

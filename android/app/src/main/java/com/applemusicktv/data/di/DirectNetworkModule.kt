@@ -33,7 +33,7 @@ object DirectNetworkModule {
             val mut = mutPrefs.getMUT()
             val req = chain.request().newBuilder()
                 .addHeader("Authorization", "Bearer $bearer")
-                .apply { if (mut.isNotEmpty()) addHeader("Music-User-Token", mut) }
+                .apply { if (mut.isNotEmpty()) addHeader("Media-User-Token", mut) }
                 .addHeader("Origin", "https://music.apple.com")
                 .addHeader("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")
                 .build()
