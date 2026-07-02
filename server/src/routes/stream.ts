@@ -38,6 +38,7 @@ async function ensureDecrypted(songId: string, mut: string): Promise<string> {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(PYTHON, [DECRYPT_SCRIPT, args]);
       let stderr = "";
+      child.stdout.on("data", (d) => { console.log("[decrypt]", d.toString().trimEnd()); });
       child.stderr.on("data", (d) => { stderr += d.toString(); });
       child.on("error", reject);
       child.on("close", (code) => {
