@@ -3,6 +3,15 @@ import axios from "axios";
 import { getMUT, getBearerToken } from "../auth";
 import { normaliseAlbum, normaliseArtist, normaliseSong, normalisePlaylist } from "./search";
 
+// Library songs have minimal attributes; pull real catalog data from the relationship.
+function normaliseLibrarySong(s: any) {
+  const cat = s.relationships?.catalog?.data?.[0];
+  // Use catalog item if available (better metadata + catalog ID for streaming)
+  if (cat) return normaliseSong(cat);
+  // Fallback: use library item as-is (id will be i.xxx which the stream route handles)
+  return normaliseSong(s);
+}
+
 function normaliseLibraryPlaylist(p: any) {
   const attr = p.attributes ?? {};
   // Artwork: prefer direct, then catalog relationship, then catalog attributes
@@ -138,19 +147,29 @@ library.get("/playlists/:id/tracks", async (c) => {
     if (id.startsWith("pl.")) {
       // Catalog/editorial/shared/generated playlists — use catalog endpoint
       const sf = getStorefront() || "us";
-      let url: string | null = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/playlists/${id}/tracks`;
-      while (url && songs.length < 2000) {
-        const res = await axios.get(url, { params: songs.length === 0 ? { limit: 100 } : undefined, headers: appleHeaders(mut) });
-        songs.push(...(res.data?.data ?? []).map((s: any) => normaliseSong(s)));
-        url = res.data?.next ? `https://amp-api-edge.music.apple.com${res.data.next}` : null;
+      let offset = 0;
+      while (songs.length < 2000) {
+        const res = await axios.get(`https://amp-api-edge.music.apple.com/v1/catalog/${sf}/playlists/${id}/tracks`, {
+          params: { limit: 100, offset },
+          headers: appleHeaders(mut),
+        });
+        const batch = res.data?.data ?? [];
+        songs.push(...batch.map((s: any) => normaliseSong(s)));
+        if (!res.data?.next || batch.length === 0) break;
+        offset += 100;
       }
     } else {
-      // User library playlists — use library endpoint
-      let url: string | null = `https://amp-api-edge.music.apple.com/v1/me/library/playlists/${id}/tracks`;
-      while (url && songs.length < 2000) {
-        const res = await axios.get(url, { params: songs.length === 0 ? { limit: 100, include: "catalog" } : undefined, headers: appleHeaders(mut) });
-        songs.push(...(res.data?.data ?? []).map((s: any) => normaliseSong(s)));
-        url = res.data?.next ? `https://amp-api-edge.music.apple.com${res.data.next}` : null;
+      // User library playlists — use library endpoint; include catalog on every page for artwork/IDs
+      let offset = 0;
+      while (songs.length < 2000) {
+        const res = await axios.get(`https://amp-api-edge.music.apple.com/v1/me/library/playlists/${id}/tracks`, {
+          params: { limit: 100, offset, include: "catalog" },
+          headers: appleHeaders(mut),
+        });
+        const batch = res.data?.data ?? [];
+        songs.push(...batch.map((s: any) => normaliseLibrarySong(s)));
+        if (!res.data?.next || batch.length === 0) break;
+        offset += 100;
       }
     }
 

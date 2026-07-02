@@ -245,12 +245,12 @@ class PlayerViewModel @Inject constructor(
             playStandalone(song)
             return
         }
-        loadMotion(song.id)
         val uri = if (useFullStream) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         player.setMediaItem(buildMediaItem(song, uri))
         player.prepare()
         player.play()
         if (useFullStream) loadLyrics(song.id)
+        loadMotion(song.id)
     }
 
     fun playAlbum(songs: List<Song>, startIndex: Int = 0, useFullStream: Boolean = hasMUT()) {
@@ -266,13 +266,13 @@ class PlayerViewModel @Inject constructor(
             playStandalone(songs[idx])
             return
         }
-        loadMotion(songs[idx].id)
         player.setMediaItems(songs.map { s ->
             buildMediaItem(s, if (useFullStream) repo.streamUrl(s.id) else (s.previewUrl ?: repo.streamUrl(s.id)))
         }, idx, 0L)
         player.prepare()
         player.play()
         if (useFullStream) loadLyrics(songs[idx].id)
+        loadMotion(songs[idx].id)
     }
 
     @OptIn(UnstableApi::class)

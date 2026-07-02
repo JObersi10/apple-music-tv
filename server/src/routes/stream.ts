@@ -72,9 +72,12 @@ async function resolveMediaPlaylist(url: string): Promise<{ url: string; text: s
     return { url, text };
   }
 
-  // Master playlist — pick highest bandwidth variant
+  // Master playlist — pick best variant under 500 kbps (avoids ALAC/lossless),
+  // falling back to lowest available if everything is above the cap.
   let bestBw = -1;
   let bestUrl = "";
+  let fallbackBw = Infinity;
+  let fallbackUrl = "";
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -82,12 +85,16 @@ async function resolveMediaPlaylist(url: string): Promise<{ url: string; text: s
       const bwMatch = line.match(/BANDWIDTH=(\d+)/);
       const bw = bwMatch ? parseInt(bwMatch[1]) : 0;
       const nextUrl = lines[i + 1]?.trim();
-      if (nextUrl && !nextUrl.startsWith("#") && bw >= bestBw) {
-        bestBw = bw;
-        bestUrl = nextUrl.startsWith("http") ? nextUrl : url.substring(0, url.lastIndexOf("/") + 1) + nextUrl;
+      if (!nextUrl || nextUrl.startsWith("#")) continue;
+      const resolved = nextUrl.startsWith("http") ? nextUrl : url.substring(0, url.lastIndexOf("/") + 1) + nextUrl;
+      if (bw <= 500_000) {
+        if (bw >= bestBw) { bestBw = bw; bestUrl = resolved; }
+      } else {
+        if (bw < fallbackBw) { fallbackBw = bw; fallbackUrl = resolved; }
       }
     }
   }
+  if (!bestUrl) bestUrl = fallbackUrl;
   if (!bestUrl) throw new Error("No variant in master playlist");
 
   const mediaRes = await axios.get(bestUrl);

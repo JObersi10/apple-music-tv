@@ -1,6 +1,7 @@
 package com.applemusicktv.data.di
 
 import com.applemusicktv.data.MutPreferences
+import com.applemusicktv.data.NetworkLog
 import com.applemusicktv.data.network.DirectAppleApi
 import com.applemusicktv.media.AppleDirectClient
 import com.squareup.moshi.Moshi
@@ -36,7 +37,12 @@ object DirectNetworkModule {
                 .addHeader("Origin", "https://music.apple.com")
                 .addHeader("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")
                 .build()
-            chain.proceed(req)
+            val t0 = System.currentTimeMillis()
+            val resp = chain.proceed(req)
+            val ms = System.currentTimeMillis() - t0
+            val mark = if (resp.isSuccessful) "✓" else "✗"
+            NetworkLog.add("$mark [direct] ${req.method} ${req.url.encodedPath} ${resp.code} ${ms}ms")
+            resp
         }
         .build()
 
