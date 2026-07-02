@@ -88,6 +88,7 @@ async function resolveMediaPlaylist(url: string): Promise<{ url: string; text: s
       const nextUrl = lines[i + 1]?.trim();
       if (!nextUrl || nextUrl.startsWith("#")) continue;
       const resolved = nextUrl.startsWith("http") ? nextUrl : url.substring(0, url.lastIndexOf("/") + 1) + nextUrl;
+      console.log(`[stream] variant bw=${bw} url=${resolved.substring(0, 60)}…`);
       if (bw <= 500_000) {
         if (bw >= bestBw) { bestBw = bw; bestUrl = resolved; }
       } else {
@@ -95,6 +96,7 @@ async function resolveMediaPlaylist(url: string): Promise<{ url: string; text: s
       }
     }
   }
+  console.log(`[stream] picked bw=${bestBw >= 0 ? bestBw : fallbackBw} (cap=500kbps, had_under=${bestBw >= 0})`);
   if (!bestUrl) bestUrl = fallbackUrl;
   if (!bestUrl) throw new Error("No variant in master playlist");
 
@@ -128,7 +130,10 @@ async function getStreamParams(songId: string, mut: string) {
   const assets: any[] = entry.assets ?? [];
   console.log(`[stream] adamId=${adamId} assets=${assets.map((a: any) => a.flavor).join(", ")}`);
 
+  // Prefer ctrp64 (smaller/compressed) over ctrp256 (likely lossless/hi-res).
+  // ctrp = CTR-mode protected; 64 vs 256 suffix appears to be quality tier, not key size.
   const asset =
+    assets.find((a: any) => a.flavor === "32:ctrp64") ||
     assets.find((a: any) => a.flavor === "28:ctrp256") ||
     assets.find((a: any) => a.flavor?.includes("ctrp")) ||
     assets.find((a: any) => typeof a.URL === "string" && a.URL);
