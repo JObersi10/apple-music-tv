@@ -143,14 +143,14 @@ fun NowPlayingScreen(
                     }
                 }
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(14.dp))
 
                 Text(song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2)
                 Spacer(Modifier.height(4.dp))
                 Text(song.artistName, fontSize = 14.sp, color = Color(0xFFAAAAAA))
                 Text(song.albumName, fontSize = 12.sp, color = Color(0xFF888888))
 
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(12.dp))
 
                 // Transport controls. The play/pause button grabs initial
                 // focus so the D-pad can actually reach the on-screen controls
