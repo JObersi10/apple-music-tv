@@ -21,6 +21,11 @@ class MainActivity : ComponentActivity() {
         setContent { AppShell() }
     }
 
+    override fun onStop() {
+        super.onStop()
+        playerVm.pause()
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {

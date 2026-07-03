@@ -180,10 +180,7 @@ fun NowPlayingScreen(
                     Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFA233B)))
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), Arrangement.SpaceBetween) {
-                    Text(
-                        "-${formatMs(maxOf(0L, song.durationMs - smoothProgressMs))}",
-                        fontSize = 11.sp, color = Color(0xFFAAAAAA),
-                    )
+                    Text(formatMs(smoothProgressMs), fontSize = 11.sp, color = Color(0xFFAAAAAA))
                     Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
                 }
             }
@@ -201,7 +198,7 @@ fun NowPlayingScreen(
                     color = Color(0x99FFFFFF),
                     modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp),
                 )
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight()) {
                     if (showQueue) {
                         QueuePanel(
                             queue = state.queue,

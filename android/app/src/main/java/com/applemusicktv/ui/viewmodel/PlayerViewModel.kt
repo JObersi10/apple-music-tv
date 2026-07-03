@@ -387,6 +387,7 @@ class PlayerViewModel @Inject constructor(
         loadMotion(song.id)
     }
 
+    fun pause() { player.pause() }
     fun togglePlayPause() { if (player.isPlaying) player.pause() else player.play() }
 
     fun next() { playQueueItem(_state.value.queueIndex + 1) }
