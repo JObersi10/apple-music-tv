@@ -180,18 +180,11 @@ fun NowPlayingScreen(
                     Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFA233B)))
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), Arrangement.SpaceBetween) {
-                    Text(formatMs(smoothProgressMs), fontSize = 11.sp, color = Color(0xFFAAAAAA))
                     Text(
-                        buildString {
-                            if (song.durationMs > 0) {
-                                append("-"); append(formatMs(maxOf(0L, song.durationMs - smoothProgressMs)))
-                                append("  "); append(song.durationFormatted)
-                            } else {
-                                append(song.durationFormatted)
-                            }
-                        },
+                        if (song.durationMs > 0) "-${formatMs(maxOf(0L, song.durationMs - smoothProgressMs))}" else "",
                         fontSize = 11.sp, color = Color(0xFFAAAAAA),
                     )
+                    Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
                 }
             }
 
