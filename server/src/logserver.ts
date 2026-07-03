@@ -70,7 +70,19 @@ setInterval(refresh,2000);
 </body></html>`;
 }
 
+const streamers = new Set<ReadableStreamDefaultController>();
+
 export function startLogServer(port = 8081) {
+  // Patch push to also broadcast to SSE streamers.
+  const _push = push;
+  function broadcast(entry: LogEntry) {
+    const data = `data: ${JSON.stringify(entry)}\n\n`;
+    for (const c of streamers) { try { c.enqueue(data); } catch { streamers.delete(c); } }
+  }
+  console.log = (...a) => { _log(...a); const e = { ts: stamp(), level: "INFO", msg: a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" ") }; entries.push(e); if (entries.length > MAX) entries.shift(); broadcast(e); };
+  console.warn = (...a) => { _warn(...a); const e = { ts: stamp(), level: "WARN", msg: a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" ") }; entries.push(e); if (entries.length > MAX) entries.shift(); broadcast(e); };
+  console.error = (...a) => { _err(...a); const e = { ts: stamp(), level: "ERROR", msg: a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" ") }; entries.push(e); if (entries.length > MAX) entries.shift(); broadcast(e); };
+
   Bun.serve({
     port,
     fetch(req) {
@@ -78,6 +90,16 @@ export function startLogServer(port = 8081) {
       if (url.pathname === "/api/logs") {
         return new Response(JSON.stringify([...entries].reverse()), {
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+        });
+      }
+      if (url.pathname === "/stream") {
+        let controller: ReadableStreamDefaultController;
+        const stream = new ReadableStream({
+          start(c) { controller = c; streamers.add(c); },
+          cancel() { streamers.delete(controller); },
+        });
+        return new Response(stream, {
+          headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" },
         });
       }
       return new Response(html(), { headers: { "Content-Type": "text/html; charset=utf-8" } });

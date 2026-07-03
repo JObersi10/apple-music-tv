@@ -25,6 +25,7 @@ class InAppWebServer @Inject constructor(
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
 ) {
     private val logs = ArrayDeque<String>(300)
+    private val sseClients = java.util.concurrent.CopyOnWriteArrayList<java.io.OutputStream>()
     private var job: Job? = null
     private var appScope: CoroutineScope? = null
     val port = 8080
@@ -46,9 +47,29 @@ class InAppWebServer @Inject constructor(
 
     fun addLog(level: String, msg: String) {
         val t = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+        val line = "[$t][$level] $msg"
         synchronized(logs) {
             if (logs.size >= 300) logs.removeFirst()
-            logs.addLast("[$t][$level] $msg")
+            logs.addLast(line)
+        }
+        val sseData = "data: ${line.replace("\n", " ")}\n\n".toByteArray()
+        val dead = mutableListOf<java.io.OutputStream>()
+        for (out in sseClients) { try { out.write(sseData); out.flush() } catch (_: Exception) { dead.add(out) } }
+        sseClients.removeAll(dead)
+        appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val body = """{"level":"$level","msg":${org.json.JSONObject.quote(msg)}}"""
+                val conn = java.net.URL("${repo.serverBaseUrl()}/api/log")
+                    .openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.connectTimeout = 1000
+                conn.readTimeout = 1000
+                conn.outputStream.write(body.toByteArray())
+                conn.responseCode
+                conn.disconnect()
+            } catch (_: Exception) {}
         }
     }
 
@@ -84,6 +105,8 @@ class InAppWebServer @Inject constructor(
                 method == "GET"  && path == "/"            -> send(out, 200, "text/html", html())
                 method == "GET"  && path == "/status"      -> send(out, 200, "application/json", status())
                 method == "GET"  && path == "/logs"        -> send(out, 200, "application/json", logsJson())
+                method == "GET"  && path == "/stream"      -> { handleSse(socket, out); return }
+
                 method == "GET"  && path == "/netlogs"     -> send(out, 200, "application/json", netLogsJson())
                 method == "POST" && path == "/set-token"          -> { applyToken(parseField(body, "mut")); redirect(out, "/") }
                 method == "POST" && path == "/clear-token"         -> { prefs.setMUT(""); addLog("WARN","Token cleared"); redirect(out, "/") }
@@ -108,6 +131,15 @@ class InAppWebServer @Inject constructor(
         appScope?.launch {
             runCatching { repo.syncMUTToServer(mut) }.onFailure { addLog("WARN", "Server MUT sync failed: ${it.message}") }
         }
+    }
+
+    private fun handleSse(socket: Socket, out: BufferedOutputStream) {
+        val header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+        out.write(header.toByteArray()); out.flush()
+        sseClients.add(out)
+        try { while (!socket.isClosed) Thread.sleep(1000) } catch (_: Exception) {}
+        sseClients.remove(out)
+        try { socket.close() } catch (_: Exception) {}
     }
 
     private fun send(out: BufferedOutputStream, code: Int, type: String, body: String, extra: String = "") {
@@ -179,6 +211,14 @@ function refresh(){
   });
 }
 setInterval(refresh,3000);
+function copyLogs(id){
+  fetch(id==='applogs'?'/logs':'/netlogs').then(r=>r.json()).then(logs=>{
+    navigator.clipboard.writeText(logs.reverse().join('\n')).then(()=>{
+      const b=document.getElementById('copy-'+id);
+      const orig=b.textContent;b.textContent='Copied!';setTimeout(()=>b.textContent=orig,1500);
+    });
+  });
+}
 </script>
 </head><body>
 <h1>Apple Music TV</h1>
@@ -222,12 +262,12 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 </div>
 
 <div class=card>
-<div class=rbar><h2 style=margin:0>Network Activity</h2><button class=rbtn onclick=refresh()>↻</button></div>
+<div class=rbar><h2 style=margin:0>Network Activity</h2><div style=display:flex;gap:6px><button class=rbtn id=copy-netlogs onclick="copyLogs('netlogs')">Copy</button><button class=rbtn onclick=refresh()>↻</button></div></div>
 <div class=logs id=netlogs>$netRows</div>
 </div>
 
 <div class=card>
-<div class=rbar><h2 style=margin:0>App Logs</h2><button class=rbtn onclick=refresh()>↻</button></div>
+<div class=rbar><h2 style=margin:0>App Logs</h2><div style=display:flex;gap:6px><button class=rbtn id=copy-applogs onclick="copyLogs('applogs')">Copy</button><button class=rbtn onclick=refresh()>↻</button></div></div>
 <div class=logs id=applogs>$logRows</div>
 </div>
 </body></html>"""

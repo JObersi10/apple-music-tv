@@ -40,6 +40,8 @@ class MusicRepository @Inject constructor(
         }
     }
 
+    suspend fun getStationTracks(id: String) = runCatching { api.getStationTracks(id).songs.map(::songFromDto) }
+    suspend fun getStationStream(id: String) = runCatching { api.getStationStream(id) }
     suspend fun getAlbum(id: String)         = runCatching { albumFromDto(api.getAlbum(id)) }
     suspend fun getAlbumTracks(id: String)   = runCatching { api.getAlbumTracks(id).tracks.map(::songFromDto) }
     suspend fun getRelatedAlbums(id: String) = runCatching { api.getRelatedAlbums(id).albums.map(::albumFromDto) }
@@ -58,6 +60,8 @@ class MusicRepository @Inject constructor(
             )
         }
     } else runCatching { api.getHome() }
+
+    suspend fun getBrowse() = runCatching { api.getBrowse() }
 
     // ── Lyrics ────────────────────────────────────────────────────────────
     suspend fun getLyrics(songId: String, title: String = "", artist: String = "", durationSec: Long = 0) =
@@ -79,6 +83,11 @@ class MusicRepository @Inject constructor(
     // ── Full song stream URL ───────────────────────────────────────────────
     fun streamUrl(songId: String): String =
         "${serverPrefs.effectiveBaseUrl()}api/stream/$songId"
+
+    fun prefetchUrl(songId: String): String =
+        "${serverPrefs.effectiveBaseUrl()}api/stream/prefetch/$songId"
+
+    fun serverBaseUrl(): String = serverPrefs.effectiveBaseUrl().trimEnd('/')
 
     // ── Library ───────────────────────────────────────────────────────────
     suspend fun getLibrarySongs(limit: Int = 25, offset: Int = 0) =

@@ -85,7 +85,7 @@ fun LibraryScreen(
                                 PlaylistGrid(
                                     playlists  = vm.sortedPlaylists(),
                                     pinnedIds  = pinnedIds,
-                                    onOpen     = { onPlaylistClick(it.id, it.name, it.artworkUrl) },
+                                    onOpen     = { onPlaylistClick(it.id, it.name, it.artworkUrl(500)) },
                                     onPlay     = { vm.playPlaylist(it.id, playerVm) },
                                     onTogglePin = { vm.togglePin(it.id) },
                                 )

@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import axios from "axios"
 import { music } from "../index"
 import { normaliseSong, normaliseAlbum } from "./search"
-import { getBearerToken, getMUT, hasMUT, getStorefront } from "../auth"
+import { getBearerToken, getMUT, hasMUT, getStorefront, ensureBearer } from "../auth"
 
 export const albumRoutes = new Hono()
 
@@ -91,11 +91,74 @@ albumRoutes.get("/:id/tracks", async (c) => {
   }
 
   const res = await music.Albums.getRelationship({ id, relationship: "tracks", limit })
-  return c.json({
-    tracks: res.data.map((t: any) => t.type === "songs" ? normaliseSong(t) : { id: t.id, type: t.type }),
-    next:   res.next ?? null,
-  })
+  const raw = res.data ?? []
+  const nonSongs = raw.filter((t: any) => t.type !== "songs")
+  if (nonSongs.length) console.log(`[albums] skipping non-song items: ${nonSongs.map((t: any) => `${t.type}:${t.id}`).join(", ")}`)
+  const tracks = raw.filter((t: any) => t.type === "songs").map(normaliseSong)
+  console.log(`[albums] tracks id=${id} raw=${raw.length} songs=${tracks.length}`)
+  return c.json({ tracks, next: res.next ?? null })
 })
+
+function decodeStationId(id: string): string {
+  if (!id.startsWith("ra.q-")) return id
+  try {
+    const buf = Buffer.from(id.slice(5), "base64")
+    const hex = buf.toString("latin1").match(/[0-9a-f]{32}/)?.[0]
+    if (hex) return `ra.u-${hex}`
+  } catch {}
+  return id
+}
+
+albumRoutes.get("/station/:id/tracks", async (c) => {
+  const rawId = c.req.param("id")
+  const id = decodeStationId(rawId)
+  const sf = getStorefront() || "us"
+  const headers = ampHeaders()
+  console.log(`[station] id=${rawId} → resolved=${id}`)
+
+  // 1. Fetch station metadata to get stationHash, then use it to get queue
+  try {
+    const metaRes = await axios.get(
+      `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/stations`,
+      { headers, params: { ids: id } }
+    )
+    const attrs = metaRes.data?.data?.[0]?.attributes ?? {}
+    console.log(`[station] full attrs:`, JSON.stringify(attrs))
+    const stationHash = attrs.playParams?.stationHash
+    console.log(`[station] stationHash=${stationHash}`)
+    if (stationHash) {
+      const queueRes = await axios.post(
+        `https://amp-api-edge.music.apple.com/v1/me/stations/queue`,
+        { stationHash },
+        { headers }
+      )
+      console.log(`[station] queue response:`, JSON.stringify(queueRes.data).substring(0, 300))
+      const songs = (queueRes.data?.data ?? []).filter((t: any) => t.type === "songs")
+      if (songs.length > 0) return c.json({ songs: songs.map(normaliseSong) })
+    }
+  } catch (e: any) {
+    console.warn(`[station] stationHash attempt failed:`, e.message)
+  }
+
+  // 2. Personal recently-played tracks as fallback
+  try {
+    const res = await axios.get(
+      `https://amp-api-edge.music.apple.com/v1/me/recent/played/tracks`,
+      { headers, params: { limit: 25, types: "songs" } }
+    )
+    const songs = (res.data?.data ?? []).filter((t: any) => t.type === "songs")
+    console.log(`[station] recent tracks count=${songs.length}`)
+    if (songs.length > 0) return c.json({ songs: songs.map(normaliseSong) })
+  } catch (e: any) {
+    console.warn(`[station] recent-played failed:`, e.message)
+  }
+
+  return c.json({ songs: [] })
+})
+
+// Apple Music Radio live streams (isLive:true, hasDrm:true) are not accessible
+// via any public API — webPlayback rejects them (failureType 3077), radioPlayback
+// 404s, and radio.apple.com doesn't resolve. Kept as a stub; returns null.
 
 albumRoutes.get("/:id/related", async (c) => {
   const id  = c.req.param("id")

@@ -109,15 +109,22 @@ async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str)
     is_multi_seg = init_url is not None and len(seg_urls) > 1
     urls = ([init_url] if init_url else []) + seg_urls
 
-    async def _dl(client, url):
-        chunks = []
-        async with client.stream('GET', url, headers=headers, timeout=120.0) as resp:
-            resp.raise_for_status()
-            async for chunk in resp.aiter_bytes(65536):
-                chunks.append(chunk)
-        return b''.join(chunks)
+    async def _dl(client, url, retries=3):
+        for attempt in range(retries):
+            try:
+                chunks = []
+                t = httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=5.0)
+                async with client.stream('GET', url, headers=headers, timeout=t) as resp:
+                    resp.raise_for_status()
+                    async for chunk in resp.aiter_bytes(65536):
+                        chunks.append(chunk)
+                return b''.join(chunks)
+            except httpx.TransportError as e:
+                if attempt == retries - 1:
+                    raise
+                await asyncio.sleep(2 ** attempt)
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(http2=False) as client:
         data_list = await asyncio.gather(*[_dl(client, url) for url in urls])
 
     with open(enc_path, 'wb') as f:
@@ -167,12 +174,14 @@ async def run(args: dict):
         # the moov moved to the front (+faststart). This is what makes seeking
         # instant and playback reliable on the Fire TV.
         tmp_remux = dec_path + '.remux.mp4'
-        audio_flags = ['-c', 'copy']
+        # Multi-seg fMP4: segment boundaries cause timestamp gaps → UnexpectedDiscontinuityException
+        # in ExoPlayer. aresample=async=1 repairs timestamps (fast for AAC/ctrp64).
+        audio_flags = ['-af', 'aresample=async=1'] if is_multi_seg else ['-c:a', 'copy']
         t3 = time.time()
         ff = subprocess.run(
             [FFMPEG, '-y', '-v', 'error', '-i', tmp_dec]
             + audio_flags
-            + ['-movflags', '+faststart', tmp_remux],
+            + ['-c:v', 'copy', '-movflags', '+faststart', tmp_remux],
             capture_output=True,
         )
         print(f'[timing] ffmpeg: {time.time()-t3:.1f}s  rc={ff.returncode}  flags={audio_flags}', flush=True)

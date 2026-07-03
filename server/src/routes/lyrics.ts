@@ -158,7 +158,6 @@ async function fetchLrclibLyrics(meta: SongMeta): Promise<LyricLine[] | null> {
     track_name: meta.title,
     artist_name: meta.artist,
   });
-  if (meta.album) params.set("album_name", meta.album);
   if (meta.durationSec > 0) params.set("duration", String(meta.durationSec));
 
   const lrcHeaders = { "User-Agent": "AppleMusicTV (github.com/applemusicktv)" };

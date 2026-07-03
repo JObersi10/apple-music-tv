@@ -58,6 +58,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -75,6 +78,11 @@ fun NowPlayingScreen(
     val smoothProgressMs = rememberSmoothProgressMs(state.progressMs, state.isPlaying)
     val adjustedProgressMs = smoothProgressMs + state.lyricsOffsetMs
 
+    DisposableEffect(Unit) {
+        playerVm.nowPlayingVisible = true
+        onDispose { playerVm.nowPlayingVisible = false }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         DynamicBackground(artworkUrl = song?.artworkUrl(1200), songKey = song?.id ?: "")
 
@@ -84,6 +92,22 @@ fun NowPlayingScreen(
             }
             return@Box
         }
+
+        // System clock — top-left
+        var clockText by remember { mutableStateOf("") }
+        LaunchedEffect(Unit) {
+            val fmt = SimpleDateFormat("h:mm a", Locale.getDefault())
+            while (isActive) {
+                clockText = fmt.format(Date())
+                kotlinx.coroutines.delay(10_000)
+            }
+        }
+        Text(
+            clockText,
+            modifier = Modifier.align(Alignment.TopStart).padding(start = 72.dp, top = 14.dp),
+            fontSize = 12.sp,
+            color = Color(0xAAFFFFFF),
+        )
 
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 72.dp, vertical = 40.dp),
@@ -153,46 +177,54 @@ fun NowPlayingScreen(
                     Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFA233B)))
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), Arrangement.SpaceBetween) {
-                    Text(formatMs(state.progressMs), fontSize = 11.sp, color = Color(0xFFAAAAAA))
-                    Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
+                    Text(formatMs(smoothProgressMs), fontSize = 11.sp, color = Color(0xFFAAAAAA))
+                    Text(
+                        buildString {
+                            if (song.durationMs > 0) {
+                                append("-"); append(formatMs(maxOf(0L, song.durationMs - smoothProgressMs)))
+                                append("  "); append(song.durationFormatted)
+                            } else {
+                                append(song.durationFormatted)
+                            }
+                        },
+                        fontSize = 11.sp, color = Color(0xFFAAAAAA),
+                    )
                 }
             }
 
             // Right — lyrics or queue
-            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                if (showQueue) {
-                    QueuePanel(
-                        queue = state.queue,
-                        currentIndex = state.queueIndex,
-                        onSelect = { idx ->
-                            playerVm.player.seekToDefaultPosition(idx)
-                            playerVm.player.play()
-                        },
-                    )
-                } else if (state.lyrics.isNotEmpty()) {
-                    LyricsPanel(
-                        lyrics = state.lyrics,
-                        progressMs = adjustedProgressMs,
-                        onSeek = { ms -> playerVm.player.seekTo(ms) },
-                    )
-                } else {
-                    QueuePanel(
-                        queue = state.queue,
-                        currentIndex = state.queueIndex,
-                        onSelect = { idx ->
-                            playerVm.player.seekToDefaultPosition(idx)
-                            playerVm.player.play()
-                        },
-                    )
+            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                val label = when {
+                    showQueue -> "Queue  •  Menu = Lyrics"
+                    state.lyrics.isNotEmpty() -> "Lyrics  •  Menu = Queue"
+                    else -> "Queue"
                 }
-
-                Box(Modifier.align(Alignment.TopEnd)) {
-                    val label = when {
-                        showQueue -> "Queue  •  Menu = Lyrics"
-                        state.lyrics.isNotEmpty() -> "Lyrics  •  Menu = Queue"
-                        else -> "Queue"
+                Text(
+                    label,
+                    fontSize = 10.sp,
+                    color = Color(0x99FFFFFF),
+                    modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp),
+                )
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    if (showQueue) {
+                        QueuePanel(
+                            queue = state.queue,
+                            currentIndex = state.queueIndex,
+                            onSelect = { idx -> playerVm.playFromQueue(idx) },
+                        )
+                    } else if (state.lyrics.isNotEmpty()) {
+                        LyricsPanel(
+                            lyrics = state.lyrics,
+                            progressMs = adjustedProgressMs,
+                            onSeek = { ms -> playerVm.player.seekTo(ms) },
+                        )
+                    } else {
+                        QueuePanel(
+                            queue = state.queue,
+                            currentIndex = state.queueIndex,
+                            onSelect = { idx -> playerVm.playFromQueue(idx) },
+                        )
                     }
-                    Text(label, fontSize = 10.sp, color = Color(0x99FFFFFF))
                 }
             }
         }

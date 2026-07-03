@@ -160,6 +160,19 @@ async function getStreamParams(songId: string, mut: string) {
   return { streamUrl: mediaUrl, adamId, keyUri };
 }
 
+// GET /api/prefetch/:songId — kick off decrypt in background, return 200 immediately.
+// Android fires this while the current song plays so the next song is cached by the time it's needed.
+stream.get("/prefetch/:songId", async (c) => {
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  if (!mut) return c.json({ ok: false, reason: "no_mut" }, 200);
+  const songId = c.req.param("songId");
+  const out = cachePath(songId);
+  if (fs.existsSync(out)) return c.json({ ok: true, cached: true });
+  // Fire-and-forget — don't await
+  ensureDecrypted(songId, mut).catch((e) => console.warn(`[prefetch] ${songId}:`, e.message));
+  return c.json({ ok: true, started: true });
+});
+
 // GET /api/stream/:songId — decrypted audio, served from a seekable cache
 // file with HTTP Range support so ExoPlayer can scrub instantly (clicking a
 // lyric line seeks instead of restarting the track).

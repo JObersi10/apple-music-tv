@@ -21,6 +21,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.applemusicktv.data.LyricsOffsetPreferences
 import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.ServerPreferences
+import com.applemusicktv.media.InAppWebServer
 import com.applemusicktv.data.model.Song
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.data.repository.MusicRepository
@@ -57,6 +58,7 @@ class PlayerViewModel @Inject constructor(
     private val serverPrefs: ServerPreferences,
     private val appleClient: AppleDirectClient,
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
+    private val webServer: InAppWebServer,
 ) : ViewModel() {
 
     private fun hasMUT() = mutPrefs.hasMUT()
@@ -69,6 +71,8 @@ class PlayerViewModel @Inject constructor(
     val state: StateFlow<PlayerState> = _state
 
     private var lastErrorKey: String? = null
+    private var hasPlayedSomething = false
+    var nowPlayingVisible = false
     private var mediaSession: androidx.media3.session.MediaSession? = null
     private var lyricsJob: kotlinx.coroutines.Job? = null
     private var motionJob: kotlinx.coroutines.Job? = null
@@ -90,7 +94,9 @@ class PlayerViewModel @Inject constructor(
             .setAllowCrossProtocolRedirects(true)
         val dataSourceFactory =
             androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
-        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            .setMp4ExtractorFlags(androidx.media3.extractor.mp4.Mp4Extractor.FLAG_WORKAROUND_IGNORE_EDIT_LISTS)
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory)
 
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -114,10 +120,10 @@ class PlayerViewModel @Inject constructor(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(), true,
+                    .build(), false, // don't yield to Fire TV Alexa audio focus steals
             )
-            .setHandleAudioBecomingNoisy(true)
-            .build()
+            .setHandleAudioBecomingNoisy(false)
+            .build().also { it.repeatMode = Player.REPEAT_MODE_OFF }
     }
 
     fun setLyricsOffset(ms: Long) {
@@ -131,42 +137,36 @@ class PlayerViewModel @Inject constructor(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _state.update { it.copy(isPlaying = isPlaying) }
             }
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                // Log the real cause so failing songs are diagnosable, then try
-                // to recover ONCE by re-preparing (a stalled first-decrypt often
-                // succeeds on the retry, now that it's cached). Bounded so a
-                // genuinely broken track doesn't loop forever.
-                val msg = "${error.errorCodeName}: ${error.message}"
-                Log.e("PlayerVM", "Playback error for ${_state.value.currentSong?.title}: $msg")
-                com.applemusicktv.data.NetworkLog.add(
-                    "ERR", repo.streamUrl(_state.value.currentSong?.id ?: "?"), error.errorCode, 0
-                )
-                val song = _state.value.currentSong ?: return
-                if (lastErrorKey != song.id) {
-                    lastErrorKey = song.id
-                    // Retry once — first decrypt is slow; a timeout often succeeds on retry.
-                    val dur = player.duration
-                    val pos = player.currentPosition
-                    if (dur <= 0L || pos < dur - 5_000L) player.prepare()
-                }
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                if (repeatMode != Player.REPEAT_MODE_OFF) player.repeatMode = Player.REPEAT_MODE_OFF
             }
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                val idx = player.currentMediaItemIndex
-                val q = _state.value.queue
-                if (idx in q.indices) {
-                    // Clear old lyrics/motion immediately so the previous song's
-                    // lyrics don't linger while the new ones load.
-                    _state.update { it.copy(currentSong = q[idx], song = q[idx], queueIndex = idx, lyrics = emptyList(), motionUrl = null) }
-                    loadLyrics(q[idx].id)
-                    loadMotion(q[idx].id)
-                }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                webServer.addLog("ERR", "${error.errorCodeName} — skip to next")
+                advanceQueue()
             }
         })
         // A MediaSession makes the system route external controller / Bluetooth
         // media buttons (play/pause/next/prev) to our player — those don't come
         // through Activity.dispatchKeyEvent, which is why the controller buttons
         // seemed dead.
-        mediaSession = androidx.media3.session.MediaSession.Builder(context, player).build()
+        mediaSession = androidx.media3.session.MediaSession.Builder(context, player)
+            .setCallback(object : androidx.media3.session.MediaSession.Callback {
+                override fun onConnect(
+                    session: androidx.media3.session.MediaSession,
+                    controller: androidx.media3.session.MediaSession.ControllerInfo,
+                ): androidx.media3.session.MediaSession.ConnectionResult {
+                    // Block Fire TV system controllers (Alexa, AudioMediaPlayerWrapper)
+                    // from sending pause/stop commands that interrupt playback.
+                    // Remote buttons still work via MainActivity.dispatchKeyEvent.
+                    val pkg = controller.packageName
+                    val allowed = pkg == context.packageName
+                    webServer.addLog("PLR", "MediaSession connect pkg=$pkg allowed=$allowed")
+                    return if (allowed) super.onConnect(session, controller)
+                    else androidx.media3.session.MediaSession.ConnectionResult.reject()
+                }
+            })
+            .build()
+        player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
         pollProgress()
         restoreState()
         checkServerReachable()
@@ -219,6 +219,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun restoreState() = viewModelScope.launch {
         val songJson = prefs.getString("song", null) ?: return@launch
+        if (hasPlayedSomething) return@launch
         try {
             val adapter = moshi.adapter(Song::class.java)
             val listType = Types.newParameterizedType(List::class.java, Song::class.java)
@@ -229,15 +230,56 @@ class PlayerViewModel @Inject constructor(
             val posMs = prefs.getLong("position_ms", 0L)
             val full  = prefs.getBoolean("full_stream", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full) }
-            val items = queue.map { s -> buildMediaItem(s, if (full) repo.streamUrl(s.id) else (s.previewUrl ?: repo.streamUrl(s.id))) }
-            player.setMediaItems(items, idx, posMs)
+            val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
+            webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}")
+            player.setMediaItem(buildMediaItem(song, uri), posMs)
             player.prepare()
         } catch (_: Exception) {}
+    }
+
+    fun playFromQueue(idx: Int) = playQueueItem(idx)
+
+    private fun advanceQueue() {
+        val nextIdx = _state.value.queueIndex + 1
+        webServer.addLog("PLR", "advance → idx=$nextIdx / ${_state.value.queue.size}")
+        playQueueItem(nextIdx)
+    }
+
+    private fun playQueueItem(idx: Int) {
+        val q = _state.value.queue
+        if (q.isEmpty() || idx !in q.indices) {
+            webServer.addLog("PLR", "playQueueItem idx=$idx out of bounds (size=${q.size}) — stopping")
+            return
+        }
+        val song = q[idx]
+        val full = _state.value.isFullStream
+        val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
+        webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}")
+        _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null) }
+        player.repeatMode = Player.REPEAT_MODE_OFF
+        player.setMediaItem(buildMediaItem(song, uri))
+        player.prepare()
+        player.play()
+        if (full) loadLyrics(song.id)
+        loadMotion(song.id)
+        // Pre-warm server cache for next song — hits /prefetch which returns instantly
+        val nextSong = q.getOrNull(idx + 1)
+        if (full && nextSong != null) viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val conn = java.net.URL(repo.prefetchUrl(nextSong.id)).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 5_000
+                conn.readTimeout = 10_000
+                conn.getResponseCode()
+                conn.disconnect()
+            } catch (_: Exception) {}
+        }
     }
 
     fun playSong(song: Song, useFullStream: Boolean = hasMUT()) {
         usingStandalone = false
         lastErrorKey = null
+        hasPlayedSomething = true
         _state.update { it.copy(currentSong = song, song = song, queue = listOf(song), queueIndex = 0, lyrics = emptyList(), isFullStream = useFullStream, motionUrl = null) }
         val uri = if (useFullStream) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         player.setMediaItem(buildMediaItem(song, uri))
@@ -249,17 +291,63 @@ class PlayerViewModel @Inject constructor(
 
     fun playAlbum(songs: List<Song>, startIndex: Int = 0, useFullStream: Boolean = hasMUT()) {
         if (songs.isEmpty()) return
+        val stack = Thread.currentThread().stackTrace
+        val callers = (3..7).mapNotNull { stack.getOrNull(it) }.joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+        webServer.addLog("PLR", "playAlbum size=${songs.size} idx=$startIndex << $callers")
         usingStandalone = false
         lastErrorKey = null
+        hasPlayedSomething = true
         val idx = startIndex.coerceIn(0, songs.lastIndex)
-        _state.update { it.copy(queue = songs, currentSong = songs[idx], song = songs[idx], queueIndex = idx, lyrics = emptyList(), isFullStream = useFullStream, motionUrl = null) }
-        player.setMediaItems(songs.map { s ->
-            buildMediaItem(s, if (useFullStream) repo.streamUrl(s.id) else (s.previewUrl ?: repo.streamUrl(s.id)))
-        }, idx, 0L)
+        val song = songs[idx]
+        _state.update { it.copy(queue = songs, isFullStream = useFullStream) }
+        playQueueItem(idx)
+    }
+
+    fun playStation(stationId: String) = viewModelScope.launch {
+        val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
+        if (songs.isNotEmpty()) playAlbum(songs)
+    }
+
+    @OptIn(UnstableApi::class)
+    fun playLiveStation(stationId: String) = viewModelScope.launch {
+        val info = repo.getStationStream(stationId).getOrNull() ?: return@launch
+        val url = info.liveStreamUrl ?: return@launch
+        Log.d("PlayerVM", "playLiveStation id=$stationId url=${url.take(80)} keyUri=${info.drmKeyUri?.take(40)}")
+        usingStandalone = false
+        lastErrorKey = null
+        val fakeSong = com.applemusicktv.data.model.Song(
+            id = stationId, title = "Apple Music Radio", artistName = "Apple Music",
+            albumName = "", durationMs = 0L, artworkUrl = null, artworkBgColor = null,
+            previewUrl = null, hasLyrics = false,
+        )
+        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null) }
+
+        val keyUri = info.drmKeyUri
+        val adamId = info.adamId ?: stationId.replace(Regex("^ra\\."), "")
+        if (keyUri != null) {
+            try {
+                val bearer = appleClient.getBearer()
+                val mut = mutPrefs.getMUT()
+                val drmCallback = AppleMusicDrmCallback(adamId, keyUri, bearer, mut)
+                val drmManager = DefaultDrmSessionManager.Builder()
+                    .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                    .setMultiSession(false)
+                    .build(drmCallback)
+                val mediaSource = DefaultMediaSourceFactory(context)
+                    .setDrmSessionManagerProvider { drmManager }
+                    .createMediaSource(buildMediaItem(fakeSong, url))
+                player.setMediaSource(mediaSource)
+                player.prepare()
+                player.play()
+                return@launch
+            } catch (e: Exception) {
+                Log.e("PlayerVM", "Live station DRM failed: ${e.message}")
+            }
+        }
+        // No DRM key or DRM failed — try plain HLS
+        player.setMediaItem(buildMediaItem(fakeSong, url))
         player.prepare()
         player.play()
-        if (useFullStream) loadLyrics(songs[idx].id)
-        loadMotion(songs[idx].id)
     }
 
     @OptIn(UnstableApi::class)
@@ -301,41 +389,19 @@ class PlayerViewModel @Inject constructor(
 
     fun togglePlayPause() { if (player.isPlaying) player.pause() else player.play() }
 
-    // seekToNext/Previous are the "smart" combined ops: they respect the
-    // player's command set, wrap correctly at the ends of the queue, and (for
-    // prev) restart the current track if we're past the threshold — matching
-    // how the hardware media keys behave. The bare *MediaItem variants no-op
-    // at boundaries, which is why the on-screen buttons appeared dead.
-    fun next() {
-        if (player.hasNextMediaItem()) player.seekToNextMediaItem() else player.seekToNext()
-        player.play()
-    }
-
+    fun next() { playQueueItem(_state.value.queueIndex + 1) }
     fun prev() {
-        if (player.currentPosition > 3_000L || !player.hasPreviousMediaItem()) {
-            player.seekTo(0L)
-        } else {
-            player.seekToPreviousMediaItem()
-        }
-        player.play()
+        val prevIdx = _state.value.queueIndex - 1
+        if (prevIdx >= 0) playQueueItem(prevIdx) else player.seekTo(0L)
     }
-    fun seekForward() { player.seekTo((player.currentPosition + 15_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }
-    fun seekBack()    { player.seekTo((player.currentPosition - 15_000L).coerceAtLeast(0L)) }
+    fun seekForward() { webServer.addLog("PLR", "seekForward pos=${player.currentPosition}"); player.seekTo((player.currentPosition + 15_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }
+    fun seekBack()    { webServer.addLog("PLR", "seekBack pos=${player.currentPosition}"); player.seekTo((player.currentPosition - 15_000L).coerceAtLeast(0L)) }
 
-    fun addToQueue(song: Song) {
-        val uri = if (_state.value.isFullStream) repo.streamUrl(song.id) else (song.previewUrl ?: return)
-        player.addMediaItem(buildMediaItem(song, uri))
-        _state.update { it.copy(queue = it.queue + song) }
-    }
+    fun addToQueue(song: Song) { _state.update { it.copy(queue = it.queue + song) } }
 
-    /** Insert a song right after the currently-playing one. */
     fun playNext(song: Song) {
-        val uri = if (_state.value.isFullStream) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
-        val insertAt = (player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount)
-        player.addMediaItem(insertAt, buildMediaItem(song, uri))
         val q = _state.value.queue.toMutableList()
-        val qInsert = (_state.value.queueIndex + 1).coerceIn(0, q.size)
-        q.add(qInsert, song)
+        q.add((_state.value.queueIndex + 1).coerceIn(0, q.size), song)
         _state.update { it.copy(queue = q) }
     }
 
@@ -368,9 +434,13 @@ class PlayerViewModel @Inject constructor(
 
     private fun pollProgress() = viewModelScope.launch {
         while (true) {
-            if (player.isPlaying)
-                _state.update { it.copy(progressMs = player.currentPosition) }
-            delay(if (player.isPlaying) 200L else 1_000L)
+            val playing = player.isPlaying
+            val state   = player.playbackState
+            if (playing) _state.update { it.copy(progressMs = player.currentPosition) }
+            if (state == Player.STATE_ENDED) advanceQueue()
+            // When NowPlaying is off-screen we only need enough resolution to detect
+            // track end — 1s is plenty and saves recompose work on other screens.
+            delay(if (playing && nowPlayingVisible) 200L else if (playing) 1_000L else 500L)
         }
     }
 

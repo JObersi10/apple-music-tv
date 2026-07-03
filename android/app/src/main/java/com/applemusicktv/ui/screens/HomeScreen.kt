@@ -65,7 +65,7 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
         items(state.sections, key = { it.title }) { section ->
-            ContentRow(section, onAlbumClick, onPlaylistClick)
+            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick)
         }
     }
 }
@@ -73,6 +73,7 @@ fun HomeScreen(
 @Composable
 private fun ContentRow(
     section: HomeSection,
+    playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit,
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
 ) {
@@ -90,9 +91,13 @@ private fun ContentRow(
         ) {
             items(section.albums, key = { it.id }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                val isStation = album.id.startsWith("ra.")
                 AlbumCard(album = album, size = 130, onClick = {
-                    if (isPlaylist) onPlaylistClick(album.id, album.title, album.artworkUrl ?: "")
-                    else onAlbumClick(album.id)
+                    when {
+                        isStation -> { /* Apple Music Radio live streams not accessible via public API */ }
+                        isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
+                        else -> onAlbumClick(album.id)
+                    }
                 })
             }
         }

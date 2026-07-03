@@ -14,6 +14,7 @@ import libraryRoutes from "./routes/library"
 import streamRoutes from "./routes/stream"
 import motionRoutes from "./routes/motion"
 import homeRoutes from "./routes/home"
+import browseRoutes from "./routes/browse"
 
 export const music = new AppleMusic({ region: Region.US, authType: AuthType.Scraped })
 await music.init()
@@ -58,6 +59,11 @@ app.use("*", logger())
 app.use("*", cors({ origin: "*" }))
 
 app.get("/health", (c) => c.json({ ok: true }))
+app.post("/api/log", async (c) => {
+  const { level, msg } = await c.req.json()
+  console.log(`[${level ?? "PLR"}] ${msg}`)
+  return c.json({ ok: true })
+})
 app.route("/auth",          authRoutes)
 app.route("/api/search",    searchRoutes)
 app.route("/api/albums",    albumRoutes)
@@ -68,6 +74,7 @@ app.route("/api/library",   libraryRoutes)
 app.route("/api/stream",    streamRoutes)
 app.route("/api/motion",    motionRoutes)
 app.route("/api/home",      homeRoutes)
+app.route("/api/browse",    browseRoutes)
 
 app.onError((err, c) => {
   console.error(err)

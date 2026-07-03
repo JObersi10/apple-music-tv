@@ -74,7 +74,12 @@ data class PlaylistDto(
     val artworkBgColor: String?,
     val description:    String?,
     val playlistType:   String? = null,
-)
+) {
+    fun artworkUrl(size: Int) = artworkUrl
+        ?.replace("{w}", "$size")
+        ?.replace("{h}", "$size")
+        ?.replace("{f}", "jpg")
+}
 
 @JsonClass(generateAdapter = true)
 data class SearchResponse(
@@ -92,6 +97,14 @@ data class AlbumsResponse(val albums: List<AlbumDto> = emptyList())
 
 @JsonClass(generateAdapter = true)
 data class SongsResponse(val songs: List<SongDto> = emptyList())
+
+@JsonClass(generateAdapter = true)
+data class StationStreamResponse(
+    val liveStreamUrl: String? = null,
+    val drmKeyUri:     String? = null,
+    val adamId:        String? = null,
+    val isLive:        Boolean = true,
+)
 
 @JsonClass(generateAdapter = true)
 data class LibrarySongsResponse(val songs: List<SongDto> = emptyList())
@@ -162,6 +175,12 @@ interface ProxyApi {
     @GET("api/albums/{id}/related")
     suspend fun getRelatedAlbums(@Path("id") id: String): AlbumsResponse
 
+    @GET("api/albums/station/{id}/tracks")
+    suspend fun getStationTracks(@Path("id") id: String): SongsResponse
+
+    @GET("api/albums/station/{id}/stream")
+    suspend fun getStationStream(@Path("id") id: String): StationStreamResponse
+
     @GET("api/songs/{id}")
     suspend fun getSong(@Path("id") id: String): SongDto
 
@@ -180,6 +199,9 @@ interface ProxyApi {
     // ── Home / Listen Now ─────────────────────────────────────────────────
     @GET("api/home")
     suspend fun getHome(): HomeResponse
+
+    @GET("api/browse")
+    suspend fun getBrowse(): HomeResponse
 
     // ── Lyrics ────────────────────────────────────────────────────────────
     @GET("api/lyrics/{id}")

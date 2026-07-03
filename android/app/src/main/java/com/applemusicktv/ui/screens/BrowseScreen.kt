@@ -13,27 +13,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.tv.material3.*
-import com.applemusicktv.data.model.Album
-import com.applemusicktv.data.repository.MusicRepository
-import com.applemusicktv.data.repository.SearchResults
-import com.applemusicktv.ui.components.AlbumCard
-import com.applemusicktv.ui.viewmodel.PlayerViewModel
-import dagger.hilt.android.lifecycle.HiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.async
+import androidx.tv.material3.*
+import com.applemusicktv.ui.components.AlbumCard
+import com.applemusicktv.ui.viewmodel.HomeSection
+import com.applemusicktv.ui.viewmodel.PlayerViewModel
+import com.applemusicktv.data.repository.MusicRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class BrowseUiState(
-    val isLoading:     Boolean     = true,
-    val error:         String?     = null,
-    val topPicks:      List<Album> = emptyList(),
-    val madeForYou:    List<Album> = emptyList(),
-    val recentlyAdded: List<Album> = emptyList(),
-    val newReleases:   List<Album> = emptyList(),
+    val isLoading: Boolean           = true,
+    val error:     String?           = null,
+    val sections:  List<HomeSection> = emptyList(),
 )
 
 @HiltViewModel
@@ -46,30 +41,28 @@ class BrowseViewModel @Inject constructor(private val repo: MusicRepository) : V
     fun load() {
         viewModelScope.launch {
             _state.value = BrowseUiState(isLoading = true)
-            try {
-                val topD    = async { repo.search("top hits 2024", 10) }
-                val madeD   = async { repo.search("chill playlist", 8) }
-                val recentD = async { repo.search("new album 2025", 10) }
-                val newD    = async { repo.search("new release 2025", 8) }
-                _state.value = BrowseUiState(
-                    isLoading     = false,
-                    topPicks      = topD.await().getOrDefault(empty()).albums,
-                    madeForYou    = madeD.await().getOrDefault(empty()).albums,
-                    recentlyAdded = recentD.await().getOrDefault(empty()).albums,
-                    newReleases   = newD.await().getOrDefault(empty()).albums,
-                )
-            } catch (e: Exception) {
-                _state.value = BrowseUiState(isLoading = false, error = e.message)
-            }
+            repo.getBrowse()
+                .onSuccess { resp ->
+                    _state.value = BrowseUiState(
+                        isLoading = false,
+                        sections  = resp.sections.map { s ->
+                            HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto))
+                        },
+                    )
+                }
+                .onFailure { _state.value = BrowseUiState(isLoading = false, error = it.message) }
         }
     }
-
-    private fun empty() = SearchResults()
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun BrowseScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, modifier: Modifier = Modifier) {
+fun BrowseScreen(
+    playerVm: PlayerViewModel,
+    onAlbumClick: (String) -> Unit = {},
+    onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
+    modifier: Modifier = Modifier,
+) {
     val vm: BrowseViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
 
@@ -83,7 +76,8 @@ fun BrowseScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
     if (state.error != null) {
         Box(modifier.fillMaxSize(), Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Could not connect", color = Color(0xFFFF453A), fontSize = 16.sp)
+                Text("Could not connect to server", color = Color(0xFFFF453A), fontSize = 16.sp)
+                Text(state.error ?: "", color = Color(0xFF555555), fontSize = 12.sp)
                 Spacer(Modifier.height(16.dp))
                 Surface(onClick = vm::load, colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B))) {
                     Text("Retry", color = Color.White, modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp))
@@ -93,31 +87,33 @@ fun BrowseScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
         return
     }
 
+    if (state.sections.isEmpty()) {
+        Box(modifier.fillMaxSize(), Alignment.Center) {
+            Text("No content available", color = Color(0xFF555555), fontSize = 14.sp)
+        }
+        return
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 28.dp),
+        contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        if (state.topPicks.isNotEmpty()) item {
-            BrowseRow("Top Picks", state.topPicks, onAlbumClick)
-        }
-        if (state.madeForYou.isNotEmpty()) item {
-            BrowseRow("Made For You", state.madeForYou, onAlbumClick)
-        }
-        if (state.recentlyAdded.isNotEmpty()) item {
-            BrowseRow("Recently Added", state.recentlyAdded, onAlbumClick)
-        }
-        if (state.newReleases.isNotEmpty()) item {
-            BrowseRow("New Releases", state.newReleases, onAlbumClick)
+        items(state.sections, key = { it.title }) { section ->
+            BrowseRow(section, onAlbumClick, onPlaylistClick)
         }
     }
 }
 
 @Composable
-private fun BrowseRow(title: String, albums: List<Album>, onAlbumClick: (String) -> Unit) {
+private fun BrowseRow(
+    section: HomeSection,
+    onAlbumClick: (String) -> Unit,
+    onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text       = title,
+            text       = section.title,
             fontSize   = 18.sp,
             fontWeight = FontWeight.SemiBold,
             color      = Color.White,
@@ -127,8 +123,12 @@ private fun BrowseRow(title: String, albums: List<Album>, onAlbumClick: (String)
             contentPadding        = PaddingValues(horizontal = 48.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            items(albums, key = { it.id }) { album ->
-                AlbumCard(album = album, size = 130, onClick = { onAlbumClick(album.id) })
+            items(section.albums, key = { it.id }) { album ->
+                val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                AlbumCard(album = album, size = 130, onClick = {
+                    if (isPlaylist) onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
+                    else onAlbumClick(album.id)
+                })
             }
         }
     }

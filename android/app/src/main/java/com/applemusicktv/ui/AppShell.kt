@@ -84,7 +84,11 @@ fun AppShell(modifier: Modifier = Modifier) {
                 )
             }
             composable(Screen.Browse.route) {
-                BrowseScreen(playerVm = playerVm, onAlbumClick = { navController.navigate(Screen.AlbumDetail.route(it)) })
+                BrowseScreen(
+                    playerVm       = playerVm,
+                    onAlbumClick   = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                )
             }
             composable(Screen.Library.route) {
                 LibraryScreen(
