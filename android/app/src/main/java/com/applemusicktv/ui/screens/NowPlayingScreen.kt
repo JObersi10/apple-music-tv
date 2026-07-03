@@ -1,8 +1,11 @@
 package com.applemusicktv.ui.screens
 
 import android.graphics.drawable.BitmapDrawable
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -633,13 +636,25 @@ private fun LyricLineRow(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun QueuePanel(queue: List<com.applemusicktv.data.model.Song>, currentIndex: Int, onSelect: (Int) -> Unit) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(queue, currentIndex) {
+        if (queue.isNotEmpty()) listState.scrollToItem(currentIndex.coerceIn(0, queue.lastIndex))
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         Text("Up Next", fontSize = 13.sp, color = Color(0xFFAAAAAA), fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(12.dp))
-        LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(queue.size) { idx ->
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            items(queue.size, key = { idx -> "${queue[idx].id}_$idx" }) { idx ->
                 val song = queue[idx]
                 val isCurrent = idx == currentIndex
+                var visible by remember(idx, currentIndex) { mutableStateOf(idx >= currentIndex) }
+                LaunchedEffect(currentIndex) {
+                    if (idx < currentIndex) visible = false
+                }
+                AnimatedVisibility(
+                    visible = visible,
+                    exit = slideOutVertically(tween(350)) { -it } + fadeOut(tween(300)),
+                ) {
                 Surface(
                     onClick = { onSelect(idx) },
                     shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
@@ -659,6 +674,7 @@ private fun QueuePanel(queue: List<com.applemusicktv.data.model.Song>, currentIn
                         Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
                     }
                 }
+                } // AnimatedVisibility
             }
         }
     }
