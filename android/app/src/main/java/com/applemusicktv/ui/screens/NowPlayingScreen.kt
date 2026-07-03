@@ -107,9 +107,9 @@ fun NowPlayingScreen(
         }
         Text(
             clockText,
-            modifier = Modifier.align(Alignment.TopStart).padding(start = 72.dp, top = 14.dp),
-            fontSize = 12.sp,
-            color = Color(0xAAFFFFFF),
+            modifier = Modifier.align(Alignment.TopEnd).padding(end = 72.dp, top = 14.dp),
+            fontSize = 15.sp,
+            color = Color(0xCCFFFFFF),
         )
 
         Row(
@@ -181,7 +181,7 @@ fun NowPlayingScreen(
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), Arrangement.SpaceBetween) {
                     Text(
-                        if (song.durationMs > 0) "-${formatMs(maxOf(0L, song.durationMs - smoothProgressMs))}" else "",
+                        "-${formatMs(maxOf(0L, song.durationMs - smoothProgressMs))}",
                         fontSize = 11.sp, color = Color(0xFFAAAAAA),
                     )
                     Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
