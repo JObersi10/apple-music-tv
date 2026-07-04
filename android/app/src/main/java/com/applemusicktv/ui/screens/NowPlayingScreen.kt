@@ -344,53 +344,56 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
         animateColorAsState(c, tween(1500), label = "blob$i").value
     }
 
-    // Sinusoidal easing — blobs accelerate through center, decelerate at ends.
-    // Feels like fluid resisting motion at extremes, surging through the middle.
     val sineEase = CubicBezierEasing(0.37f, 0f, 0.63f, 1f)
     val infinite = rememberInfiniteTransition(label = "pool")
     val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(22_000, easing = sineEase), RepeatMode.Reverse), label = "t1")
     val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(31_000, easing = sineEase), RepeatMode.Reverse), label = "t2")
     val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(41_000, easing = sineEase), RepeatMode.Reverse), label = "t3")
+    // Continuous slow spin — makes fluid look like it's being stirred.
+    val rot by infinite.animateFloat(0f, 360f, infiniteRepeatable(tween(80_000, easing = LinearEasing), RepeatMode.Restart), label = "rot")
 
     Box(Modifier.fillMaxSize().background(Color(0xFF060606))) {
-        // blur() is a no-op on API < 31 — safe to call unconditionally.
-        Box(Modifier.fillMaxSize().blur(110.dp).drawBehind {
-            val w = size.width; val h = size.height
-            val beatScale = 1f + energy * 0.28f
-            val centers = listOf(
-                Offset(lerp(0.05f, 0.52f, t1) * w, lerp(0.10f, 0.58f, t2) * h),
-                Offset(lerp(0.95f, 0.48f, t2) * w, lerp(0.05f, 0.62f, t3) * h),
-                Offset(lerp(0.12f, 0.62f, t3) * w, lerp(0.92f, 0.42f, t1) * h),
-                Offset(lerp(0.82f, 0.32f, t1) * w, lerp(0.78f, 0.32f, t2) * h),
-                Offset(lerp(0.38f, 0.68f, t2) * w, lerp(0.32f, 0.72f, t3) * h),
-                Offset(lerp(0.62f, 0.18f, t3) * w, lerp(0.52f, 0.22f, t1) * h),
-            )
-            // Each blob rendered as 3 concentric layers (bright core → mid → outer
-            // glow) to simulate Gaussian falloff — looks soft and painted even on
-            // devices where blur() is unsupported.
-            animated.forEachIndexed { i, color ->
-                val center = centers.getOrNull(i) ?: return@forEachIndexed
-                val base = maxOf(w, h) * (0.48f + (i % 3) * 0.14f) * beatScale
-                listOf(
-                    base * 0.50f to (0.82f + energy * 0.12f),
-                    base * 1.00f to (0.42f + energy * 0.10f),
-                    base * 1.60f to (0.16f + energy * 0.06f),
-                ).forEach { (r, a) ->
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(color.copy(alpha = a), color.copy(alpha = 0f)),
-                            center = center, radius = r,
-                        ),
-                        radius = r, center = center,
+        Box(
+            Modifier
+                .fillMaxSize()
+                // Rotate the whole blob layer slowly; scale up slightly so
+                // corners don't reveal the black base during rotation.
+                .graphicsLayer { rotationZ = rot; scaleX = 1.25f; scaleY = 1.25f }
+                .blur(70.dp)  // no-op on API < 31, hardware blur on 31+
+                .drawBehind {
+                    val w = size.width; val h = size.height
+                    val beatScale = 1f + energy * 0.28f
+                    // 4 blobs (down from 6) — fewer draw calls, still full coverage.
+                    val centers = listOf(
+                        Offset(lerp(0.05f, 0.55f, t1) * w, lerp(0.10f, 0.60f, t2) * h),
+                        Offset(lerp(0.95f, 0.45f, t2) * w, lerp(0.05f, 0.65f, t3) * h),
+                        Offset(lerp(0.10f, 0.65f, t3) * w, lerp(0.90f, 0.40f, t1) * h),
+                        Offset(lerp(0.80f, 0.30f, t1) * w, lerp(0.75f, 0.30f, t3) * h),
                     )
+                    // 2 passes per blob (core + glow) instead of 3 — halves draw calls
+                    // while keeping the soft painted edge.
+                    animated.take(4).forEachIndexed { i, color ->
+                        val center = centers[i]
+                        val base = maxOf(w, h) * (0.52f + (i % 2) * 0.18f) * beatScale
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                listOf(color.copy(alpha = 0.80f + energy * 0.12f), color.copy(alpha = 0f)),
+                                center = center, radius = base * 0.55f,
+                            ), radius = base * 0.55f, center = center,
+                        )
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                listOf(color.copy(alpha = 0.30f + energy * 0.08f), color.copy(alpha = 0f)),
+                                center = center, radius = base * 1.55f,
+                            ), radius = base * 1.55f, center = center,
+                        )
+                    }
                 }
-            }
-        })
-        // Vignette keeps lyrics/controls readable over the bright color wash.
+        )
         Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    listOf(Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.35f), Color.Black.copy(alpha = 0.55f)),
+                    listOf(Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.38f), Color.Black.copy(alpha = 0.58f)),
                 ),
             ),
         )
