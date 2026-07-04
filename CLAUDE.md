@@ -115,7 +115,15 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - Library artist ids (`r.`) resolve to catalog first. Sections: hero header, bio, top songs (play/shuffle), latest release, albums, featured, similar artists.
 
 ## Now Playing background
-- Animated **color-pool visualizer** (`DynamicBackground`): 3 radial blobs (reduced from 5 for Fire TV perf) driven by 2 infinite animators. Palette swatches from cover art, over black. No artwork image → never pixelated. Fullscreen (AppShell overlays nav bar on top layer with `padding(top=0)` for Now Playing). Stream cache cleared on server startup.
+- **`DynamicBackground`** — oil-painting fluid backdrop. No artwork image, pure canvas gradient, never pixelated. Fullscreen (AppShell overlays nav bar on top layer).
+- **Color extraction**: bitmap loaded at 200px via Coil, split into 5 regions (4 quadrants + center crop), `Palette.from()` run on each → vibrant/muted/dominant swatch per region. Result: spatially diverse colors from different parts of the artwork, not just 3-4 global swatches.
+- **Blobs**: 4 radial gradient blobs, each drawn in 2 concentric passes (core at 0.55× radius + glow at 1.55×) to simulate Gaussian falloff — soft painted edges even without hardware blur. Varying base radii (`0.52 + i%2 * 0.18`) so blobs are different sizes (layered depth). Colors cross-fade over 1.5s on song change.
+- **Motion**: 3 `InfiniteTransition` floats (t1: 22s, t2: 31s, t3: 41s) with `CubicBezierEasing(0.37,0,0.63,1)` (sinusoidal) drive blob center positions via `lerp`. Sinusoidal easing makes blobs accelerate mid-path and decelerate at endpoints — feels viscous/fluid, not mechanical. Prime-ish periods prevent sync.
+- **Rotation**: entire blob layer rotates via `graphicsLayer { rotationZ = rot; scaleX = 1.25f; scaleY = 1.25f }`. 4th animator: 80s full rotation, `LinearEasing`, `RepeatMode.Restart`. Scale-up hides black corners during rotation. Result: the whole field of color slowly stirs.
+- **Blur**: `Modifier.blur(70.dp)` on the blob layer — no-op on API < 31 (Fire TV), hardware Gaussian blur on API 31+. On older devices the 2-pass gradient approximation still looks good.
+- **Beat reactivity**: `BeatAnalyzer : BaseAudioProcessor` injected into ExoPlayer's `DefaultAudioSink` via `BeatAwareRenderersFactory`. Computes RMS energy per PCM_16BIT buffer → `StateFlow<Float>` (0..1). Collected in Compose, smoothed with `animateFloatAsState(tween(80))`. Scales blob core radius by `1 + energy*0.28` and alpha by `+0.12`. Only active when PCM_16BIT encoding — bypassed for float output.
+- **Vignette**: `verticalGradient` overlay (black 15%→38%→58%) keeps lyrics and controls readable over the bright color wash. Same technique Apple Music uses.
+- **Perf budget**: 8 gradient draw calls per frame (4 blobs × 2 passes). 3 drift animators + 1 rotation animator. Color extraction runs on `Dispatchers.IO` at 200px thumbnail. Stream cache cleared on server startup.
 - Motion (animated) album art plays as a muted looping video over the cover when `GET /api/motion/:songId` returns one.
 
 ## Phone web server (port 8080)
