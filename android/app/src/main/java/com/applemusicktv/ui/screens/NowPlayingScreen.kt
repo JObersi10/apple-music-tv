@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -299,7 +300,7 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
 @Composable
 private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
     val context = LocalContext.current
-    val fallback = listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460), Color(0xFF533483))
+    val fallback = listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460), Color(0xFF533483), Color(0xFF0D0D0D), Color(0xFF220033))
     var colors by remember(artworkUrl) { mutableStateOf(fallback) }
     LaunchedEffect(artworkUrl) {
         if (artworkUrl == null) return@LaunchedEffect
@@ -310,10 +311,16 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
             val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
             val p = Palette.from(bitmap).generate()
             val picked = listOfNotNull(
-                p.vibrantSwatch, p.lightVibrantSwatch, p.mutedSwatch,
-                p.darkVibrantSwatch, p.lightMutedSwatch, p.dominantSwatch,
-            ).map { Color(it.rgb) }.distinct()
-            if (picked.size >= 2) colors = picked.take(4)
+                p.vibrantSwatch, p.darkVibrantSwatch, p.mutedSwatch,
+                p.lightVibrantSwatch, p.darkMutedSwatch, p.lightMutedSwatch, p.dominantSwatch,
+            ).map { swatch ->
+                // Darken bright colors: scale down luminance so nothing blows out
+                val c = Color(swatch.rgb)
+                val lum = 0.2126f * c.red + 0.7152f * c.green + 0.0722f * c.blue
+                val scale = if (lum > 0.55f) 0.55f / lum else 1f
+                Color(c.red * scale, c.green * scale, c.blue * scale)
+            }.distinct()
+            if (picked.size >= 2) colors = picked.take(6)
         } catch (_: Exception) {}
     }
     return colors
@@ -334,36 +341,45 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
     val infinite = rememberInfiniteTransition(label = "pool")
     val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), RepeatMode.Reverse), label = "t1")
     val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), RepeatMode.Reverse), label = "t2")
+    val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), RepeatMode.Reverse), label = "t3")
+
+    // Cycle colors to always have 6 blobs regardless of palette size
+    val colors6 = List(6) { animated[it % animated.size] }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
         Box(Modifier.fillMaxSize().drawBehind {
             val w = size.width; val h = size.height
-            val beatScale = 1f + energy * 0.35f
-            val beatAlpha = 0.50f + energy * 0.25f
-            val baseRadius = maxOf(w, h) * 0.60f * beatScale
+            val beatScale = 1f + energy * 0.18f
+            val beatAlpha = 0.48f + energy * 0.12f
+            val r = maxOf(w, h) * 0.52f * beatScale
+            // Centers biased toward edges so they don't all pile in the middle
             val centers = listOf(
-                Offset(lerp(0.15f, 0.40f, t1) * w, lerp(0.20f, 0.45f, t2) * h),
-                Offset(lerp(0.85f, 0.60f, t2) * w, lerp(0.20f, 0.55f, t1) * h),
-                Offset(lerp(0.30f, 0.55f, t1) * w, lerp(0.80f, 0.60f, t2) * h),
+                Offset(lerp(0.05f, 0.35f, t1) * w, lerp(0.10f, 0.40f, t2) * h),
+                Offset(lerp(0.95f, 0.65f, t2) * w, lerp(0.05f, 0.45f, t3) * h),
+                Offset(lerp(0.15f, 0.45f, t3) * w, lerp(0.90f, 0.60f, t1) * h),
+                Offset(lerp(0.80f, 0.55f, t1) * w, lerp(0.80f, 0.55f, t3) * h),
+                Offset(lerp(0.02f, 0.40f, t2) * w, lerp(0.55f, 0.85f, t1) * h),
+                Offset(lerp(0.85f, 0.55f, t3) * w, lerp(0.02f, 0.35f, t2) * h),
             )
-            animated.take(3).forEachIndexed { i, color ->
-                val center = centers[i]
+            colors6.forEachIndexed { i, color ->
                 drawCircle(
                     brush = Brush.radialGradient(
                         listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0f)),
-                        center = center, radius = baseRadius,
+                        center = centers[i], radius = r,
                     ),
-                    radius = baseRadius, center = center,
+                    radius = r, center = centers[i],
+                    blendMode = BlendMode.Screen,
                 )
             }
-        })
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.45f), Color.Black.copy(alpha = 0.65f)),
+            // Darken center to prevent all blobs converging into a white hotspot
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(Color(0x55000000), Color(0x00000000)),
+                    center = Offset(w * 0.5f, h * 0.5f), radius = maxOf(w, h) * 0.35f,
                 ),
-            ),
-        )
+                radius = maxOf(w, h) * 0.35f, center = Offset(w * 0.5f, h * 0.5f),
+            )
+        })
     }
 }
 
