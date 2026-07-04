@@ -78,6 +78,9 @@ class PlayerViewModel @Inject constructor(
     private var mediaSession: androidx.media3.session.MediaSession? = null
     private var lyricsJob: kotlinx.coroutines.Job? = null
     private var motionJob: kotlinx.coroutines.Job? = null
+    private var fadeJob: kotlinx.coroutines.Job? = null
+    private var crossfadeInProgress = false
+    private val crossfadeDurationMs = 4_000L
 
     // True while the on-device (Widevine) path is driving playback, so the
     // error handler doesn't bounce back to the proxy in a loop.
@@ -246,15 +249,33 @@ class PlayerViewModel @Inject constructor(
     private fun advanceQueue() {
         val nextIdx = _state.value.queueIndex + 1
         webServer.addLog("PLR", "advance → idx=$nextIdx / ${_state.value.queue.size}")
+        if (nextIdx >= _state.value.queue.size) {
+            // Queue exhausted — fetch related songs and continue
+            val lastSong = _state.value.queue.lastOrNull()
+            if (lastSong != null) {
+                viewModelScope.launch {
+                    val related = repo.getRelatedSongs(lastSong.id).getOrDefault(emptyList())
+                    if (related.isNotEmpty()) {
+                        _state.update { it.copy(queue = it.queue + related) }
+                        playQueueItem(nextIdx)
+                    }
+                }
+            }
+            return
+        }
         playQueueItem(nextIdx)
     }
 
-    private fun playQueueItem(idx: Int) {
+    private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false) {
         val q = _state.value.queue
         if (q.isEmpty() || idx !in q.indices) {
             webServer.addLog("PLR", "playQueueItem idx=$idx out of bounds (size=${q.size}) — stopping")
             return
         }
+        // Cancel any in-progress crossfade
+        fadeJob?.cancel()
+        crossfadeInProgress = false
+
         val song = q[idx]
         val full = _state.value.isFullStream
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
@@ -263,7 +284,22 @@ class PlayerViewModel @Inject constructor(
         player.repeatMode = Player.REPEAT_MODE_OFF
         player.setMediaItem(buildMediaItem(song, uri))
         player.prepare()
+        if (skipFadeIn) {
+            player.volume = 1f
+        } else {
+            player.volume = 0f
+        }
         player.play()
+        if (!skipFadeIn) {
+            fadeJob = viewModelScope.launch {
+                val steps = 40
+                val stepMs = crossfadeDurationMs / steps
+                for (i in 1..steps) {
+                    player.volume = (i.toFloat() / steps).coerceAtMost(1f)
+                    delay(stepMs)
+                }
+            }
+        }
         if (full) loadLyrics(song.id)
         loadMotion(song.id)
         // Pre-warm server cache for next song — hits /prefetch which returns instantly
@@ -394,10 +430,25 @@ class PlayerViewModel @Inject constructor(
     fun pause() { player.pause() }
     fun togglePlayPause() { if (player.isPlaying) player.pause() else player.play() }
 
-    fun next() { playQueueItem(_state.value.queueIndex + 1) }
+    fun next() { fadeJob?.cancel(); crossfadeInProgress = false; player.volume = 1f; playQueueItem(_state.value.queueIndex + 1, skipFadeIn = true) }
     fun prev() {
+        fadeJob?.cancel(); crossfadeInProgress = false; player.volume = 1f
         val prevIdx = _state.value.queueIndex - 1
-        if (prevIdx >= 0) playQueueItem(prevIdx) else player.seekTo(0L)
+        if (prevIdx >= 0) playQueueItem(prevIdx, skipFadeIn = true) else player.seekTo(0L)
+    }
+
+    fun moveQueueItem(from: Int, to: Int) {
+        val q = _state.value.queue.toMutableList()
+        if (from !in q.indices || to !in q.indices) return
+        val item = q.removeAt(from)
+        q.add(to, item)
+        val newIdx = when {
+            from == _state.value.queueIndex -> to
+            from < _state.value.queueIndex && to >= _state.value.queueIndex -> _state.value.queueIndex - 1
+            from > _state.value.queueIndex && to <= _state.value.queueIndex -> _state.value.queueIndex + 1
+            else -> _state.value.queueIndex
+        }
+        _state.update { it.copy(queue = q, queueIndex = newIdx) }
     }
     fun seekForward() { webServer.addLog("PLR", "seekForward pos=${player.currentPosition}"); player.seekTo((player.currentPosition + 15_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }
     fun seekBack()    { webServer.addLog("PLR", "seekBack pos=${player.currentPosition}"); player.seekTo((player.currentPosition - 15_000L).coerceAtLeast(0L)) }
@@ -440,11 +491,31 @@ class PlayerViewModel @Inject constructor(
     private fun pollProgress() = viewModelScope.launch {
         while (true) {
             val playing = player.isPlaying
-            val state   = player.playbackState
+            val playState = player.playbackState
             if (playing) _state.update { it.copy(progressMs = player.currentPosition) }
-            if (state == Player.STATE_ENDED) advanceQueue()
-            // When NowPlaying is off-screen we only need enough resolution to detect
-            // track end — 1s is plenty and saves recompose work on other screens.
+            if (playState == Player.STATE_ENDED) advanceQueue()
+
+            // Start crossfade when within crossfadeDurationMs of natural end
+            if (playing && playState == Player.STATE_READY && !crossfadeInProgress) {
+                val dur = player.duration
+                val pos = player.currentPosition
+                val remaining = dur - pos
+                val q = _state.value
+                val hasNext = q.queueIndex + 1 < q.queue.size
+                if (dur > 0 && remaining in 1..crossfadeDurationMs && hasNext) {
+                    crossfadeInProgress = true
+                    val startVol = player.volume
+                    fadeJob = viewModelScope.launch {
+                        val steps = 40
+                        val stepMs = remaining / steps
+                        for (i in 1..steps) {
+                            player.volume = (startVol * (1f - i.toFloat() / steps)).coerceAtLeast(0f)
+                            delay(stepMs)
+                        }
+                    }
+                }
+            }
+
             delay(if (playing && nowPlayingVisible) 200L else if (playing) 1_000L else 500L)
         }
     }
@@ -464,6 +535,7 @@ class PlayerViewModel @Inject constructor(
         saveState()
         lyricsJob?.cancel()
         motionJob?.cancel()
+        fadeJob?.cancel()
         mediaSession?.release()
         mediaSession = null
         player.stop()

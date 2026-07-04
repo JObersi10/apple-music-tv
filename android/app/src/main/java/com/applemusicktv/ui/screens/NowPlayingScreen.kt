@@ -26,6 +26,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
@@ -71,6 +76,7 @@ import java.util.Locale
 fun NowPlayingScreen(
     playerVm: PlayerViewModel,
     navVm: NavigationViewModel,
+    onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by playerVm.state.collectAsState()
@@ -150,7 +156,18 @@ fun NowPlayingScreen(
 
                 Text(song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2)
                 Spacer(Modifier.height(4.dp))
-                Text(song.artistName, fontSize = 14.sp, color = Color(0xFFAAAAAA))
+                if (song.artistId != null) {
+                    Surface(
+                        onClick = { onArtistClick(song.artistId) },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0x1AFFFFFF)),
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                    ) {
+                        Text(song.artistName, fontSize = 14.sp, color = Color(0xFFAAAAAA), modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                    }
+                } else {
+                    Text(song.artistName, fontSize = 14.sp, color = Color(0xFFAAAAAA))
+                }
                 Text(song.albumName, fontSize = 12.sp, color = Color(0xFF888888))
 
                 Spacer(Modifier.height(12.dp))
@@ -207,6 +224,7 @@ fun NowPlayingScreen(
                             queue = state.queue,
                             currentIndex = state.queueIndex,
                             onSelect = { idx -> playerVm.playFromQueue(idx) },
+                            onMove = { from, to -> playerVm.moveQueueItem(from, to) },
                         )
                     } else if (state.lyrics.isNotEmpty()) {
                         LyricsPanel(
@@ -219,6 +237,7 @@ fun NowPlayingScreen(
                             queue = state.queue,
                             currentIndex = state.queueIndex,
                             onSelect = { idx -> playerVm.playFromQueue(idx) },
+                            onMove = { from, to -> playerVm.moveQueueItem(from, to) },
                         )
                     }
                 }
@@ -629,18 +648,29 @@ private fun LyricLineRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun QueuePanel(queue: List<com.applemusicktv.data.model.Song>, currentIndex: Int, onSelect: (Int) -> Unit) {
+private fun QueuePanel(
+    queue: List<com.applemusicktv.data.model.Song>,
+    currentIndex: Int,
+    onSelect: (Int) -> Unit,
+    onMove: (from: Int, to: Int) -> Unit = { _, _ -> },
+) {
     val listState = rememberLazyListState()
+    var movingIndex by remember { mutableStateOf<Int?>(null) }
+
     LaunchedEffect(queue, currentIndex) {
         if (queue.isNotEmpty()) listState.scrollToItem(currentIndex.coerceIn(0, queue.lastIndex))
     }
     Column(modifier = Modifier.fillMaxSize()) {
-        Text("Up Next", fontSize = 13.sp, color = Color(0xFFAAAAAA), fontWeight = FontWeight.Medium)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Up Next", fontSize = 13.sp, color = Color(0xFFAAAAAA), fontWeight = FontWeight.Medium)
+            if (movingIndex != null) Text("Hold OK to drop", fontSize = 10.sp, color = Color(0xFF888888))
+        }
         Spacer(Modifier.height(12.dp))
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(queue.size, key = { idx -> "${queue[idx].id}_$idx" }) { idx ->
                 val song = queue[idx]
                 val isCurrent = idx == currentIndex
+                val isMoving = idx == movingIndex
                 var visible by remember(idx, currentIndex) { mutableStateOf(idx >= currentIndex) }
                 LaunchedEffect(currentIndex) {
                     if (idx < currentIndex) visible = false
@@ -649,20 +679,43 @@ private fun QueuePanel(queue: List<com.applemusicktv.data.model.Song>, currentIn
                     visible = visible,
                     exit = slideOutVertically(tween(350)) { -it } + fadeOut(tween(300)),
                 ) {
+                val movingMod = if (isMoving) Modifier.onKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    when (event.key) {
+                        Key.DirectionUp -> {
+                            val target = (movingIndex!! - 1).coerceAtLeast(0)
+                            if (target != movingIndex) { onMove(movingIndex!!, target); movingIndex = target }
+                            true
+                        }
+                        Key.DirectionDown -> {
+                            val target = (movingIndex!! + 1).coerceAtMost(queue.lastIndex)
+                            if (target != movingIndex) { onMove(movingIndex!!, target); movingIndex = target }
+                            true
+                        }
+                        Key.Enter -> { movingIndex = null; true }
+                        else -> false
+                    }
+                } else Modifier
                 Surface(
-                    onClick = { onSelect(idx) },
+                    onClick = { if (movingIndex == idx) movingIndex = null else onSelect(idx) },
+                    onLongClick = { if (idx > currentIndex) movingIndex = idx },
                     shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                     colors = ClickableSurfaceDefaults.colors(
-                        containerColor        = if (isCurrent) Color(0x26FFFFFF) else Color.Transparent,
-                        focusedContainerColor = Color(0x33FFFFFF),
+                        containerColor        = when { isMoving -> Color(0x44FA233B); isCurrent -> Color(0x26FFFFFF); else -> Color.Transparent },
+                        focusedContainerColor = if (isMoving) Color(0x55FA233B) else Color(0x33FFFFFF),
                     ),
                     scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().then(movingMod),
                 ) {
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("${idx + 1}", fontSize = 11.sp, color = if (isCurrent) Color(0xFFFA233B) else Color(0xFFAAAAAA), modifier = Modifier.width(20.dp))
+                        Text(
+                            if (isMoving) "⠿" else "${idx + 1}",
+                            fontSize = 11.sp,
+                            color = if (isMoving) Color(0xFFFA233B) else if (isCurrent) Color(0xFFFA233B) else Color(0xFFAAAAAA),
+                            modifier = Modifier.width(20.dp),
+                        )
                         Column(Modifier.weight(1f)) {
-                            Text(song.title, fontSize = 13.sp, color = if (isCurrent) Color.White else Color(0xFFDDDDDD), maxLines = 1, fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal)
+                            Text(song.title, fontSize = 13.sp, color = if (isCurrent || isMoving) Color.White else Color(0xFFDDDDDD), maxLines = 1, fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal)
                             Text(song.artistName, fontSize = 11.sp, color = Color(0xFFAAAAAA), maxLines = 1)
                         }
                         Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))

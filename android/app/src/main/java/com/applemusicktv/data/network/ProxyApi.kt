@@ -8,6 +8,7 @@ data class SongDto(
     val id:             String,
     val title:          String,
     val artistName:     String,
+    val artistId:       String? = null,
     val albumName:      String,
     val durationMs:     Long,
     val artworkUrl:     String?,
@@ -145,6 +146,12 @@ data class LyricsResponse(val lines: List<LyricLine> = emptyList(), val source: 
 data class MotionResponse(val video: String? = null)
 
 @JsonClass(generateAdapter = true)
+data class GenreDto(val id: String, val name: String)
+
+@JsonClass(generateAdapter = true)
+data class GenresResponse(val genres: List<GenreDto> = emptyList())
+
+@JsonClass(generateAdapter = true)
 data class HomeSection(val title: String, val albums: List<AlbumDto> = emptyList())
 
 @JsonClass(generateAdapter = true)
@@ -202,6 +209,15 @@ interface ProxyApi {
 
     @GET("api/browse")
     suspend fun getBrowse(): HomeResponse
+
+    @GET("api/browse/genres")
+    suspend fun getGenres(): GenresResponse
+
+    @GET("api/browse/genres/{id}")
+    suspend fun getGenreContent(@Path("id") id: String): HomeResponse
+
+    @GET("api/songs/{id}/related")
+    suspend fun getRelatedSongs(@Path("id") id: String): SongsResponse
 
     // ── Lyrics ────────────────────────────────────────────────────────────
     @GET("api/lyrics/{id}")

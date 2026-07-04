@@ -92,7 +92,7 @@ fun LibraryScreen(
                             }
                             LibrarySection.Albums  -> AlbumGrid(vm.sortedAlbums(), onAlbumClick)
                             LibrarySection.Artists -> ArtistList(vm.sortedArtists(), onArtistClick)
-                            LibrarySection.Songs   -> SongList(vm.sortedSongs(), playerVm)
+                            LibrarySection.Songs   -> SongList(vm.sortedSongs(), playerVm, onArtistClick)
                         }
                     }
                 }
@@ -288,7 +288,7 @@ private fun ArtistList(artists: List<Artist>, onArtistClick: (String) -> Unit) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SongList(songs: List<Song>, playerVm: PlayerViewModel) {
+private fun SongList(songs: List<Song>, playerVm: PlayerViewModel, onArtistClick: (String) -> Unit = {}) {
     if (songs.isEmpty()) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No songs", color = Color(0xFF555555)) }; return }
     var menuSong by remember { mutableStateOf<Song?>(null) }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 32.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -319,16 +319,24 @@ private fun SongList(songs: List<Song>, playerVm: PlayerViewModel) {
             onDismiss = { menuSong = null },
             onPlayNext = { playerVm.playNext(s); menuSong = null },
             onAddToQueue = { playerVm.addToQueue(s); menuSong = null },
+            onGoToArtist = s.artistId?.let { id -> { onArtistClick(id); menuSong = null } },
         )
     }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SongContextMenu(song: Song, onDismiss: () -> Unit, onPlayNext: () -> Unit, onAddToQueue: () -> Unit) {
+private fun SongContextMenu(
+    song: Song,
+    onDismiss: () -> Unit,
+    onPlayNext: () -> Unit,
+    onAddToQueue: () -> Unit,
+    onGoToArtist: (() -> Unit)? = null,
+) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         val firstFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-        LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+        // Delay focus to prevent the OK key-up from the long-press triggering the first item
+        LaunchedEffect(Unit) { kotlinx.coroutines.delay(500); runCatching { firstFocus.requestFocus() } }
         Column(
             Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -336,6 +344,7 @@ private fun SongContextMenu(song: Song, onDismiss: () -> Unit, onPlayNext: () ->
             Text(song.title, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(12.dp))
             ContextMenuItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
             ContextMenuItem("Add to Queue", onAddToQueue)
+            if (onGoToArtist != null) ContextMenuItem("Go to Artist", onGoToArtist)
         }
     }
 }

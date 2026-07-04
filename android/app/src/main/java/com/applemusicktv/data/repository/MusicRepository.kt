@@ -62,6 +62,9 @@ class MusicRepository @Inject constructor(
     } else runCatching { api.getHome() }
 
     suspend fun getBrowse() = runCatching { api.getBrowse() }
+    suspend fun getGenres() = runCatching { api.getGenres().genres }
+    suspend fun getGenreContent(id: String) = runCatching { api.getGenreContent(id) }
+    suspend fun getRelatedSongs(songId: String) = runCatching { api.getRelatedSongs(songId).songs.map(::songFromDto) }
 
     // ── Lyrics ────────────────────────────────────────────────────────────
     suspend fun getLyrics(songId: String, title: String = "", artist: String = "", durationSec: Long = 0) =
@@ -134,6 +137,7 @@ class MusicRepository @Inject constructor(
         hasLyrics      = dto.hasLyrics,
         trackNumber    = dto.trackNumber,
         genreNames     = dto.genreNames,
+        artistId       = dto.artistId,
     )
 
     fun albumFromDto(dto: AlbumDto) = Album(

@@ -17,6 +17,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -99,8 +102,56 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     }
                 }
             }
-            state.query.length < 2 -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                Text("Start typing to search Apple Music", color = Color(0xFF555555), fontSize = 16.sp)
+            state.query.length < 2 -> {
+                // Genre browsing when not searching
+                if (state.genres.isNotEmpty()) {
+                    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                        item {
+                            Text("Browse by Genre", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                items(state.genres, key = { it.id }) { genre ->
+                                    val isSelected = genre.id == state.selectedGenreId
+                                    Surface(
+                                        onClick = { vm.selectGenre(genre.id) },
+                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
+                                        colors = ClickableSurfaceDefaults.colors(
+                                            containerColor = if (isSelected) Color(0xFFFA233B) else Color(0xFF2A2A2A),
+                                            focusedContainerColor = if (isSelected) Color(0xFFE01F33) else Color(0xFF3A3A3A),
+                                        ),
+                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                                    ) {
+                                        Text(genre.name, fontSize = 13.sp, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                                    }
+                                }
+                            }
+                        }
+                        if (state.genreLoading) {
+                            item { Box(Modifier.fillMaxWidth(), Alignment.Center) { CircularProgressIndicator(color = Color(0xFFFA233B)) } }
+                        }
+                        state.genreContent?.sections?.forEach { section ->
+                            item {
+                                Text(section.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    items(section.albums, key = { it.id }) { item ->
+                                        val isPlaylist = item.id.startsWith("pl.") || item.id.startsWith("p.")
+                                        com.applemusicktv.ui.components.AlbumCard(
+                                            album = com.applemusicktv.data.model.Album(
+                                                id = item.id, title = item.title, artistName = item.artistName,
+                                                artworkUrl = item.artworkUrl, artworkBgColor = item.artworkBgColor,
+                                            ),
+                                            size = 140,
+                                            onClick = { onAlbumClick(item.id) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        Text("Start typing to search Apple Music", color = Color(0xFF555555), fontSize = 16.sp)
+                    }
+                }
             }
         }
     }
