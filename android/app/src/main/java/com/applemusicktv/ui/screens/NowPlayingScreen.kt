@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
@@ -297,28 +298,35 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
 
 /** Extracts a dark base color + a vibrant accent color from the artwork. */
 @Composable
+// Sample a dominant color from each image quadrant + center for spatially diverse colors.
 private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
     val context = LocalContext.current
-    val fallback = listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460), Color(0xFF533483))
+    val fallback = listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460), Color(0xFF533483), Color(0xFF2D1B69))
     var colors by remember(artworkUrl) { mutableStateOf(fallback) }
     LaunchedEffect(artworkUrl) {
         if (artworkUrl == null) return@LaunchedEffect
-        try {
-            val loader = ImageLoader(context)
-            val request = ImageRequest.Builder(context)
-                .data(artworkUrl)
-                .allowHardware(false)
-                .build()
-            val result = loader.execute(request)
-            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
-            val p = Palette.from(bitmap).generate()
-            // Pull several distinct swatches for a rich "pool of colors".
-            val picked = listOfNotNull(
-                p.vibrantSwatch, p.lightVibrantSwatch, p.mutedSwatch,
-                p.darkVibrantSwatch, p.lightMutedSwatch, p.dominantSwatch,
-            ).map { Color(it.rgb) }.distinct()
-            if (picked.size >= 2) colors = picked.take(5)
-        } catch (_: Exception) {}
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val loader = ImageLoader(context)
+                val result = loader.execute(ImageRequest.Builder(context).data(artworkUrl).allowHardware(false).size(200).build())
+                val bmp = (result.drawable as? BitmapDrawable)?.bitmap ?: return@withContext
+                val w = bmp.width; val h = bmp.height
+                // 5 regions: 4 quadrants + center — each gets its own dominant color.
+                val regions = listOf(
+                    android.graphics.Rect(0, 0, w/2, h/2),
+                    android.graphics.Rect(w/2, 0, w, h/2),
+                    android.graphics.Rect(0, h/2, w/2, h),
+                    android.graphics.Rect(w/2, h/2, w, h),
+                    android.graphics.Rect(w/4, h/4, 3*w/4, 3*h/4),
+                )
+                val sampled = regions.mapNotNull { r ->
+                    val crop = android.graphics.Bitmap.createBitmap(bmp, r.left, r.top, r.width(), r.height())
+                    val p = Palette.from(crop).maximumColorCount(4).generate()
+                    (p.vibrantSwatch ?: p.mutedSwatch ?: p.dominantSwatch)?.let { Color(it.rgb) }
+                }
+                if (sampled.size >= 3) colors = sampled
+            } catch (_: Exception) {}
+        }
     }
     return colors
 }
@@ -331,36 +339,42 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
 @Composable
 private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Float = 0f) {
     val palette = rememberArtworkPalette(artworkUrl)
-    // Smoothly cross-fade each blob's color when the song (palette) changes.
     val animated = palette.mapIndexed { i, c ->
-        animateColorAsState(c, tween(1200), label = "blob$i").value
+        animateColorAsState(c, tween(1500), label = "blob$i").value
     }
 
-    // Two slow drift timers instead of four — halves animator count on Fire TV.
+    // Three prime-ish periods so blobs never sync up and always look organic.
     val infinite = rememberInfiniteTransition(label = "pool")
-    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), RepeatMode.Reverse), label = "t1")
-    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), RepeatMode.Reverse), label = "t2")
+    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(19_000, easing = LinearEasing), RepeatMode.Reverse), label = "t1")
+    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(26_000, easing = LinearEasing), RepeatMode.Reverse), label = "t2")
+    val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), RepeatMode.Reverse), label = "t3")
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
+    // Blur the blob layer so colors bleed into each other like fluid ink.
+    // API 31+ only; older devices get unblurred blobs (still looks fine).
+    val blurMod = if (android.os.Build.VERSION.SDK_INT >= 31)
+        Modifier.blur(80.dp) else Modifier
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF080808))) {
         Box(
-            Modifier.fillMaxSize().drawBehind {
-                val w = size.width
-                val h = size.height
-                // 3 blobs instead of 5 — enough visual richness, lighter GPU load.
+            Modifier.fillMaxSize().then(blurMod).drawBehind {
+                val w = size.width; val h = size.height
+                val beatScale = 1f + energy * 0.30f
+                val beatAlpha = 0.72f + energy * 0.18f
+                val baseRadius = maxOf(w, h) * 0.70f * beatScale
+                // 5 blobs, each driven by a different mix of t1/t2/t3 so motion
+                // is fully independent — no two ever move in the same direction.
                 val centers = listOf(
-                    androidx.compose.ui.geometry.Offset(lerp(0.15f, 0.40f, t1) * w, lerp(0.20f, 0.45f, t2) * h),
-                    androidx.compose.ui.geometry.Offset(lerp(0.85f, 0.60f, t2) * w, lerp(0.20f, 0.55f, t1) * h),
-                    androidx.compose.ui.geometry.Offset(lerp(0.30f, 0.55f, t1) * w, lerp(0.80f, 0.60f, t2) * h),
+                    Offset(lerp(0.08f, 0.42f, t1) * w, lerp(0.12f, 0.48f, t2) * h),
+                    Offset(lerp(0.92f, 0.58f, t2) * w, lerp(0.08f, 0.52f, t3) * h),
+                    Offset(lerp(0.18f, 0.52f, t3) * w, lerp(0.88f, 0.55f, t1) * h),
+                    Offset(lerp(0.72f, 0.38f, t1) * w, lerp(0.72f, 0.42f, t2) * h),
+                    Offset(lerp(0.42f, 0.62f, t2) * w, lerp(0.38f, 0.68f, t3) * h),
                 )
-                // Beat pulse: energy (0..1 RMS) expands radius and brightens alpha.
-                val beatScale = 1f + energy * 0.35f
-                val beatAlpha = 0.50f + energy * 0.25f
-                val baseRadius = maxOf(w, h) * 0.60f * beatScale
-                animated.take(3).forEachIndexed { i, color ->
-                    val center = centers[i]
+                animated.forEachIndexed { i, color ->
+                    val center = centers.getOrNull(i) ?: return@forEachIndexed
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0.0f)),
+                            colors = listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0f)),
                             center = center,
                             radius = baseRadius,
                         ),
@@ -370,11 +384,11 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
                 }
             },
         )
-        // Darkening vignette so foreground text/art stays readable.
+        // Vignette keeps lyrics/controls readable over the bright color wash.
         Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.45f), Color.Black.copy(alpha = 0.65f)),
+                    listOf(Color.Black.copy(alpha = 0.20f), Color.Black.copy(alpha = 0.40f), Color.Black.copy(alpha = 0.60f)),
                 ),
             ),
         )
