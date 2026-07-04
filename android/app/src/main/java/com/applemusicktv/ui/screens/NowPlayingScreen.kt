@@ -87,7 +87,9 @@ fun NowPlayingScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        DynamicBackground(artworkUrl = song?.artworkUrl(1200), songKey = song?.id ?: "")
+        val rawEnergy by playerVm.beatAnalyzer.energy.collectAsState()
+        val beatEnergy by animateFloatAsState(rawEnergy, tween(80), label = "beat")
+        DynamicBackground(artworkUrl = song?.artworkUrl(1200), songKey = song?.id ?: "", energy = beatEnergy)
 
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -327,7 +329,7 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
  * it's never pixelated; pure gradient light like Apple Music's ambient mode.
  */
 @Composable
-private fun DynamicBackground(artworkUrl: String?, songKey: String) {
+private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Float = 0f) {
     val palette = rememberArtworkPalette(artworkUrl)
     // Smoothly cross-fade each blob's color when the song (palette) changes.
     val animated = palette.mapIndexed { i, c ->
@@ -350,12 +352,15 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String) {
                     androidx.compose.ui.geometry.Offset(lerp(0.85f, 0.60f, t2) * w, lerp(0.20f, 0.55f, t1) * h),
                     androidx.compose.ui.geometry.Offset(lerp(0.30f, 0.55f, t1) * w, lerp(0.80f, 0.60f, t2) * h),
                 )
-                val baseRadius = maxOf(w, h) * 0.60f
+                // Beat pulse: energy (0..1 RMS) expands radius and brightens alpha.
+                val beatScale = 1f + energy * 0.35f
+                val beatAlpha = 0.50f + energy * 0.25f
+                val baseRadius = maxOf(w, h) * 0.60f * beatScale
                 animated.take(3).forEachIndexed { i, color ->
                     val center = centers[i]
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(color.copy(alpha = 0.50f), color.copy(alpha = 0.0f)),
+                            colors = listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0.0f)),
                             center = center,
                             radius = baseRadius,
                         ),

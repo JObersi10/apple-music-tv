@@ -27,6 +27,8 @@ import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.data.repository.MusicRepository
 import com.applemusicktv.media.AppleDirectClient
 import com.applemusicktv.media.AppleMusicDrmCallback
+import com.applemusicktv.media.BeatAnalyzer
+import com.applemusicktv.media.BeatAwareRenderersFactory
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -81,6 +83,8 @@ class PlayerViewModel @Inject constructor(
     // error handler doesn't bounce back to the proxy in a loop.
     private var usingStandalone: Boolean = false
 
+    val beatAnalyzer = BeatAnalyzer()
+
     @OptIn(UnstableApi::class)
     val player: ExoPlayer = run {
         // The proxy holds the HTTP connection open for a few seconds while it
@@ -112,7 +116,7 @@ class PlayerViewModel @Inject constructor(
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setRenderersFactory(
-                DefaultRenderersFactory(context)
+                BeatAwareRenderersFactory(context, beatAnalyzer)
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                     .setEnableDecoderFallback(true)
             )
