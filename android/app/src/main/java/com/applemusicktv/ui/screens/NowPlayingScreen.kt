@@ -3,7 +3,6 @@ package com.applemusicktv.ui.screens
 import android.graphics.drawable.BitmapDrawable
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideOutVertically
@@ -27,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
@@ -299,35 +297,24 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
 
 /** Extracts a dark base color + a vibrant accent color from the artwork. */
 @Composable
-// Sample a dominant color from each image quadrant + center for spatially diverse colors.
 private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
     val context = LocalContext.current
-    val fallback = listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460), Color(0xFF533483), Color(0xFF2D1B69))
+    val fallback = listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460), Color(0xFF533483))
     var colors by remember(artworkUrl) { mutableStateOf(fallback) }
     LaunchedEffect(artworkUrl) {
         if (artworkUrl == null) return@LaunchedEffect
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val loader = ImageLoader(context)
-                val result = loader.execute(ImageRequest.Builder(context).data(artworkUrl).allowHardware(false).size(200).build())
-                val bmp = (result.drawable as? BitmapDrawable)?.bitmap ?: return@withContext
-                val w = bmp.width; val h = bmp.height
-                // 5 regions: 4 quadrants + center — each gets its own dominant color.
-                val regions = listOf(
-                    android.graphics.Rect(0, 0, w/2, h/2),
-                    android.graphics.Rect(w/2, 0, w, h/2),
-                    android.graphics.Rect(0, h/2, w/2, h),
-                    android.graphics.Rect(w/2, h/2, w, h),
-                    android.graphics.Rect(w/4, h/4, 3*w/4, 3*h/4),
-                )
-                val sampled = regions.mapNotNull { r ->
-                    val crop = android.graphics.Bitmap.createBitmap(bmp, r.left, r.top, r.width(), r.height())
-                    val p = Palette.from(crop).maximumColorCount(4).generate()
-                    (p.vibrantSwatch ?: p.mutedSwatch ?: p.dominantSwatch)?.let { Color(it.rgb) }
-                }
-                if (sampled.size >= 3) colors = sampled
-            } catch (_: Exception) {}
-        }
+        try {
+            val loader = ImageLoader(context)
+            val request = ImageRequest.Builder(context).data(artworkUrl).allowHardware(false).build()
+            val result = loader.execute(request)
+            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
+            val p = Palette.from(bitmap).generate()
+            val picked = listOfNotNull(
+                p.vibrantSwatch, p.lightVibrantSwatch, p.mutedSwatch,
+                p.darkVibrantSwatch, p.lightMutedSwatch, p.dominantSwatch,
+            ).map { Color(it.rgb) }.distinct()
+            if (picked.size >= 2) colors = picked.take(4)
+        } catch (_: Exception) {}
     }
     return colors
 }
@@ -344,50 +331,36 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
         animateColorAsState(c, tween(1500), label = "blob$i").value
     }
 
-    val sineEase = CubicBezierEasing(0.37f, 0f, 0.63f, 1f)
     val infinite = rememberInfiniteTransition(label = "pool")
-    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(22_000, easing = sineEase), RepeatMode.Reverse), label = "t1")
-    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(31_000, easing = sineEase), RepeatMode.Reverse), label = "t2")
-    val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(41_000, easing = sineEase), RepeatMode.Reverse), label = "t3")
-    Box(Modifier.fillMaxSize().background(Color(0xFF060606))) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .blur(70.dp)  // no-op on API < 31, hardware blur on 31+
-                .drawBehind {
-                    val w = size.width; val h = size.height
-                    val beatScale = 1f + energy * 0.28f
-                    // 4 blobs (down from 6) — fewer draw calls, still full coverage.
-                    val centers = listOf(
-                        Offset(lerp(0.05f, 0.55f, t1) * w, lerp(0.10f, 0.60f, t2) * h),
-                        Offset(lerp(0.95f, 0.45f, t2) * w, lerp(0.05f, 0.65f, t3) * h),
-                        Offset(lerp(0.10f, 0.65f, t3) * w, lerp(0.90f, 0.40f, t1) * h),
-                        Offset(lerp(0.80f, 0.30f, t1) * w, lerp(0.75f, 0.30f, t3) * h),
-                    )
-                    // 2 passes per blob (core + glow) instead of 3 — halves draw calls
-                    // while keeping the soft painted edge.
-                    animated.take(4).forEachIndexed { i, color ->
-                        val center = centers[i]
-                        val base = maxOf(w, h) * (0.52f + (i % 2) * 0.18f) * beatScale
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                listOf(color.copy(alpha = 0.80f + energy * 0.12f), color.copy(alpha = 0f)),
-                                center = center, radius = base * 0.55f,
-                            ), radius = base * 0.55f, center = center,
-                        )
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                listOf(color.copy(alpha = 0.30f + energy * 0.08f), color.copy(alpha = 0f)),
-                                center = center, radius = base * 1.55f,
-                            ), radius = base * 1.55f, center = center,
-                        )
-                    }
-                }
-        )
+    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), RepeatMode.Reverse), label = "t1")
+    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), RepeatMode.Reverse), label = "t2")
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
+        Box(Modifier.fillMaxSize().drawBehind {
+            val w = size.width; val h = size.height
+            val beatScale = 1f + energy * 0.35f
+            val beatAlpha = 0.50f + energy * 0.25f
+            val baseRadius = maxOf(w, h) * 0.60f * beatScale
+            val centers = listOf(
+                Offset(lerp(0.15f, 0.40f, t1) * w, lerp(0.20f, 0.45f, t2) * h),
+                Offset(lerp(0.85f, 0.60f, t2) * w, lerp(0.20f, 0.55f, t1) * h),
+                Offset(lerp(0.30f, 0.55f, t1) * w, lerp(0.80f, 0.60f, t2) * h),
+            )
+            animated.take(3).forEachIndexed { i, color ->
+                val center = centers[i]
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0f)),
+                        center = center, radius = baseRadius,
+                    ),
+                    radius = baseRadius, center = center,
+                )
+            }
+        })
         Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    listOf(Color.Black.copy(alpha = 0.15f), Color.Black.copy(alpha = 0.38f), Color.Black.copy(alpha = 0.58f)),
+                    listOf(Color.Black.copy(alpha = 0.25f), Color.Black.copy(alpha = 0.45f), Color.Black.copy(alpha = 0.65f)),
                 ),
             ),
         )
