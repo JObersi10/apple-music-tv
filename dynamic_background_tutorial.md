@@ -63,25 +63,22 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
     val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), RepeatMode.Reverse), label = "t2")
     val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), RepeatMode.Reverse), label = "t3")
 
-    // Cycle colors to always have 6 blobs regardless of palette size
-    val colors6 = List(6) { animated[it % animated.size] }
+    // 4 blobs — Screen blend forces an offscreen composite per draw; 4 is the perf ceiling on Fire TV
+    val colors4 = List(4) { animated[it % animated.size] }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
         Box(Modifier.fillMaxSize().drawBehind {
             val w = size.width; val h = size.height
             val beatScale = 1f + energy * 0.18f
-            val beatAlpha = 0.48f + energy * 0.12f
-            val r = maxOf(w, h) * 0.52f * beatScale
-            // Centers biased toward edges so blobs don't converge in the middle
+            val beatAlpha = 0.52f + energy * 0.12f
+            val r = maxOf(w, h) * 0.62f * beatScale  // larger radius covers screen with fewer blobs
             val centers = listOf(
-                Offset(lerp(0.05f, 0.35f, t1) * w, lerp(0.10f, 0.40f, t2) * h),
-                Offset(lerp(0.95f, 0.65f, t2) * w, lerp(0.05f, 0.45f, t3) * h),
-                Offset(lerp(0.15f, 0.45f, t3) * w, lerp(0.90f, 0.60f, t1) * h),
-                Offset(lerp(0.80f, 0.55f, t1) * w, lerp(0.80f, 0.55f, t3) * h),
-                Offset(lerp(0.02f, 0.40f, t2) * w, lerp(0.55f, 0.85f, t1) * h),
-                Offset(lerp(0.85f, 0.55f, t3) * w, lerp(0.02f, 0.35f, t2) * h),
+                Offset(lerp(0.05f, 0.40f, t1) * w, lerp(0.10f, 0.45f, t2) * h),
+                Offset(lerp(0.95f, 0.60f, t2) * w, lerp(0.05f, 0.50f, t3) * h),
+                Offset(lerp(0.15f, 0.50f, t3) * w, lerp(0.90f, 0.55f, t1) * h),
+                Offset(lerp(0.80f, 0.45f, t1) * w, lerp(0.80f, 0.40f, t3) * h),
             )
-            colors6.forEachIndexed { i, color ->
+            colors4.forEachIndexed { i, color ->
                 drawCircle(
                     brush = Brush.radialGradient(
                         listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0f)),
@@ -182,7 +179,8 @@ private val player = ExoPlayer.Builder(context)
 
 ## Performance constraints (Fire TV)
 
-- **7 draw calls per frame** (6 blobs + 1 center darken) — do not exceed this
+- **5 draw calls per frame** (4 blobs + 1 center darken) — do not exceed 4 blobs
+- **`BlendMode.Screen` costs an offscreen compositing pass per draw** — 6 blobs caused lag on Fire TV; 4 is the ceiling
 - **No `Modifier.blur()`** — no-op on API < 31, causes lag
 - **No multi-pass blobs** — one `drawCircle` per blob only
 - **No `CubicBezierEasing`** — choppy on slow devices, use `LinearEasing`
