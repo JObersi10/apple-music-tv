@@ -349,16 +349,10 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
     val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(22_000, easing = sineEase), RepeatMode.Reverse), label = "t1")
     val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(31_000, easing = sineEase), RepeatMode.Reverse), label = "t2")
     val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(41_000, easing = sineEase), RepeatMode.Reverse), label = "t3")
-    // Continuous slow spin — makes fluid look like it's being stirred.
-    val rot by infinite.animateFloat(0f, 360f, infiniteRepeatable(tween(80_000, easing = LinearEasing), RepeatMode.Restart), label = "rot")
-
     Box(Modifier.fillMaxSize().background(Color(0xFF060606))) {
         Box(
             Modifier
                 .fillMaxSize()
-                // Rotate the whole blob layer slowly; scale up slightly so
-                // corners don't reveal the black base during rotation.
-                .graphicsLayer { rotationZ = rot; scaleX = 1.25f; scaleY = 1.25f }
                 .blur(70.dp)  // no-op on API < 31, hardware blur on 31+
                 .drawBehind {
                     val w = size.width; val h = size.height
