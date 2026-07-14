@@ -108,7 +108,33 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 The Fire TV runs a small web server on port **8080**. Open
 `http://<FIRE_TV_IP>:8080` on your phone and paste your Music-User-Token. It's
-stored on-device and synced to the proxy.
+stored on-device and synced to the proxy server (`server/auth-state.json`).
+
+**How to find your Music-User-Token:**
+1. Open `music.apple.com` in a browser
+2. DevTools → Network tab
+3. Click anything that loads music content
+4. Find any request to `amp-api-edge.music.apple.com`
+5. Copy the `Music-User-Token` request header value
+
+**Bearer token** is scraped automatically from `music.apple.com`'s JS bundle on
+server startup — you don't need to find or set it manually.
+
+### Auth state storage
+
+Both tokens are persisted in `server/auth-state.json` (gitignored):
+
+```json
+{
+  "mut": "...",
+  "bearerToken": "eyJ...",
+  "mutSetAt": 1234567890000
+}
+```
+
+This file is **never committed** (listed in `.gitignore`). If you need to reset:
+delete `auth-state.json` and restart the server — bearer is re-scraped, MUT must
+be re-entered via the phone web server.
 
 ---
 
@@ -124,6 +150,8 @@ Every push to `main` (and every PR) builds a debug APK. Download it from the
 - `server/auth-state.json`, `server/.env`, and `android/local.properties` are
   **gitignored** — they hold your token/paths and must never be committed.
 - The proxy binds to `0.0.0.0`; run it only on a trusted LAN.
+- Your MUT grants full access to your Apple Music library and account — treat it
+  like a password. Never share it or commit it.
 
 ## License
 
