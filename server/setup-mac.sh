@@ -43,5 +43,28 @@ echo "--> Installing server dependencies..."
 bun install
 
 echo ""
-echo "==> Done! Start the server with:"
+echo "==> Setup complete!"
+echo ""
+echo "--- Music User Token (optional, needed for library/full streams) ---"
+echo "1. Open music.apple.com in your browser"
+echo "2. DevTools → Network tab → click anything → find a request to amp-api-edge.music.apple.com"
+echo "3. Copy the Music-User-Token request header value"
+echo ""
+read -r -p "Paste your Music-User-Token (or press Enter to skip): " MUT
+if [ -n "$MUT" ]; then
+  python3 -c "
+import json, os
+f = 'auth-state.json'
+state = {}
+if os.path.exists(f):
+    try: state = json.load(open(f))
+    except: pass
+state['mut'] = '$MUT'
+json.dump(state, open(f, 'w'))
+print('Saved MUT to auth-state.json')
+"
+fi
+
+echo ""
+echo "Start the server with:"
 echo "      cd server && bun run src/index.ts"

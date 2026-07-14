@@ -59,6 +59,26 @@ Write-Host "--> Installing server dependencies ..."
 bun install
 
 Write-Host ""
-Write-Host "==> Done! Start the server with:"
+Write-Host "==> Setup complete!"
+Write-Host ""
+Write-Host "--- Music User Token (optional, needed for library/full streams) ---"
+Write-Host "1. Open music.apple.com in your browser"
+Write-Host "2. DevTools -> Network tab -> click anything -> find a request to amp-api-edge.music.apple.com"
+Write-Host "3. Copy the Music-User-Token request header value"
+Write-Host ""
+$MUT = Read-Host "Paste your Music-User-Token (or press Enter to skip)"
+if ($MUT) {
+    $stateFile = Join-Path $PSScriptRoot "auth-state.json"
+    $state = @{ mut = ""; bearerToken = ""; mutSetAt = 0 }
+    if (Test-Path $stateFile) {
+        try { $state = Get-Content $stateFile | ConvertFrom-Json -AsHashtable } catch {}
+    }
+    $state["mut"] = $MUT
+    $state | ConvertTo-Json | Set-Content -Encoding ASCII $stateFile
+    Write-Host "--> Saved MUT to auth-state.json"
+}
+
+Write-Host ""
+Write-Host "Start the server with:"
 Write-Host "      cd server; bun run src/index.ts"
 Write-Host "(If ffmpeg was just installed, reopen PowerShell first so it's on PATH.)"
