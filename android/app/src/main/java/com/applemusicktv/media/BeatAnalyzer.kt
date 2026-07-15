@@ -76,10 +76,10 @@ class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
         out.flip()
     }
 
-    fun reset() {
+    fun resetBeat() {
         pending.clear()
         _energy.value = 0f
     }
 
-    override fun onReset() { reset() }
+    override fun onReset() { resetBeat() }
 }

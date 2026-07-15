@@ -6,7 +6,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.RepeatMode as AnimRepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -405,9 +405,9 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
     }
 
     val infinite = rememberInfiniteTransition(label = "pool")
-    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), RepeatMode.Reverse), label = "t1")
-    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), RepeatMode.Reverse), label = "t2")
-    val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), RepeatMode.Reverse), label = "t3")
+    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
+    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
+    val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
 
     // 4 blobs — Screen blend forces an offscreen composite per draw; 4 is the perf ceiling on Fire TV
     val colors4 = List(4) { animated[it % animated.size] }

@@ -123,7 +123,7 @@ class InAppWebServer @Inject constructor(
         val ms = raw.trim().toLongOrNull()
         if (ms == null || ms < 0) { addLog("ERROR", "Invalid beat latency: $raw"); return }
         beatAnalyzer.latencyMs = ms
-        beatAnalyzer.reset()
+        beatAnalyzer.resetBeat()
         addLog("OK", "Beat latency set to ${ms}ms — buffer reset")
     }
 
