@@ -163,8 +163,10 @@ fun NowPlayingScreen(
                 var showSleepSubmenu by remember { mutableStateOf(false) }
 
                 Box(Modifier.fillMaxWidth()) {
-                    MarqueeText(song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                        modifier = Modifier.align(Alignment.Center).padding(end = 38.dp))
+                    MarqueeText(
+                        song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        modifier = Modifier.fillMaxWidth().padding(end = 36.dp),
+                    )
                     Surface(
                         onClick = { showOptionsMenu = true; showSleepSubmenu = false },
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
@@ -193,12 +195,7 @@ fun NowPlayingScreen(
                 LaunchedEffect(song.id) {
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
-                // Shuffle / prev / play / next / repeat
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TransportButton(
-                        "⇄", onClick = playerVm::toggleShuffle,
-                        tint = if (state.isShuffled) Color(0xFFFA233B) else Color(0x66FFFFFF),
-                    )
                     TransportButton("⏮", onClick = playerVm::prev)
                     TransportButton(
                         if (state.isPlaying) "⏸" else "▶",
@@ -207,11 +204,6 @@ fun NowPlayingScreen(
                         modifier = Modifier.focusRequester(playFocus),
                     )
                     TransportButton("⏭", onClick = playerVm::next)
-                    TransportButton(
-                        when (state.repeatMode) { RepeatMode.One -> "↻¹"; else -> "↻" },
-                        onClick = playerVm::toggleRepeat,
-                        tint = if (state.repeatMode != RepeatMode.Off) Color(0xFFFA233B) else Color(0x66FFFFFF),
-                    )
                 }
 
                 // ⋯ options dialog
@@ -832,9 +824,9 @@ private fun NpMenuItem(label: String, modifier: Modifier = Modifier, onClick: ()
 @Composable
 private fun MarqueeText(text: String, modifier: Modifier = Modifier, fontSize: androidx.compose.ui.unit.TextUnit = 16.sp, fontWeight: FontWeight = FontWeight.Normal, color: Color = Color.White) {
     val scrollState = rememberScrollState()
-    var needsScroll by remember(text) { mutableStateOf(false) }
-    LaunchedEffect(text, needsScroll) {
-        if (!needsScroll) return@LaunchedEffect
+    var overflows by remember(text) { mutableStateOf(false) }
+    LaunchedEffect(text, overflows) {
+        if (!overflows) return@LaunchedEffect
         kotlinx.coroutines.delay(1200)
         while (true) {
             scrollState.animateScrollTo(scrollState.maxValue, androidx.compose.animation.core.tween(4000, easing = androidx.compose.animation.core.LinearEasing))
@@ -843,15 +835,17 @@ private fun MarqueeText(text: String, modifier: Modifier = Modifier, fontSize: a
             kotlinx.coroutines.delay(1200)
         }
     }
-    Box(modifier = modifier) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Text(
             text = text,
             fontSize = fontSize, fontWeight = fontWeight, color = color,
             maxLines = 1, softWrap = false,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier.horizontalScroll(scrollState, enabled = false)
-                .onGloballyPositioned { coords ->
-                    needsScroll = coords.size.width > (coords.parentCoordinates?.size?.width ?: Int.MAX_VALUE)
+            textAlign = if (overflows) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = if (overflows)
+                Modifier.fillMaxWidth().horizontalScroll(scrollState, enabled = false)
+            else
+                Modifier.fillMaxWidth().onGloballyPositioned { coords ->
+                    overflows = coords.size.width >= (coords.parentCoordinates?.size?.width ?: Int.MAX_VALUE)
                 },
         )
     }

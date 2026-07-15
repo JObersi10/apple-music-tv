@@ -25,6 +25,7 @@ import com.applemusicktv.data.LyricsOffsetPreferences
 import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.ServerPreferences
 import com.applemusicktv.media.InAppWebServer
+import com.applemusicktv.data.model.Album
 import com.applemusicktv.data.model.Song
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.data.repository.MusicRepository
@@ -363,6 +364,13 @@ class PlayerViewModel @Inject constructor(
                 conn.disconnect()
             } catch (_: Exception) {}
         }
+    }
+
+    fun playSong(album: Album) {
+        val song = Song(id = album.id, title = album.title, artistName = album.artistName,
+            artworkUrl = album.artworkUrl, artworkBgColor = album.artworkBgColor,
+            durationMs = 0, albumName = "", previewUrl = null)
+        playSong(song)
     }
 
     fun playSong(song: Song, useFullStream: Boolean = hasMUT()) {

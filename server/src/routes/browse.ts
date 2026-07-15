@@ -24,6 +24,7 @@ function itemFromRaw(item: any): any | null {
   if (!url) return null;
   return {
     id: item.id,
+    type: item.type ?? "albums",
     title: attr.name ?? "Unknown",
     artistName: attr.artistName ?? attr.curatorName ?? "",
     artworkUrl: url,
@@ -31,6 +32,8 @@ function itemFromRaw(item: any): any | null {
     releaseDate: attr.releaseDate ?? null,
     trackCount: attr.trackCount ?? 0,
     genreNames: attr.genreNames ?? [],
+    durationMs: attr.durationInMillis ?? 0,
+    previewUrl: attr.previews?.[0]?.url ?? null,
   };
 }
 

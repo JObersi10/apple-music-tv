@@ -157,6 +157,7 @@ class MusicRepository @Inject constructor(
         title          = dto.title,
         artistName     = dto.artistName,
         artworkUrl     = dto.artworkUrl,
+        type           = dto.type,
         artworkBgColor = dto.artworkBgColor,
         releaseDate    = dto.releaseDate,
         trackCount     = dto.trackCount,

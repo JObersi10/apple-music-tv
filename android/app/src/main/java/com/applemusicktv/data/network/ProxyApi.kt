@@ -27,6 +27,7 @@ data class AlbumDto(
     val title:          String,
     val artistName:     String,
     val artworkUrl:     String?,
+    val type:           String       = "albums",
     val artworkBgColor: String?,
     val releaseDate:    String?,
     val trackCount:     Int          = 0,

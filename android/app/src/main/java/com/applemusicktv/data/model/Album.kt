@@ -5,6 +5,7 @@ data class Album(
     val title:          String,
     val artistName:     String,
     val artworkUrl:     String?,
+    val type:           String       = "albums",
     val artworkBgColor: String?      = null,
     val releaseDate:    String?      = null,
     val trackCount:     Int          = 0,

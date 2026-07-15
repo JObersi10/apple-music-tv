@@ -100,7 +100,7 @@ fun BrowseScreen(
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
         items(state.sections, key = { it.title }) { section ->
-            BrowseRow(section, onAlbumClick, onPlaylistClick)
+            BrowseRow(section, onAlbumClick, onPlaylistClick, playerVm)
         }
     }
 }
@@ -110,6 +110,7 @@ private fun BrowseRow(
     section: HomeSection,
     onAlbumClick: (String) -> Unit,
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
+    playerVm: PlayerViewModel? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -125,9 +126,13 @@ private fun BrowseRow(
         ) {
             items(section.albums, key = { it.id }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                val isSong = album.type == "songs"
                 AlbumCard(album = album, size = 130, onClick = {
-                    if (isPlaylist) onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
-                    else onAlbumClick(album.id)
+                    when {
+                        isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
+                        isSong -> playerVm?.playSong(album)
+                        else -> onAlbumClick(album.id)
+                    }
                 })
             }
         }
