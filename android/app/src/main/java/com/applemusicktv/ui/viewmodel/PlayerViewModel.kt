@@ -70,6 +70,7 @@ class PlayerViewModel @Inject constructor(
     private val appleClient: AppleDirectClient,
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
     private val webServer: InAppWebServer,
+    val beatAnalyzer: BeatAnalyzer,
 ) : ViewModel() {
 
     private fun hasMUT() = mutPrefs.hasMUT()
@@ -95,7 +96,7 @@ class PlayerViewModel @Inject constructor(
     // error handler doesn't bounce back to the proxy in a loop.
     private var usingStandalone: Boolean = false
 
-    val beatAnalyzer = BeatAnalyzer()
+
 
     @OptIn(UnstableApi::class)
     val player: ExoPlayer = run {

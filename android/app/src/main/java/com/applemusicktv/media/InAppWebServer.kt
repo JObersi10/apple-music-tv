@@ -23,6 +23,7 @@ class InAppWebServer @Inject constructor(
     private val prefs: MutPreferences,
     private val repo: MusicRepository,
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
+    private val beatAnalyzer: BeatAnalyzer,
 ) {
     private val logs = ArrayDeque<String>(300)
     private val sseClients = java.util.concurrent.CopyOnWriteArrayList<java.io.OutputStream>()
@@ -111,10 +112,19 @@ class InAppWebServer @Inject constructor(
                 method == "POST" && path == "/set-token"          -> { applyToken(parseField(body, "mut")); redirect(out, "/") }
                 method == "POST" && path == "/clear-token"         -> { prefs.setMUT(""); addLog("WARN","Token cleared"); redirect(out, "/") }
                 method == "POST" && path == "/set-lyrics-offset"   -> { applyLyricsOffset(parseField(body, "offset")); redirect(out, "/") }
+                method == "POST" && path == "/set-beat-latency"    -> { applyBeatLatency(parseField(body, "latency")); redirect(out, "/") }
                 else -> send(out, 404, "text/plain", "Not found")
             }
             out.flush(); socket.close()
         } catch (_: Exception) {}
+    }
+
+    private fun applyBeatLatency(raw: String) {
+        val ms = raw.trim().toLongOrNull()
+        if (ms == null || ms < 0) { addLog("ERROR", "Invalid beat latency: $raw"); return }
+        beatAnalyzer.latencyMs = ms
+        beatAnalyzer.reset()
+        addLog("OK", "Beat latency set to ${ms}ms — buffer reset")
     }
 
     private fun applyLyricsOffset(raw: String) {
@@ -163,6 +173,7 @@ class InAppWebServer @Inject constructor(
         val has = prefs.hasMUT()
         val preview = if (has) prefs.getMUT().take(32) + "…" else ""
         val currentOffset = lyricsOffsetPrefs.getOffset()
+        val currentBeatLatency = beatAnalyzer.latencyMs
         val logRows = getLogs().reversed().take(80).joinToString("") { log ->
             val cls = when { log.contains("[OK]") -> "g"; log.contains("[ERROR]") -> "r"; log.contains("[WARN]") -> "y"; else -> "d" }
             "<div class=$cls>${log.replace("<","&lt;")}</div>"
@@ -248,6 +259,17 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 <button class="btn btn-p" type=submit style=margin-top:8px>Set Offset (ms)</button>
 </form>
 <div style="font-size:10px;color:#555;margin-top:8px">Positive = lyrics show earlier. Negative = later. Try +200 if lyrics feel late.</div>
+</div>
+
+<div class=card>
+<h2>Beat Latency</h2>
+<div class=row><div class=label>Current latency</div><div class=sub2 style=color:#aaa>${currentBeatLatency}ms</div></div>
+<form method=POST action=/set-beat-latency>
+<input name=latency type=range min=0 max=500 step=10 value="$currentBeatLatency" oninput="document.getElementById('bv').textContent=this.value+'ms'" style="width:100%;accent-color:#fa233b;margin-top:8px">
+<div style="font-size:12px;color:#aaa;text-align:center;margin-top:4px"><span id=bv>${currentBeatLatency}ms</span></div>
+<button class="btn btn-p" type=submit style=margin-top:8px>Apply &amp; Reset</button>
+</form>
+<div style="font-size:10px;color:#555;margin-top:8px">0 = TV speakers. ~200 = typical Bluetooth. Resets beat buffer on apply.</div>
 </div>
 
 <div class=card>

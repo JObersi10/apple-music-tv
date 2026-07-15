@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.StateFlow
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.ArrayDeque
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.math.sqrt
 
 /**
@@ -15,7 +17,8 @@ import kotlin.math.sqrt
  * Energy emission is delayed by [latencyMs] to compensate for audio output latency
  * (e.g. Bluetooth A2DP adds ~150-300ms between PCM write and audible output).
  */
-class BeatAnalyzer : BaseAudioProcessor() {
+@Singleton
+class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
 
     private val _energy = MutableStateFlow(0f)
     val energy: StateFlow<Float> = _energy
