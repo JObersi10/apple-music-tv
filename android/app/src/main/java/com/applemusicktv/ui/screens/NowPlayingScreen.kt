@@ -62,6 +62,7 @@ import coil.request.ImageRequest
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
+import com.applemusicktv.ui.viewmodel.RepeatMode
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -77,6 +78,7 @@ fun NowPlayingScreen(
     playerVm: PlayerViewModel,
     navVm: NavigationViewModel,
     onArtistClick: (String) -> Unit = {},
+    onAlbumClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by playerVm.state.collectAsState()
@@ -154,7 +156,18 @@ fun NowPlayingScreen(
 
                 Spacer(Modifier.height(14.dp))
 
-                Text(song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2)
+                var showOptionsMenu by remember { mutableStateOf(false) }
+                var showSleepSubmenu by remember { mutableStateOf(false) }
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, modifier = Modifier.weight(1f))
+                    Surface(
+                        onClick = { showOptionsMenu = true; showSleepSubmenu = false },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), focusedContainerColor = Color(0x33FFFFFF)),
+                        modifier = Modifier.size(32.dp),
+                    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("···", fontSize = 13.sp, color = Color.White) } }
+                }
                 Spacer(Modifier.height(4.dp))
                 if (song.artistId != null) {
                     Surface(
@@ -172,16 +185,16 @@ fun NowPlayingScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                // Transport controls. The play/pause button grabs initial
-                // focus so the D-pad can actually reach the on-screen controls
-                // (without this, nothing on Now Playing is focusable and the
-                // buttons + lyric taps appear dead — only hardware media keys,
-                // which bypass focus, work).
                 val playFocus = remember { FocusRequester() }
                 LaunchedEffect(song.id) {
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Shuffle / prev / play / next / repeat
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TransportButton(
+                        "⇄", onClick = playerVm::toggleShuffle,
+                        tint = if (state.isShuffled) Color(0xFFFA233B) else Color(0x66FFFFFF),
+                    )
                     TransportButton("⏮", onClick = playerVm::prev)
                     TransportButton(
                         if (state.isPlaying) "⏸" else "▶",
@@ -190,6 +203,40 @@ fun NowPlayingScreen(
                         modifier = Modifier.focusRequester(playFocus),
                     )
                     TransportButton("⏭", onClick = playerVm::next)
+                    TransportButton(
+                        when (state.repeatMode) { RepeatMode.One -> "↻¹"; else -> "↻" },
+                        onClick = playerVm::toggleRepeat,
+                        tint = if (state.repeatMode != RepeatMode.Off) Color(0xFFFA233B) else Color(0x66FFFFFF),
+                    )
+                }
+
+                // ⋯ options dialog
+                if (showOptionsMenu) {
+                    androidx.compose.ui.window.Dialog(onDismissRequest = { showOptionsMenu = false; showSleepSubmenu = false }) {
+                        val menuFocus = remember { FocusRequester() }
+                        LaunchedEffect(showSleepSubmenu) { kotlinx.coroutines.delay(100); runCatching { menuFocus.requestFocus() } }
+                        Column(
+                            Modifier.width(280.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            if (showSleepSubmenu) {
+                                NpMenuItem("← Back", Modifier.focusRequester(menuFocus)) { showSleepSubmenu = false }
+                                val remaining = state.sleepTimerEndsAt?.let { ((it - System.currentTimeMillis()) / 60_000).coerceAtLeast(0) }
+                                if (remaining != null) NpMenuItem("Cancel Timer (${remaining}m left)") { playerVm.cancelSleepTimer(); showOptionsMenu = false }
+                                listOf(15, 30, 45, 60).forEach { min ->
+                                    NpMenuItem("$min minutes") { playerVm.setSleepTimer(min); showOptionsMenu = false }
+                                }
+                            } else {
+                                val timerLabel = state.sleepTimerEndsAt?.let {
+                                    val m = ((it - System.currentTimeMillis()) / 60_000).coerceAtLeast(0)
+                                    "Sleep Timer (${m}m)"
+                                } ?: "Sleep Timer"
+                                NpMenuItem(timerLabel, Modifier.focusRequester(menuFocus)) { showSleepSubmenu = true }
+                                if (song.artistId != null) NpMenuItem("Go to Artist") { onArtistClick(song.artistId); showOptionsMenu = false }
+                                if (song.albumId != null) NpMenuItem("Go to Album") { onAlbumClick(song.albumId); showOptionsMenu = false }
+                            }
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -729,7 +776,7 @@ private fun QueuePanel(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TransportButton(icon: String, onClick: () -> Unit, large: Boolean = false, modifier: Modifier = Modifier) {
+private fun TransportButton(icon: String, onClick: () -> Unit, large: Boolean = false, tint: Color = Color.White, modifier: Modifier = Modifier) {
     val size = if (large) 52.dp else 40.dp
     val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
     Surface(
@@ -745,8 +792,21 @@ private fun TransportButton(icon: String, onClick: () -> Unit, large: Boolean = 
         modifier = modifier.size(size),
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
-            Text(icon, fontSize = if (large) 18.sp else 14.sp, color = Color.White)
+            Text(icon, fontSize = if (large) 18.sp else 14.sp, color = tint)
         }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun NpMenuItem(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+    ) {
+        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp))
     }
 }
 

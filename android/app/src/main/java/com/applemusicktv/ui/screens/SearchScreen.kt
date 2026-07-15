@@ -3,6 +3,8 @@ package com.applemusicktv.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,7 +32,7 @@ import com.applemusicktv.ui.viewmodel.SearchViewModel
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, modifier: Modifier = Modifier) {
+fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, modifier: Modifier = Modifier) {
     val vm: SearchViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val focusRequester = remember { FocusRequester() }
@@ -88,17 +90,53 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFFFA233B))
             }
-            state.results != null && state.results!!.albums.isNotEmpty() -> {
-                Text("Albums", fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
-                    color = Color.White, modifier = Modifier.padding(bottom = 14.dp))
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(5),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement   = Arrangement.spacedBy(20.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    items(state.results!!.albums, key = { it.id }) { album ->
-                        AlbumCard(album = album, size = 160, onClick = { onAlbumClick(album.id) })
+            state.results != null && (state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty()) -> {
+                val results = state.results!!
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    if (results.artists.isNotEmpty()) {
+                        item {
+                            Text("Artists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                items(results.artists, key = { it.id }) { artist ->
+                                    Surface(
+                                        onClick = { onArtistClick(artist.id) },
+                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                                        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
+                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(8.dp)) {
+                                            Box(Modifier.size(80.dp).clip(RoundedCornerShape(50)).background(Color(0xFF3A3A3A))) {
+                                                if (artist.artworkUrl != null) {
+                                                    coil.compose.AsyncImage(
+                                                        model = artist.artworkUrl.replace("{w}", "160").replace("{h}", "160").replace("{f}", "jpg"),
+                                                        contentDescription = artist.name,
+                                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(50)),
+                                                    )
+                                                }
+                                            }
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(artist.name, fontSize = 11.sp, color = Color.White, maxLines = 1)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (results.albums.isNotEmpty()) {
+                        item {
+                            Text("Albums", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(5),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(20.dp),
+                                modifier = Modifier.height(400.dp),
+                            ) {
+                                items(results.albums, key = { it.id }) { album ->
+                                    AlbumCard(album = album, size = 160, onClick = { onAlbumClick(album.id) })
+                                }
+                            }
+                        }
                     }
                 }
             }

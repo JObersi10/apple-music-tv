@@ -41,6 +41,7 @@ export function normaliseSong(s: any) {
     title:          a.name ?? "Unknown",
     artistName:     a.artistName ?? "",
     artistId:       s.relationships?.artists?.data?.[0]?.id ?? null,
+    albumId:        s.relationships?.albums?.data?.[0]?.id ?? null,
     albumName:      a.albumName ?? "",
     durationMs:     a.durationInMillis ?? a.durationInMilliseconds ?? 0,
     artworkUrl:     artworkUrl(s),

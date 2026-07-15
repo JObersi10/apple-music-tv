@@ -13,6 +13,7 @@ data class Song(
     val trackNumber:    Int?    = null,
     val genreNames:     List<String> = emptyList(),
     val artistId:       String? = null,
+    val albumId:        String? = null,
 ) {
     fun artworkUrl(size: Int) = artworkUrl
         ?.replace("{w}", "$size")

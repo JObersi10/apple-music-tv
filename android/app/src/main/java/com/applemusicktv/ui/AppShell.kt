@@ -4,17 +4,19 @@ import android.app.Activity
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
-import com.applemusicktv.ui.components.NowPlayingBar
 import com.applemusicktv.ui.components.TopNavBar
 import com.applemusicktv.ui.navigation.Screen
 import com.applemusicktv.ui.navigation.TopNavTab
@@ -102,13 +104,18 @@ fun AppShell(modifier: Modifier = Modifier) {
                 )
             }
             composable(Screen.Search.route) {
-                SearchScreen(playerVm = playerVm, onAlbumClick = { navController.navigate(Screen.AlbumDetail.route(it)) })
+                SearchScreen(
+                    playerVm = playerVm,
+                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                )
             }
             composable(Screen.NowPlaying.route) {
                 NowPlayingScreen(
                     playerVm = playerVm,
                     navVm = navVm,
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
                 )
             }
             composable(Screen.DevMenu.route)    { DevMenuScreen(playerVm = playerVm) }
@@ -149,10 +156,30 @@ fun AppShell(modifier: Modifier = Modifier) {
                 )
             }
         }
+        // MUT expired banner
+        if (playerState.mutExpired) {
+            Box(
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = navBarHeight + 8.dp).fillMaxWidth(0.5f)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                    .background(androidx.compose.ui.graphics.Color(0xFFB22222))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    androidx.compose.material3.Text("Token expired — re-enter at :8080", color = androidx.compose.ui.graphics.Color.White, fontSize = 13.sp)
+                    androidx.tv.material3.Surface(
+                        onClick = { playerVm.dismissMutExpired() },
+                        shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(50)),
+                        colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = androidx.compose.ui.graphics.Color(0x33FFFFFF), focusedContainerColor = androidx.compose.ui.graphics.Color(0x55FFFFFF)),
+                    ) { androidx.compose.material3.Text("✕", color = androidx.compose.ui.graphics.Color.White, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) }
+                }
+            }
+        }
+
         // Nav bar on top layer (drawn after content).
         Box(modifier = Modifier.align(Alignment.TopCenter)) {
             TopNavBar(
-                selected = selectedTab,
+                selected  = selectedTab,
+                isPlaying = playerState.isPlaying,
                 onSelect = { tab ->
                     selectedTab = tab
                     val route = when (tab) {
@@ -178,10 +205,5 @@ fun AppShell(modifier: Modifier = Modifier) {
             )
         }
 
-        if (!isOnNowPlaying) {
-            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
-                NowPlayingBar(playerVm = playerVm)
-            }
-        }
     }
 }

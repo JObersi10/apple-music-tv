@@ -9,6 +9,7 @@ data class SongDto(
     val title:          String,
     val artistName:     String,
     val artistId:       String? = null,
+    val albumId:        String? = null,
     val albumName:      String,
     val durationMs:     Long,
     val artworkUrl:     String?,

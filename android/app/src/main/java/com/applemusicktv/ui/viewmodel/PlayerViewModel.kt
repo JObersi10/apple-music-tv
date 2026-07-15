@@ -38,17 +38,23 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+enum class RepeatMode { Off, One, All }
+
 data class PlayerState(
-    val currentSong:    Song?           = null,
-    val song:           Song?           = null,
-    val isPlaying:      Boolean         = false,
-    val progressMs:     Long            = 0L,
-    val queue:          List<Song>      = emptyList(),
-    val queueIndex:     Int             = 0,
-    val lyrics:         List<LyricLine> = emptyList(),
-    val isFullStream:   Boolean         = false,
-    val motionUrl:      String?         = null,
-    val lyricsOffsetMs: Long            = 0L,
+    val currentSong:      Song?           = null,
+    val song:             Song?           = null,
+    val isPlaying:        Boolean         = false,
+    val progressMs:       Long            = 0L,
+    val queue:            List<Song>      = emptyList(),
+    val queueIndex:       Int             = 0,
+    val lyrics:           List<LyricLine> = emptyList(),
+    val isFullStream:     Boolean         = false,
+    val motionUrl:        String?         = null,
+    val lyricsOffsetMs:   Long            = 0L,
+    val isShuffled:       Boolean         = false,
+    val repeatMode:       RepeatMode      = RepeatMode.Off,
+    val sleepTimerEndsAt: Long?           = null,
+    val mutExpired:       Boolean         = false,
 )
 
 @HiltViewModel
@@ -174,6 +180,7 @@ class PlayerViewModel @Inject constructor(
             })
             .build()
         player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
+        viewModelScope.launch { repo.authErrorFlow.collect { _state.update { it.copy(mutExpired = true) } } }
         pollProgress()
         restoreState()
         checkServerReachable()
@@ -247,11 +254,20 @@ class PlayerViewModel @Inject constructor(
     fun playFromQueue(idx: Int) = playQueueItem(idx)
 
     private fun advanceQueue() {
-        val nextIdx = _state.value.queueIndex + 1
-        webServer.addLog("PLR", "advance → idx=$nextIdx / ${_state.value.queue.size}")
-        if (nextIdx >= _state.value.queue.size) {
+        val s = _state.value
+        // Repeat one: replay current
+        if (s.repeatMode == RepeatMode.One) { playQueueItem(s.queueIndex, skipFadeIn = true); return }
+
+        val nextIdx = if (s.isShuffled && s.queue.size > 1) {
+            val candidates = s.queue.indices.filter { it != s.queueIndex }
+            candidates.random()
+        } else s.queueIndex + 1
+
+        webServer.addLog("PLR", "advance → idx=$nextIdx / ${s.queue.size}")
+        if (nextIdx >= s.queue.size) {
+            if (s.repeatMode == RepeatMode.All) { playQueueItem(0); return }
             // Queue exhausted — fetch related songs and continue
-            val lastSong = _state.value.queue.lastOrNull()
+            val lastSong = s.queue.lastOrNull()
             if (lastSong != null) {
                 viewModelScope.launch {
                     val related = repo.getRelatedSongs(lastSong.id).getOrDefault(emptyList())
@@ -265,6 +281,18 @@ class PlayerViewModel @Inject constructor(
         }
         playQueueItem(nextIdx)
     }
+
+    fun toggleShuffle() { _state.update { it.copy(isShuffled = !it.isShuffled) } }
+    fun toggleRepeat() {
+        _state.update { it.copy(repeatMode = when (it.repeatMode) {
+            RepeatMode.Off -> RepeatMode.All
+            RepeatMode.All -> RepeatMode.One
+            RepeatMode.One -> RepeatMode.Off
+        })}
+    }
+    fun setSleepTimer(minutes: Int) { _state.update { it.copy(sleepTimerEndsAt = System.currentTimeMillis() + minutes * 60_000L) } }
+    fun cancelSleepTimer() { _state.update { it.copy(sleepTimerEndsAt = null) } }
+    fun dismissMutExpired() { _state.update { it.copy(mutExpired = false) } }
 
     private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false) {
         val q = _state.value.queue
@@ -494,6 +522,11 @@ class PlayerViewModel @Inject constructor(
             val playState = player.playbackState
             if (playing) _state.update { it.copy(progressMs = player.currentPosition) }
             if (playState == Player.STATE_ENDED) advanceQueue()
+            val timerEnd = _state.value.sleepTimerEndsAt
+            if (timerEnd != null && System.currentTimeMillis() >= timerEnd) {
+                player.pause()
+                _state.update { it.copy(sleepTimerEndsAt = null) }
+            }
 
             // Start crossfade when within crossfadeDurationMs of natural end
             if (playing && playState == Player.STATE_READY && !crossfadeInProgress) {
