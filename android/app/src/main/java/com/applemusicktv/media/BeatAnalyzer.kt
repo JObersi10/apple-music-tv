@@ -47,7 +47,7 @@ class BeatAnalyzer : BaseAudioProcessor() {
         out.flip()
     }
 
-    override fun onReset() {
-        _energy.value = 0f
-    }
+    fun reset() { _energy.value = 0f }
+
+    override fun onReset() { reset() }
 }

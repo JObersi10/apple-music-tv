@@ -300,6 +300,7 @@ class PlayerViewModel @Inject constructor(
             webServer.addLog("PLR", "playQueueItem idx=$idx out of bounds (size=${q.size}) — stopping")
             return
         }
+        beatAnalyzer.reset()
         // Cancel any in-progress crossfade
         fadeJob?.cancel()
         crossfadeInProgress = false
