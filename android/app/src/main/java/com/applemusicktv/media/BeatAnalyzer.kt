@@ -7,19 +7,26 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.ArrayDeque
 import kotlin.math.sqrt
 
 /**
  * Pass-through AudioProcessor that computes short-time RMS energy from PCM frames.
- * Exposes [energy] (0..1) for the UI to drive beat-reactive visuals.
- * Only active for PCM_16BIT — if the decoder outputs float, ExoPlayer bypasses it.
+ * Energy emission is delayed by [latencyMs] to compensate for audio output latency
+ * (e.g. Bluetooth A2DP adds ~150-300ms between PCM write and audible output).
  */
 class BeatAnalyzer : BaseAudioProcessor() {
 
     private val _energy = MutableStateFlow(0f)
     val energy: StateFlow<Float> = _energy
 
+    /** Set to match current audio output latency (0 for speakers, ~200 for BT). */
+    @Volatile var latencyMs: Long = 0L
+
     private var isFloat = false
+
+    // Ring buffer of (emitAtMs, energy) pairs
+    private val pending = ArrayDeque<Pair<Long, Float>>()
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return when (inputAudioFormat.encoding) {
@@ -34,16 +41,31 @@ class BeatAnalyzer : BaseAudioProcessor() {
         if (byteCount == 0) return
 
         val dup = inputBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-        if (isFloat) {
+        val e = if (isFloat) {
             val view = dup.asFloatBuffer()
             var sumSq = 0f; var n = 0
             while (view.hasRemaining()) { val s = view.get(); sumSq += s * s; n++ }
-            if (n > 0) _energy.value = sqrt(sumSq / n).coerceIn(0f, 1f)
+            if (n > 0) sqrt(sumSq / n).coerceIn(0f, 1f) else null
         } else {
             val view = dup.asShortBuffer()
             var sumSq = 0L; var n = 0
             while (view.hasRemaining()) { val s = view.get().toLong(); sumSq += s * s; n++ }
-            if (n > 0) _energy.value = (sqrt(sumSq.toFloat() / n) / 32768f).coerceIn(0f, 1f)
+            if (n > 0) (sqrt(sumSq.toFloat() / n) / 32768f).coerceIn(0f, 1f) else null
+        }
+
+        val now = System.currentTimeMillis()
+        val delay = latencyMs
+        if (e != null) {
+            if (delay <= 0L) {
+                _energy.value = e
+            } else {
+                pending.addLast(Pair(now + delay, e))
+            }
+        }
+
+        // Drain anything whose emit time has passed
+        while (pending.isNotEmpty() && pending.peekFirst().first <= now) {
+            _energy.value = pending.pollFirst().second
         }
 
         val out = replaceOutputBuffer(byteCount)
@@ -51,7 +73,10 @@ class BeatAnalyzer : BaseAudioProcessor() {
         out.flip()
     }
 
-    fun reset() { _energy.value = 0f }
+    fun reset() {
+        pending.clear()
+        _energy.value = 0f
+    }
 
     override fun onReset() { reset() }
 }

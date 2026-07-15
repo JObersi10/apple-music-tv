@@ -2,6 +2,9 @@ package com.applemusicktv.ui.viewmodel
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.content.edit
@@ -180,6 +183,19 @@ class PlayerViewModel @Inject constructor(
             })
             .build()
         player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
+
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        fun updateBtLatency() {
+            val btTypes = setOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER)
+            val onBt = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in btTypes }
+            beatAnalyzer.latencyMs = if (onBt) 200L else 0L
+        }
+        updateBtLatency()
+        audioManager.registerAudioDeviceCallback(object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>) { updateBtLatency() }
+            override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>) { updateBtLatency() }
+        }, null)
+
         viewModelScope.launch { repo.authErrorFlow.collect { _state.update { it.copy(mutExpired = true) } } }
         pollProgress()
         restoreState()
