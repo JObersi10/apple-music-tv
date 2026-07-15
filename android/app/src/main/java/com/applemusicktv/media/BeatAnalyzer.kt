@@ -27,6 +27,7 @@ class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
     @Volatile var latencyMs: Long = 0L
 
     private var isFloat = false
+    private var runningAvg = 0f
 
     // Ring buffer of (emitAtMs, energy) pairs
     private val pending = ArrayDeque<Pair<Long, Float>>()
@@ -58,11 +59,18 @@ class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
 
         val now = System.currentTimeMillis()
         val delay = latencyMs
+
+        // Onset detection: emit a pulse when energy rises sharply above the running average.
+        // This makes visuals fire on actual beats rather than tracking volume level.
         if (e != null) {
+            val avg = runningAvg
+            runningAvg = avg * 0.92f + e * 0.08f   // slow-decay average
+            val onset = if (avg > 0.01f) (e / avg).coerceIn(0f, 3f) / 3f else e
+            val out = onset.coerceIn(0f, 1f)
             if (delay <= 0L) {
-                _energy.value = e
+                _energy.value = out
             } else {
-                pending.addLast(Pair(now + delay, e))
+                pending.addLast(Pair(now + delay, out))
             }
         }
 
@@ -78,6 +86,7 @@ class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
 
     fun resetBeat() {
         pending.clear()
+        runningAvg = 0f
         _energy.value = 0f
     }
 

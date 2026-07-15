@@ -148,11 +148,13 @@ fun AppShell(modifier: Modifier = Modifier) {
                 val name       = URLDecoder.decode(back.arguments?.getString("playlistName") ?: "", "UTF-8")
                 val artworkUrl = URLDecoder.decode(back.arguments?.getString("artworkUrl")   ?: "", "UTF-8")
                 PlaylistDetailScreen(
-                    playlistId   = id,
-                    playlistName = name,
-                    artworkUrl   = artworkUrl.ifEmpty { null },
-                    playerVm     = playerVm,
-                    onBack       = { navController.popBackStack() },
+                    playlistId    = id,
+                    playlistName  = name,
+                    artworkUrl    = artworkUrl.ifEmpty { null },
+                    playerVm      = playerVm,
+                    onBack        = { navController.popBackStack() },
+                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
                 )
             }
         }

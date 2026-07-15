@@ -16,6 +16,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.geometry.Offset
@@ -159,13 +162,14 @@ fun NowPlayingScreen(
                 var showOptionsMenu by remember { mutableStateOf(false) }
                 var showSleepSubmenu by remember { mutableStateOf(false) }
 
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2, modifier = Modifier.weight(1f))
+                Box(Modifier.fillMaxWidth()) {
+                    MarqueeText(song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        modifier = Modifier.align(Alignment.Center).padding(end = 38.dp))
                     Surface(
                         onClick = { showOptionsMenu = true; showSleepSubmenu = false },
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                         colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), focusedContainerColor = Color(0x33FFFFFF)),
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier.align(Alignment.CenterEnd).size(32.dp),
                     ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("···", fontSize = 13.sp, color = Color.White) } }
                 }
                 Spacer(Modifier.height(4.dp))
@@ -221,17 +225,25 @@ fun NowPlayingScreen(
                         ) {
                             if (showSleepSubmenu) {
                                 NpMenuItem("← Back", Modifier.focusRequester(menuFocus)) { showSleepSubmenu = false }
-                                val remaining = state.sleepTimerEndsAt?.let { ((it - System.currentTimeMillis()) / 60_000).coerceAtLeast(0) }
-                                if (remaining != null) NpMenuItem("Cancel Timer (${remaining}m left)") { playerVm.cancelSleepTimer(); showOptionsMenu = false }
+                                if (state.sleepTimerEndsAt != null || state.sleepAfterSong)
+                                    NpMenuItem("Cancel Timer") { playerVm.cancelSleepTimer(); showOptionsMenu = false }
+                                NpMenuItem("End of Song") { playerVm.setSleepAfterSong(); showOptionsMenu = false }
                                 listOf(15, 30, 45, 60).forEach { min ->
                                     NpMenuItem("$min minutes") { playerVm.setSleepTimer(min); showOptionsMenu = false }
                                 }
                             } else {
-                                val timerLabel = state.sleepTimerEndsAt?.let {
-                                    val m = ((it - System.currentTimeMillis()) / 60_000).coerceAtLeast(0)
-                                    "Sleep Timer (${m}m)"
-                                } ?: "Sleep Timer"
+                                val timerLabel = when {
+                                    state.sleepAfterSong -> "Sleep: End of Song ✓"
+                                    state.sleepTimerEndsAt != null -> {
+                                        val m = ((state.sleepTimerEndsAt!! - System.currentTimeMillis()) / 60_000).coerceAtLeast(0)
+                                        "Sleep Timer (${m}m left)"
+                                    }
+                                    else -> "Sleep Timer"
+                                }
                                 NpMenuItem(timerLabel, Modifier.focusRequester(menuFocus)) { showSleepSubmenu = true }
+                                NpMenuItem(if (state.isShuffled) "Shuffle: On" else "Shuffle: Off") { playerVm.toggleShuffle(); showOptionsMenu = false }
+                                val repeatLabel = when (state.repeatMode) { RepeatMode.Off -> "Repeat: Off"; RepeatMode.All -> "Repeat: All"; RepeatMode.One -> "Repeat: One" }
+                                NpMenuItem(repeatLabel) { playerVm.toggleRepeat(); showOptionsMenu = false }
                                 if (song.artistId != null) NpMenuItem("Go to Artist") { onArtistClick(song.artistId); showOptionsMenu = false }
                                 if (song.albumId != null) NpMenuItem("Go to Album") { onAlbumClick(song.albumId); showOptionsMenu = false }
                             }
@@ -814,6 +826,34 @@ private fun NpMenuItem(label: String, modifier: Modifier = Modifier, onClick: ()
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
     ) {
         Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp))
+    }
+}
+
+@Composable
+private fun MarqueeText(text: String, modifier: Modifier = Modifier, fontSize: androidx.compose.ui.unit.TextUnit = 16.sp, fontWeight: FontWeight = FontWeight.Normal, color: Color = Color.White) {
+    val scrollState = rememberScrollState()
+    var needsScroll by remember(text) { mutableStateOf(false) }
+    LaunchedEffect(text, needsScroll) {
+        if (!needsScroll) return@LaunchedEffect
+        kotlinx.coroutines.delay(1200)
+        while (true) {
+            scrollState.animateScrollTo(scrollState.maxValue, androidx.compose.animation.core.tween(4000, easing = androidx.compose.animation.core.LinearEasing))
+            kotlinx.coroutines.delay(800)
+            scrollState.scrollTo(0)
+            kotlinx.coroutines.delay(1200)
+        }
+    }
+    Box(modifier = modifier) {
+        Text(
+            text = text,
+            fontSize = fontSize, fontWeight = fontWeight, color = color,
+            maxLines = 1, softWrap = false,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.horizontalScroll(scrollState, enabled = false)
+                .onGloballyPositioned { coords ->
+                    needsScroll = coords.size.width > (coords.parentCoordinates?.size?.width ?: Int.MAX_VALUE)
+                },
+        )
     }
 }
 

@@ -57,6 +57,7 @@ data class PlayerState(
     val isShuffled:       Boolean         = false,
     val repeatMode:       RepeatMode      = RepeatMode.Off,
     val sleepTimerEndsAt: Long?           = null,
+    val sleepAfterSong:   Boolean         = false,
     val mutExpired:       Boolean         = false,
 )
 
@@ -272,6 +273,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun advanceQueue() {
         val s = _state.value
+        if (s.sleepAfterSong) { _state.update { it.copy(sleepAfterSong = false) }; player.pause(); return }
         // Repeat one: replay current
         if (s.repeatMode == RepeatMode.One) { playQueueItem(s.queueIndex, skipFadeIn = true); return }
 
@@ -307,8 +309,9 @@ class PlayerViewModel @Inject constructor(
             RepeatMode.One -> RepeatMode.Off
         })}
     }
-    fun setSleepTimer(minutes: Int) { _state.update { it.copy(sleepTimerEndsAt = System.currentTimeMillis() + minutes * 60_000L) } }
-    fun cancelSleepTimer() { _state.update { it.copy(sleepTimerEndsAt = null) } }
+    fun setSleepTimer(minutes: Int) { _state.update { it.copy(sleepTimerEndsAt = System.currentTimeMillis() + minutes * 60_000L, sleepAfterSong = false) } }
+    fun setSleepAfterSong() { _state.update { it.copy(sleepAfterSong = true, sleepTimerEndsAt = null) } }
+    fun cancelSleepTimer() { _state.update { it.copy(sleepTimerEndsAt = null, sleepAfterSong = false) } }
     fun dismissMutExpired() { _state.update { it.copy(mutExpired = false) } }
 
     private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false) {

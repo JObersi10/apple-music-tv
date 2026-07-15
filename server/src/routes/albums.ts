@@ -53,8 +53,19 @@ albumRoutes.get("/:id", async (c) => {
     }
   }
 
-  const res = await music.Albums.get({ id, include: ["tracks", "artists"] })
-  const album = res.data[0]
+  let album: any = null
+  try {
+    const res = await music.Albums.get({ id, include: ["tracks", "artists"] })
+    album = res.data[0]
+  } catch (_) {}
+  // MusicKit wrapper sometimes fails for certain storefronts — fallback to direct amp-api call
+  if (!album) {
+    try {
+      const sf = getStorefront() || "us"
+      const r = await axios.get(`https://amp-api-edge.music.apple.com/v1/catalog/${sf}/albums/${id}`, { headers: ampHeaders() })
+      album = r.data?.data?.[0]
+    } catch (_) {}
+  }
   if (!album) return c.json({ error: "Album not found" }, 404)
   const attr = album.attributes ?? {}
   return c.json({

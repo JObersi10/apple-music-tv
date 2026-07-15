@@ -34,6 +34,8 @@ fun PlaylistDetailScreen(
     artworkUrl: String? = null,
     playerVm: PlayerViewModel,
     onBack: () -> Unit,
+    onArtistClick: (String) -> Unit = {},
+    onAlbumClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val vm: PlaylistDetailViewModel = hiltViewModel()
@@ -159,7 +161,7 @@ fun PlaylistDetailScreen(
                             }
                         }
                     }
-                    trackItems(sortedTracks, playerVm)
+                    trackItems(sortedTracks, playerVm, onArtistClick, onAlbumClick)
                 }
             }
         }
@@ -170,7 +172,7 @@ private enum class PlaylistSort(val label: String) {
     DEFAULT("Default"), TITLE("Title"), ARTIST("Artist"), ALBUM("Album")
 }
 
-private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel) {
+private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onArtistClick: (String) -> Unit = {}, onAlbumClick: (String) -> Unit = {}) {
     items(tracks.size) { idx ->
         val song = tracks[idx]
         var menuSongState by remember { mutableStateOf<Song?>(null) }
@@ -205,10 +207,12 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
         }
         menuSongState?.let { s ->
             PlaylistTrackContextMenu(
-                song        = s,
-                onDismiss   = { menuSongState = null },
-                onPlayNext  = { playerVm.playNext(s); menuSongState = null },
+                song         = s,
+                onDismiss    = { menuSongState = null },
+                onPlayNext   = { playerVm.playNext(s); menuSongState = null },
                 onAddToQueue = { playerVm.addToQueue(s); menuSongState = null },
+                onGoToArtist = s.artistId?.let { id -> { onArtistClick(id); menuSongState = null } },
+                onGoToAlbum  = s.albumId?.let  { id -> { onAlbumClick(id);  menuSongState = null } },
             )
         }
     }
@@ -216,10 +220,14 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun PlaylistTrackContextMenu(song: Song, onDismiss: () -> Unit, onPlayNext: () -> Unit, onAddToQueue: () -> Unit) {
+private fun PlaylistTrackContextMenu(
+    song: Song, onDismiss: () -> Unit,
+    onPlayNext: () -> Unit, onAddToQueue: () -> Unit,
+    onGoToArtist: (() -> Unit)? = null, onGoToAlbum: (() -> Unit)? = null,
+) {
     Dialog(onDismissRequest = onDismiss) {
         val firstFocus = remember { FocusRequester() }
-        LaunchedEffect(Unit) { kotlinx.coroutines.delay(500); runCatching { firstFocus.requestFocus() } }
+        LaunchedEffect(Unit) { kotlinx.coroutines.delay(150); runCatching { firstFocus.requestFocus() } }
         Column(
             Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -227,6 +235,8 @@ private fun PlaylistTrackContextMenu(song: Song, onDismiss: () -> Unit, onPlayNe
             Text(song.title, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(12.dp))
             PlaylistContextItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
             PlaylistContextItem("Add to Queue", onAddToQueue)
+            if (onGoToArtist != null) PlaylistContextItem("Go to Artist", onGoToArtist)
+            if (onGoToAlbum  != null) PlaylistContextItem("Go to Album",  onGoToAlbum)
         }
     }
 }
