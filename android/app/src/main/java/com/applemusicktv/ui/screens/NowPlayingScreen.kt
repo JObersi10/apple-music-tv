@@ -417,13 +417,20 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
             val w = size.width; val h = size.height
             val beatScale = 1f + energy * 0.18f
             val beatAlpha = 0.52f + energy * 0.12f
-            val r = maxOf(w, h) * 0.62f * beatScale  // larger radius covers screen with fewer blobs
+            val r = maxOf(w, h) * 0.62f * beatScale
+            val nudge = energy * maxOf(w, h) * 0.04f
+            val nudgeOffsets = listOf(
+                Offset( nudge,  nudge * 0.5f),
+                Offset(-nudge, -nudge * 0.7f),
+                Offset( nudge * 0.6f, -nudge),
+                Offset(-nudge * 0.4f,  nudge * 0.8f),
+            )
             val centers = listOf(
                 Offset(lerp(0.05f, 0.40f, t1) * w, lerp(0.10f, 0.45f, t2) * h),
                 Offset(lerp(0.95f, 0.60f, t2) * w, lerp(0.05f, 0.50f, t3) * h),
                 Offset(lerp(0.15f, 0.50f, t3) * w, lerp(0.90f, 0.55f, t1) * h),
                 Offset(lerp(0.80f, 0.45f, t1) * w, lerp(0.80f, 0.40f, t3) * h),
-            )
+            ).mapIndexed { i, c -> c + nudgeOffsets[i] }
             colors4.forEachIndexed { i, color ->
                 drawCircle(
                     brush = Brush.radialGradient(
