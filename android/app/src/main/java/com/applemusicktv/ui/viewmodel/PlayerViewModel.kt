@@ -108,6 +108,8 @@ class PlayerViewModel @Inject constructor(
     private var cfExoErrListener: Player.Listener? = null  // stored so STATE_ENDED snap can remove it
     private var preloadedForSongId: String? = null
     private var crossfadeSkipSongId: String? = null
+    /** Song whose crossfade-window decision has already been logged (see pollProgress). */
+    private var cfWindowLoggedForSongId: String? = null
 
     // True while the on-device (Widevine) path is driving playback, so the
     // error handler doesn't bounce back to the proxy in a loop.
@@ -563,8 +565,11 @@ class PlayerViewModel @Inject constructor(
         if (full) loadLyrics(song.id)
         loadMotion(song.id)
         if (song.artistId == null || song.albumId == null) enrichSongIds(song.id)
-        // Prefetch N+1 immediately so it's cached well before crossfade
-        val nextSong = (_state.value.userQueue.firstOrNull() ?: q.getOrNull(idx + 1))
+        // Prefetch N+1 immediately so it's cached well before crossfade. Under Repeat
+        // All the last track's "next" is index 0, so warm that instead of nothing.
+        val nextSong = (_state.value.userQueue.firstOrNull()
+            ?: q.getOrNull(idx + 1)
+            ?: q.firstOrNull().takeIf { _state.value.repeatMode == RepeatMode.All && q.size > 1 })
         if (full && nextSong != null) {
             preloadedForSongId = nextSong.id
             webServer.addLog("PRE", "prefetch N+1 song=${nextSong.title}")
@@ -719,7 +724,11 @@ class PlayerViewModel @Inject constructor(
             _state.update { it.copy(queue = newQueue, userQueue = it.userQueue.drop(1)) }
             playQueueItem(insertIdx, skipFadeIn = true)
         } else {
-            playQueueItem(s.queueIndex + 1, skipFadeIn = true)
+            // Repeat All wraps on a manual skip too — otherwise pressing Next on the
+            // last track just stops, which contradicts the mode being on.
+            val target = if (s.repeatMode == RepeatMode.All && s.queueIndex + 1 >= s.queue.size) 0
+                         else s.queueIndex + 1
+            playQueueItem(target, skipFadeIn = true)
         }
     }
     fun prev() {
@@ -894,7 +903,9 @@ class PlayerViewModel @Inject constructor(
                     val nextSong = s.userQueue.firstOrNull()
                         ?: s.queue.getOrNull(nextIdx)
                         ?: s.queue.firstOrNull().takeIf { wrapsToStart }
-                    webServer.addLog("CFXO", "crossfade window: remaining=${remaining}ms next=${nextSong?.title} isFullStream=${s.isFullStream} enabled=${s.crossfadeEnabled} skip=${nextSong?.id == crossfadeSkipSongId}")
+                    if (cfWindowLoggedForSongId != s.queue.getOrNull(s.queueIndex)?.id) {
+                        webServer.addLog("CFXO", "crossfade window: remaining=${remaining}ms next=${nextSong?.title} isFullStream=${s.isFullStream} enabled=${s.crossfadeEnabled} skip=${nextSong?.id == crossfadeSkipSongId}")
+                    }
                     // Gapless: consecutive tracks off the same album were often mastered
                     // to run continuous (live records, mixes, segued sides). Fading them
                     // talks over the transition the artist built, so hand off cleanly
@@ -906,8 +917,13 @@ class PlayerViewModel @Inject constructor(
                     val consecutive = cur?.trackNumber != null && nextSong?.trackNumber != null &&
                         nextSong.trackNumber == cur.trackNumber + 1
                     val gapless = sameAlbum && consecutive && s.userQueue.isEmpty()
-                    if (gapless) {
-                        webServer.addLog("CFXO", "gapless: same album consecutive tracks — no fade into ${nextSong?.title}")
+                    // Log once per song, not once per 200ms poll — this block re-evaluates
+                    // for the whole crossfade window and each addLog is an HTTP POST.
+                    if (cfWindowLoggedForSongId != cur?.id) {
+                        cfWindowLoggedForSongId = cur?.id
+                        if (gapless) {
+                            webServer.addLog("CFXO", "gapless: same album consecutive tracks — no fade into ${nextSong?.title}")
+                        }
                     }
                     if (nextSong != null && s.isFullStream && !gapless && nextSong.id != crossfadeSkipSongId) {
                         crossfadeInProgress = true
