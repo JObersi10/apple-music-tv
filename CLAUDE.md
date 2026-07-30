@@ -95,7 +95,8 @@ Template format: `{w}x{h}bb.{f}` — must replace `{w}`, `{h}`, AND `{f}` (→ "
 Library items: artwork may be in `relationships.catalog.data[0].attributes.artwork.url` not `attributes.artwork.url`.
 
 ## App lifecycle
-- **Back button from home/browse**: shows exit dialog ("Exit Apple Music TV?"). Confirm → `activity.moveTaskToBack(true)` — app backgrounds, music keeps playing. Do NOT use `finish()` — that kills the process.
+- **Back button from home/browse**: shows exit dialog. The dialog is a real `Dialog` — as a plain overlay `Box`, D-pad focus walked out to the nav bar behind it.
+- **Back button from home/browse (detail)**: shows exit dialog ("Exit Apple Music TV?"). Confirm → `activity.moveTaskToBack(true)` — app backgrounds, music keeps playing. Do NOT use `finish()` — that kills the process.
 
 ## Navigation
 - Top nav bar (TopNavBar): centered pill-style, white pill = selected tab
@@ -155,3 +156,15 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - MUT input only via phone web server (8080), not in-app text field
 - Don't use emojis unless asked
 - PC Server IP input in Dev menu is an exception — user explicitly requested it
+
+## First-run setup (onboarding)
+- `OnboardingPreferences` (`onboarding_prefs`, versioned via `CURRENT_VERSION` so a new step doesn't replay the whole flow). `AppShell` shows `OnboardingScreen` instead of the nav shell until `completed`.
+- 5 steps: server IP + health check → token pairing → remote type → crossfade → tips.
+- **The IP is a button, not a live text field.** A focused `BasicTextField` opens the Fire TV IME by itself, and `SoftwareKeyboardController.hide()` is a **no-op on Fire TV** — dismissal must also call `InputMethodManager.hideSoftInputFromWindow`. Press OK to edit, Done/Back to close.
+- Step 2 polls for the token and auto-advances **only on a false→true transition**. It counts only the *on-device* MUT: the proxy persists its own copy in `auth-state.json`, so asking the server reports a token that isn't there.
+- `restoreState()` is gated on `completed` — otherwise a first-run user gets audio behind the setup screen.
+- `TvDevice.isFireTv` (via `amazon.hardware.fire_tv` + MANUFACTURER) decides whether Now Playing shows the extra on-screen queue/lyrics toggle; step 3's override wins over detection.
+- `QrCode` (`util/QrCode.kt`) — hand-rolled byte-mode, EC level M, versions 1–6. Verified by decoding rendered matrices with OpenCV's `QRCodeDetector` and pinned in `QrCodeTest`. **Does not match segno byte-for-byte** (segno emits an extra `0x00` after the terminator); both decode, so don't "fix" it toward segno. Rendered with a ≥4-module quiet zone (spec minimum). **Not yet scanned by a real phone.**
+
+## State persistence
+- `saveState()` runs on the 10s ticker (while playing), **on pause**, and **immediately on every song change**. It **returns early during a crossfade**: `_state.currentSong` is already the *next* song while `player` is still the outgoing one, so a save there pairs one song's title with another's position — that was the cause of restores landing on an old track.

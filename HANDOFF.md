@@ -86,6 +86,40 @@ the feed for days.
   so `PlayerViewModel` picks up edits live — a getter-only prefs class silently needs an
   app restart.
 
+## Session 2026-07-29 (later) — setup, QR, focus, perf
+
+### Added
+- **First-run setup**, 5 steps (server IP + health check, token pairing, remote type, crossfade, tips). See CLAUDE.md for the gotchas — the Fire TV IME one is the nasty one.
+- **QR code** for the pairing URL. Hand-rolled encoder, verified by decoding with OpenCV, pinned in `QrCodeTest` (runs in CI).
+- **On-screen queue/lyrics toggle** for remotes with no Menu key, auto-detected.
+- **Loading ring** on play/pause during a decrypt.
+
+### Fixed
+- Exit dialog let D-pad focus escape to the nav bar → now a real `Dialog`.
+- Step 2 reported a token that wasn't there (it was asking the *server*, which keeps its own copy in `auth-state.json`).
+- Restore landed on old songs: saves now happen on pause and on song change, and are skipped mid-crossfade (the title/position mismatch was the real cause).
+- Repeat One crossfaded into the wrong song; Repeat All didn't wrap on a manual Next, and never prefetched the wrap target.
+- Gapless: consecutive same-album tracks no longer get faded.
+- Skipping left four decrypts racing (foreground track landed at 33s). Foreground requests now SIGKILL prefetches, and Android waits for `STATE_READY` before warming N+1.
+- Crossfade/gapless log spam: ~50 duplicate lines per song, each an HTTP POST. Once per song now.
+- `··· ` menu settings items no longer close the menu.
+- Menu from Artist pops back to the existing Now Playing instead of pushing a second one.
+
+### Confirmed working by the user
+Onboarding flow, keyboard behaviour, step 2 token detection, Google TV toggle button, gapless, Repeat One, Repeat All wrap, restore, audio quality, beat pulse colours, crossfade, progress bar, lyrics.
+
+### To check next session
+1. **Scan the QR with a phone.** Never actually tried. Encoder decodes from a clean PNG; camera-off-a-TV is untested.
+2. **Skip mid-decrypt.** Server should log `aborting prefetch <id>` and the new song should land in ~8–15s instead of 30+. Not yet observed in a real log.
+3. **Re-check Server** with the server off then on — Listen Now and Library should refetch.
+4. **Loading ring animation smoothness.** It was described as glitchy; it now spins via a rotated layer instead of re-issuing `drawArc` per frame. Unverified whether that was enough.
+5. **General choppiness on Now Playing.** Prime suspect is `pollProgress` pushing state 5×/sec while the screen is open. Deliberately not changed — needs profiling, not guessing.
+
+### Not done
+- No Dev-menu button for `resetOnboarding()` (the function exists).
+- Gapless is a clean cut, not sample-accurate — ExoPlayer still re-prepares, so a small buffer gap remains. True gapless needs a pre-rolled second player swapped at the boundary with no fade curve.
+- `MUSIC_KEYWORDS` in `apple-status.ts` still includes `iTunes Store`, so purchase-system outages fire a notification about a feature this app doesn't have.
+
 ## Known issues / not yet confirmed
 
 - **Repeat All wrap** — the fade into index 0 is untested. Watch that the title advances

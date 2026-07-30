@@ -261,9 +261,11 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
         val matrix = remember(s.phoneUrl) { s.phoneUrl.takeIf { it.isNotEmpty() }?.let { QrCode.encode(it) } }
         if (matrix != null) {
             Box(
-                Modifier.padding(start = 40.dp).size(210.dp)
+                // A full 4-module quiet zone, as the spec requires — the first version
+                // left only ~2 and that is the usual reason a phone won't lock on.
+                Modifier.padding(start = 40.dp).size(250.dp)
                     .background(Color.White, RoundedCornerShape(10.dp))
-                    .padding(14.dp),
+                    .padding(30.dp),
             ) {
                 Canvas(Modifier.fillMaxSize()) {
                     val n = matrix.size
