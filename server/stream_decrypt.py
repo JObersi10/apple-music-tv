@@ -22,6 +22,11 @@ LICENSE_URL = 'https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWeb
 MP4DECRYPT  = os.environ.get('MP4DECRYPT_BIN', 'mp4decrypt')
 FFMPEG      = os.environ.get('FFMPEG_BIN', 'ffmpeg')
 
+# Above this, the source is lossless (ALAC ~1.9 Mbps) and worth transcoding.
+# At or below, it's already AAC and we just stream-copy it.
+LOSSY_CEILING_KBPS = 400
+TARGET_KBPS = os.environ.get('AAC_BITRATE', '256k')
+
 def reconstruct_pssh(key_uri: str) -> bytes:
     raw = base64.b64decode(key_uri.split(',')[-1])
     if len(raw) > 30:
@@ -49,7 +54,17 @@ async def get_kid_and_key(adam_id: str, key_uri: str, bearer: str, mut: str):
                 timeout=30.0,
             )
         resp.raise_for_status()
-        cdm.parse_license(session, resp.json()['license'])
+        data = resp.json()
+        # Apple returns failureType 3077 when the content cannot be licensed via webPlayback
+        if data.get('failureType') == '3077' or 'failureType' in data:
+            msg = data.get('customerMessage', 'content unavailable')
+            print(f'UNAVAILABLE:{data.get("failureType","?")} {msg}', file=sys.stderr, flush=True)
+            sys.exit(2)  # exit code 2 = permanent DRM refusal (not a transient error)
+        lic = data.get('license') or data.get('licenseCert') or data.get('lic') or data.get('licenseData')
+        if not lic:
+            print(f'[cdm] license response keys: {list(data.keys())}  body: {str(data)[:300]}', flush=True)
+            raise KeyError(f"no license field in response: {list(data.keys())}")
+        cdm.parse_license(session, lic)
         k = next(x for x in cdm.get_keys(session) if x.type == 'CONTENT')
         return k.kid.hex, k.key.hex()
     finally:
@@ -57,8 +72,24 @@ async def get_kid_and_key(adam_id: str, key_uri: str, bearer: str, mut: str):
 
 import re as _re
 
-async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str) -> bool:
-    """Download encrypted audio; returns True if fMP4 multi-seg (needs AAC re-encode)."""
+def _best_aac_encoder() -> str:
+    """Prefer AudioToolbox AAC — roughly 2x faster than ffmpeg's native encoder."""
+    try:
+        out = subprocess.run([FFMPEG, '-hide_banner', '-encoders'],
+                             capture_output=True, timeout=10).stdout.decode()
+        if ' aac_at ' in out:
+            return 'aac_at'
+    except Exception:
+        pass
+    return 'aac'
+
+
+AAC_ENCODER = _best_aac_encoder()
+TRANSCODE_FLAGS = ['-af', 'aresample=async=1', '-c:a', AAC_ENCODER, '-b:a', TARGET_KBPS]
+
+
+async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str):
+    """Download encrypted audio. Returns (is_multi_seg, duration_s)."""
     headers = {'Authorization': f'Bearer {bearer}', 'Cookie': f'media-user-token={mut}'}
 
     async with httpx.AsyncClient() as client:
@@ -93,11 +124,17 @@ async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str)
 
     init_url = None
     seg_urls = []
+    duration_s = 0.0
     for line in pl_text.splitlines():
         line = line.strip()
         if line.startswith('#EXT-X-MAP:URI="'):
             uri = line.split('"')[1]
             init_url = uri if uri.startswith('http') else base + uri
+        elif line.startswith('#EXTINF:'):
+            try:
+                duration_s += float(line[len('#EXTINF:'):].split(',')[0])
+            except ValueError:
+                pass
         elif line and not line.startswith('#'):
             seg_urls.append(line if line.startswith('http') else base + line)
 
@@ -131,7 +168,7 @@ async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str)
         for data in data_list:
             f.write(data)
 
-    return is_multi_seg
+    return is_multi_seg, duration_s
 
 async def run(args: dict):
     adam_id    = args['adamId']
@@ -152,9 +189,10 @@ async def run(args: dict):
     dec_path = out_path or f'/tmp/am_dec_{adam_id}.mp4'
     try:
         t1 = time.time()
-        is_multi_seg = await fetch_encrypted(stream_url, bearer, mut, enc_path)
+        is_multi_seg, duration_s = await fetch_encrypted(stream_url, bearer, mut, enc_path)
         enc_size = os.path.getsize(enc_path)
-        print(f'[timing] download: {time.time()-t1:.1f}s  multi_seg={is_multi_seg}  enc={enc_size//1024}KB', flush=True)
+        print(f'[timing] download: {time.time()-t1:.1f}s  multi_seg={is_multi_seg}  '
+              f'enc={enc_size//1024}KB  dur={duration_s:.0f}s', flush=True)
 
         # Decrypt with mp4decrypt to a .part file.
         tmp_dec = dec_path + '.part'
@@ -174,18 +212,77 @@ async def run(args: dict):
         # the moov moved to the front (+faststart). This is what makes seeking
         # instant and playback reliable on the Fire TV.
         tmp_remux = dec_path + '.remux.mp4'
-        # Multi-seg fMP4: segment boundaries cause timestamp gaps → UnexpectedDiscontinuityException
-        # in ExoPlayer. aresample=async=1 repairs timestamps (fast for AAC/ctrp64).
-        audio_flags = ['-af', 'aresample=async=1'] if is_multi_seg else ['-c:a', 'copy']
+        dec_size = os.path.getsize(tmp_dec)
+
+        def _remux(flags):
+            """Remux tmp_dec → tmp_remux with the given audio flags. Returns rc."""
+            t = time.time()
+            # DO NOT add -fflags +genpts/+igndts here. On a fragmented mp4 they
+            # shift the timeline (~50ms per minute), and aresample=async=1 then
+            # chases the bad timestamps by inserting/dropping samples for the
+            # whole track — continuous micro-stretching, clearly audible as
+            # warble on sustained vocals. Measured 43.6 dB SDR without them
+            # vs -3.7 dB with them.
+            r = subprocess.run(
+                [FFMPEG, '-y', '-v', 'error', '-i', tmp_dec]
+                + flags
+                + ['-c:v', 'copy', '-movflags', '+faststart', tmp_remux],
+                capture_output=True,
+            )
+            out_size = os.path.getsize(tmp_remux) if os.path.exists(tmp_remux) else 0
+            print(f'[timing] ffmpeg: {time.time()-t:.1f}s  rc={r.returncode}  '
+                  f'flags={flags}  in={dec_size//1024}KB out={out_size//1024}KB', flush=True)
+            return r, out_size
+
+        def _out_duration():
+            """Duration of tmp_remux in seconds, or None if ffprobe isn't usable."""
+            probe = (FFMPEG[:-6] + 'ffprobe') if FFMPEG.endswith('ffmpeg') else 'ffprobe'
+            try:
+                out = subprocess.run(
+                    [probe, '-v', 'error', '-show_entries', 'format=duration',
+                     '-of', 'csv=p=0', tmp_remux],
+                    capture_output=True, timeout=15,
+                )
+                return float(out.stdout.decode().strip())
+            except Exception:
+                return None
+
+        # Decide by what we actually got, not by segment layout. Apple's ctrp
+        # assets are sometimes AAC (~256 kbps) and sometimes lossless (~1.9 Mbps)
+        # for the same flavor string, so measure it.
+        src_kbps = (dec_size * 8 / duration_s / 1000) if duration_s > 0 else 0
         t3 = time.time()
-        ff = subprocess.run(
-            [FFMPEG, '-y', '-v', 'error', '-i', tmp_dec]
-            + audio_flags
-            + ['-c:v', 'copy', '-movflags', '+faststart', tmp_remux],
-            capture_output=True,
-        )
-        print(f'[timing] ffmpeg: {time.time()-t3:.1f}s  rc={ff.returncode}  flags={audio_flags}', flush=True)
-        if ff.returncode == 0 and os.path.exists(tmp_remux) and os.path.getsize(tmp_remux) > 0:
+
+        if src_kbps > 0 and src_kbps <= LOSSY_CEILING_KBPS:
+            # Already compressed — stream-copy. ~1s instead of a re-encode, and
+            # no second generation of lossy loss.
+            ff, out_size = _remux(['-c:a', 'copy'])
+            strategy = 'copy'
+            # Copy can't run aresample=async=1, so nothing repairs the timestamp
+            # gaps between fMP4 segments. Two checks: the output should be about
+            # the size it went in (a big shortfall means dropped samples), and its
+            # duration should match the playlist's #EXTINF sum (a mismatch means
+            # the gaps landed in the timeline). Either way, re-encode.
+            out_dur = _out_duration() if ff.returncode == 0 else None
+            tol = max(0.25, duration_s * 0.003)
+            dur_bad = out_dur is not None and duration_s > 0 and abs(out_dur - duration_s) > tol
+            if not (ff.returncode == 0 and out_size > dec_size * 0.85) or dur_bad:
+                print(f'[remux] copy unusable (rc={ff.returncode} '
+                      f'{out_size//1024}KB vs {dec_size//1024}KB '
+                      f'dur={out_dur} vs {duration_s:.2f}) — re-encoding', flush=True)
+                ff, out_size = _remux(TRANSCODE_FLAGS)
+                strategy = 'copy→transcode'
+        else:
+            # Lossless source. Transcoding is the whole point — a 65 MB ALAC track
+            # becomes ~9 MB, which is what makes the cache and the LAN transfer
+            # sane. Explicit 256k: the old code omitted -b:a and silently landed
+            # on ffmpeg's ~128 kbps default.
+            ff, out_size = _remux(TRANSCODE_FLAGS)
+            strategy = f'transcode({AAC_ENCODER})'
+
+        print(f'[timing] remux total: {time.time()-t3:.1f}s  strategy={strategy}  '
+              f'src={src_kbps:.0f}kbps', flush=True)
+        if ff.returncode == 0 and out_size > 0:
             try:
                 os.remove(tmp_dec)
             except:

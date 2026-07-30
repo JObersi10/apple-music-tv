@@ -1,12 +1,18 @@
 package com.applemusicktv.ui.viewmodel
 
+import android.content.Context
+import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.applemusicktv.data.model.Song
 import com.applemusicktv.data.repository.MusicRepository
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -20,27 +26,62 @@ data class PlaylistDetailState(
 @HiltViewModel
 class PlaylistDetailViewModel @Inject constructor(
     private val repo: MusicRepository,
+    private val moshi: Moshi,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PlaylistDetailState())
     val state: StateFlow<PlaylistDetailState> = _state
 
     private var loadedId: String? = null
+    private val prefs = context.getSharedPreferences("playlist_detail_cache", Context.MODE_PRIVATE)
+    private val listType = Types.newParameterizedType(List::class.java, Song::class.java)
 
     fun load(playlistId: String, initialArtworkUrl: String? = null) {
-        // Allow reloading only if it's a different playlist.
-        if (loadedId == playlistId && (_state.value.loading || _state.value.tracks.isNotEmpty())) return
+        if (loadedId == playlistId && _state.value.tracks.isNotEmpty()) return
         loadedId = playlistId
-        viewModelScope.launch {
+
+        // Show cache immediately if available
+        val cached = readCache(playlistId)
+        if (cached != null) {
+            _state.value = cached.copy(loading = true, artworkUrl = initialArtworkUrl ?: cached.artworkUrl)
+        } else {
             _state.value = PlaylistDetailState(loading = true, artworkUrl = initialArtworkUrl)
+        }
+
+        viewModelScope.launch {
             repo.getPlaylistTracks(playlistId).onSuccess { songs ->
-                _state.value = PlaylistDetailState(
+                val newState = PlaylistDetailState(
                     tracks     = songs,
                     artworkUrl = initialArtworkUrl ?: songs.firstOrNull()?.artworkUrl,
                 )
+                _state.value = newState
+                writeCache(playlistId, newState)
             }.onFailure {
-                _state.value = PlaylistDetailState(artworkUrl = initialArtworkUrl)
+                _state.update { it.copy(loading = false) }
             }
         }
+    }
+
+    private fun readCache(playlistId: String): PlaylistDetailState? {
+        val json = prefs.getString("tracks_$playlistId", null) ?: return null
+        return try {
+            val tracks = moshi.adapter<List<Song>>(listType).fromJson(json) ?: return null
+            PlaylistDetailState(
+                tracks     = tracks,
+                artworkUrl = prefs.getString("art_$playlistId", null),
+                curatorName = prefs.getString("curator_$playlistId", "") ?: "",
+            )
+        } catch (_: Exception) { null }
+    }
+
+    private fun writeCache(playlistId: String, state: PlaylistDetailState) {
+        try {
+            prefs.edit {
+                putString("tracks_$playlistId", moshi.adapter<List<Song>>(listType).toJson(state.tracks))
+                putString("art_$playlistId", state.artworkUrl)
+                putString("curator_$playlistId", state.curatorName)
+            }
+        } catch (_: Exception) {}
     }
 }

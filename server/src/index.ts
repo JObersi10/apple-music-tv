@@ -59,6 +59,10 @@ app.use("*", logger())
 app.use("*", cors({ origin: "*" }))
 
 app.get("/health", (c) => c.json({ ok: true }))
+app.get("/api/status/apple", async (c) => {
+  const { checkAppleStatus } = await import("./apple-status")
+  return c.json(await checkAppleStatus())
+})
 app.post("/api/log", async (c) => {
   const { level, msg } = await c.req.json()
   console.log(`[${level ?? "PLR"}] ${msg}`)

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import axios from "axios";
-import { getMUT, getBearerToken, ensureBearer } from "../auth";
+import { getMUT, getBearerToken, ensureBearer, invalidateBearer } from "../auth";
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -13,27 +13,81 @@ const DECRYPT_SCRIPT = path.join(import.meta.dir, "../../stream_decrypt.py");
 
 const CACHE_DIR = path.join(os.tmpdir(), "am_stream_cache");
 fs.mkdirSync(CACHE_DIR, { recursive: true });
+// Drop only partial (.tmp) files on startup — those are the ones that cause Bad
+// Position errors. Completed .mp4s are atomically renamed and stay valid, so we
+// keep them: with --watch, wiping the cache on every code edit would be brutal.
+try {
+  const stale = fs.readdirSync(CACHE_DIR).filter((f) => !f.endsWith(".mp4"));
+  for (const f of stale) { try { fs.unlinkSync(path.join(CACHE_DIR, f)); } catch (_) {} }
+  if (stale.length > 0) console.log(`[stream] cleared ${stale.length} partial cache file(s) on startup`);
+} catch (_) {}
+evictCache();
 
 // In-flight decrypt jobs, keyed by songId, so ExoPlayer's several parallel
 // Range connections share one decrypt instead of racing.
-const inFlight = new Map<string, Promise<string>>();
+const inFlight_ref = new Map<string, Promise<string>>();
 
 function cachePath(songId: string) {
   return path.join(CACHE_DIR, `${songId.replace(/[^a-zA-Z0-9._-]/g, "_")}.mp4`);
 }
 
+const CACHE_MAX_BYTES = 500 * 1_048_576; // 500 MB
+
+/**
+ * Evict least-recently-used cache files until the directory is under
+ * CACHE_MAX_BYTES. Capping by bytes (not file count) keeps the ceiling honest —
+ * an AAC track is ~25 MB but a lossless fallback can be 350 MB.
+ */
+function evictCache() {
+  try {
+    const files = fs.readdirSync(CACHE_DIR)
+      .filter((f) => f.endsWith(".mp4"))
+      .map((f) => {
+        const p = path.join(CACHE_DIR, f);
+        const st = fs.statSync(p);
+        return { p, mtime: st.mtimeMs, size: st.size };
+      })
+      .sort((a, b) => b.mtime - a.mtime); // newest first
+
+    let total = 0;
+    let freed = 0;
+    for (const f of files) {
+      total += f.size;
+      if (total <= CACHE_MAX_BYTES) continue;
+      try {
+        fs.unlinkSync(f.p);
+        freed += f.size;
+        console.log(`[stream] evicted ${path.basename(f.p)} (${(f.size / 1_048_576).toFixed(1)} MB)`);
+      } catch (_) {} // still on disk (in use?) — leave it counted
+    }
+    if (freed > 0) {
+      console.log(`[stream] cache ${((total - freed) / 1_048_576).toFixed(0)}MB / ${CACHE_MAX_BYTES / 1_048_576}MB after eviction`);
+    }
+  } catch (_) {}
+}
+
 /** Decrypt a song to a seekable cache file (once), returning its path. */
 async function ensureDecrypted(songId: string, mut: string): Promise<string> {
   const out = cachePath(songId);
-  if (fs.existsSync(out) && fs.statSync(out).size > 0) return out;
+  if (fs.existsSync(out) && fs.statSync(out).size > 0) {
+    console.log(`[stream] cache hit ${songId} (${(fs.statSync(out).size / 1_048_576).toFixed(1)} MB)`);
+    const now = new Date();
+    try { fs.utimesSync(out, now, now); } catch (_) {}
+    return out;
+  }
 
-  const existing = inFlight.get(songId);
+  const existing = inFlight_ref.get(songId);
   if (existing) return existing;
 
   const job = (async () => {
+    const t0 = Date.now();
+    const tmpOut = out + ".tmp";
+    try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+    console.log(`[stream] decrypt start ${songId}`);
+
     const { streamUrl, adamId, keyUri } = await getStreamParams(songId, mut);
     const args = JSON.stringify({
-      adamId, keyUri, streamUrl, bearer: getBearerToken(), mut, outPath: out,
+      adamId, keyUri, streamUrl, bearer: getBearerToken(), mut, outPath: tmpOut,
     });
     await new Promise<void>((resolve, reject) => {
       const child = spawn(PYTHON, [DECRYPT_SCRIPT, args]);
@@ -43,17 +97,26 @@ async function ensureDecrypted(songId: string, mut: string): Promise<string> {
       child.on("error", reject);
       child.on("close", (code) => {
         if (code === 0) resolve();
-        else reject(new Error(`decrypt exited ${code}: ${stderr}`));
+        else {
+          try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+          const err = new Error(`decrypt exited ${code}: ${stderr}`);
+          (err as any).exitCode = code;
+          reject(err);
+        }
       });
     });
+    fs.renameSync(tmpOut, out);
+    const sizeMb = (fs.statSync(out).size / 1_048_576).toFixed(1);
+    console.log(`[stream] decrypt done ${songId} ${sizeMb} MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    evictCache();
     return out;
   })();
 
-  inFlight.set(songId, job);
+  inFlight_ref.set(songId, job);
   try {
     return await job;
   } finally {
-    inFlight.delete(songId);
+    inFlight_ref.delete(songId);
   }
 }
 
@@ -160,16 +223,23 @@ async function getStreamParams(songId: string, mut: string) {
   return { streamUrl: mediaUrl, adamId, keyUri };
 }
 
+// GET /api/stream/cached/:songId — quick check: is this song already in the cache file?
+stream.get("/cached/:songId", (c) => {
+  const out = cachePath(c.req.param("songId"));
+  const cached = fs.existsSync(out) && fs.statSync(out).size > 0;
+  const inFlight = inFlight_ref.has(c.req.param("songId"));
+  return c.json({ cached, inFlight });
+});
+
 // GET /api/prefetch/:songId — kick off decrypt in background, return 200 immediately.
-// Android fires this while the current song plays so the next song is cached by the time it's needed.
 stream.get("/prefetch/:songId", async (c) => {
   const mut = c.req.header("X-Music-User-Token") || getMUT();
-  if (!mut) return c.json({ ok: false, reason: "no_mut" }, 200);
+  if (!mut) { console.warn(`[prefetch] no MUT for ${c.req.param("songId")}`); return c.json({ ok: false, reason: "no_mut" }, 200); }
   const songId = c.req.param("songId");
   const out = cachePath(songId);
-  if (fs.existsSync(out)) return c.json({ ok: true, cached: true });
-  // Fire-and-forget — don't await
-  ensureDecrypted(songId, mut).catch((e) => console.warn(`[prefetch] ${songId}:`, e.message));
+  if (fs.existsSync(out) && fs.statSync(out).size > 0) return c.json({ ok: true, cached: true });
+  if (inFlight_ref.has(songId)) return c.json({ ok: true, inFlight: true });
+  ensureDecrypted(songId, mut).catch((e) => console.error(`[prefetch] FAILED ${songId}:`, e.message));
   return c.json({ ok: true, started: true });
 });
 
@@ -194,6 +264,7 @@ stream.get("/:songId", async (c) => {
     };
 
     const file = Bun.file(filePath);
+    console.log(`[stream] serve ${songId} size=${(size / 1_048_576).toFixed(1)}MB range=${rangeHeader ?? "full"}`);
 
     if (rangeHeader) {
       const m = rangeHeader.match(/bytes=(\d*)-(\d*)/);
@@ -224,7 +295,10 @@ stream.get("/:songId", async (c) => {
     });
   } catch (e: any) {
     console.error(`[stream] ${songId}:`, e.message);
-    return c.json({ error: e.message }, 500);
+    // Exit code 2 = Apple DRM refusal (failureType 3077). Return 404 so
+    // ExoPlayer treats it as permanent and skips without retrying.
+    const status = (e as any).exitCode === 2 ? 404 : 500;
+    return c.json({ error: e.message }, status);
   }
 });
 

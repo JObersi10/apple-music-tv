@@ -2,6 +2,7 @@ package com.applemusicktv.media
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import com.applemusicktv.data.CrossfadePreferences
 import com.applemusicktv.data.LyricsOffsetPreferences
 import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.NetworkLog
@@ -23,13 +24,18 @@ class InAppWebServer @Inject constructor(
     private val prefs: MutPreferences,
     private val repo: MusicRepository,
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
+    private val crossfadePrefs: CrossfadePreferences,
     private val beatAnalyzer: BeatAnalyzer,
 ) {
     private val logs = ArrayDeque<String>(300)
     private val sseClients = java.util.concurrent.CopyOnWriteArrayList<java.io.OutputStream>()
+    // Port 8001: live event stream for curl
+    private val eventClients = java.util.concurrent.CopyOnWriteArrayList<java.io.OutputStream>()
     private var job: Job? = null
+    private var eventJob: Job? = null
     private var appScope: CoroutineScope? = null
     val port = 8080
+    val eventPort = 8081
 
     fun start(scope: CoroutineScope) {
         if (job?.isActive == true) return
@@ -41,13 +47,25 @@ class InAppWebServer @Inject constructor(
             }
             server.close()
         }
+        eventJob = scope.launch(Dispatchers.IO) {
+            val server = try { ServerSocket(eventPort) } catch (e: Exception) {
+                addLog("WARN", "Event port $eventPort in use — kill previous instance and restart")
+                return@launch
+            }
+            while (isActive) {
+                try { val s = server.accept(); launch { handleEvent(s) } } catch (_: Exception) {}
+            }
+            try { server.close() } catch (_: Exception) {}
+        }
         addLog("OK", "Web server started — open ${serverUrl()} on your phone")
+        val ip = serverUrl().removePrefix("http://").substringBefore(":")
+        addLog("OK", "Event stream: curl http://$ip:$eventPort")
     }
 
-    fun stop() { job?.cancel() }
+    fun stop() { job?.cancel(); eventJob?.cancel() }
 
     fun addLog(level: String, msg: String) {
-        val t = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+        val t = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
         val line = "[$t][$level] $msg"
         synchronized(logs) {
             if (logs.size >= 300) logs.removeFirst()
@@ -57,6 +75,13 @@ class InAppWebServer @Inject constructor(
         val dead = mutableListOf<java.io.OutputStream>()
         for (out in sseClients) { try { out.write(sseData); out.flush() } catch (_: Exception) { dead.add(out) } }
         sseClients.removeAll(dead)
+        // Push to event stream clients on IO thread (network I/O must not run on main thread)
+        val eventLine = "${line.replace("\n", " ")}\n".toByteArray()
+        appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val dead = mutableListOf<java.io.OutputStream>()
+            for (out in eventClients) { try { out.write(eventLine); out.flush() } catch (_: Exception) { dead.add(out) } }
+            eventClients.removeAll(dead)
+        }
         appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val body = """{"level":"$level","msg":${org.json.JSONObject.quote(msg)}}"""
@@ -113,6 +138,7 @@ class InAppWebServer @Inject constructor(
                 method == "POST" && path == "/clear-token"         -> { prefs.setMUT(""); addLog("WARN","Token cleared"); redirect(out, "/") }
                 method == "POST" && path == "/set-lyrics-offset"   -> { applyLyricsOffset(parseField(body, "offset")); redirect(out, "/") }
                 method == "POST" && path == "/set-beat-latency"    -> { applyBeatLatency(parseField(body, "latency")); redirect(out, "/") }
+                method == "POST" && path == "/set-crossfade"       -> { applyCrossfade(parseField(body, "crossfade")); redirect(out, "/") }
                 else -> send(out, 404, "text/plain", "Not found")
             }
             out.flush(); socket.close()
@@ -125,6 +151,13 @@ class InAppWebServer @Inject constructor(
         beatAnalyzer.latencyMs = ms
         beatAnalyzer.resetBeat()
         addLog("OK", "Beat latency set to ${ms}ms — buffer reset")
+    }
+
+    private fun applyCrossfade(raw: String) {
+        val ms = raw.trim().toLongOrNull()
+        if (ms == null) { addLog("ERROR", "Invalid crossfade: $raw"); return }
+        crossfadePrefs.setDuration(ms)
+        addLog("OK", "Crossfade set to ${crossfadePrefs.getDuration()}ms — applies from next song")
     }
 
     private fun applyLyricsOffset(raw: String) {
@@ -141,6 +174,27 @@ class InAppWebServer @Inject constructor(
         appScope?.launch {
             runCatching { repo.syncMUTToServer(mut) }.onFailure { addLog("WARN", "Server MUT sync failed: ${it.message}") }
         }
+    }
+
+    private fun handleEvent(socket: Socket) {
+        try {
+            socket.soTimeout = 0
+            socket.tcpNoDelay = true
+            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+            val out = socket.getOutputStream()
+            // Drain HTTP request headers
+            var line = reader.readLine()
+            while (!line.isNullOrBlank()) { line = reader.readLine() }
+            val header = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+            out.write(header.toByteArray()); out.flush()
+            // Send recent logs as backlog
+            val backlog = synchronized(logs) { logs.toList() }
+            for (l in backlog) { out.write("${l}\n".toByteArray()); out.flush() }
+            eventClients.add(out)
+            try { while (!socket.isClosed) Thread.sleep(500) } catch (_: Exception) {}
+            eventClients.remove(out)
+        } catch (_: Exception) {}
+        try { socket.close() } catch (_: Exception) {}
     }
 
     private fun handleSse(socket: Socket, out: BufferedOutputStream) {
@@ -174,6 +228,8 @@ class InAppWebServer @Inject constructor(
         val preview = if (has) prefs.getMUT().take(32) + "…" else ""
         val currentOffset = lyricsOffsetPrefs.getOffset()
         val currentBeatLatency = beatAnalyzer.latencyMs
+        val currentCrossfade = crossfadePrefs.getDuration()
+        val crossfadeSec = "%.1f".format(currentCrossfade / 1000f)
         val logRows = getLogs().reversed().take(80).joinToString("") { log ->
             val cls = when { log.contains("[OK]") -> "g"; log.contains("[ERROR]") -> "r"; log.contains("[WARN]") -> "y"; else -> "d" }
             "<div class=$cls>${log.replace("<","&lt;")}</div>"
@@ -270,6 +326,17 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 <button class="btn btn-p" type=submit style=margin-top:8px>Apply &amp; Reset</button>
 </form>
 <div style="font-size:10px;color:#555;margin-top:8px">0 = TV speakers. ~200 = typical Bluetooth. Resets beat buffer on apply.</div>
+</div>
+
+<div class=card>
+<h2>Crossfade</h2>
+<div class=row><div class=label>Current length</div><div class=sub2 style=color:#aaa>${crossfadeSec}s</div></div>
+<form method=POST action=/set-crossfade>
+<input name=crossfade type=range min=${CrossfadePreferences.MIN_MS} max=${CrossfadePreferences.MAX_MS} step=500 value="$currentCrossfade" oninput="document.getElementById('cv').textContent=(this.value/1000).toFixed(1)+'s'" style="width:100%;accent-color:#fa233b;margin-top:8px">
+<div style="font-size:12px;color:#aaa;text-align:center;margin-top:4px"><span id=cv>${crossfadeSec}s</span></div>
+<button class="btn btn-p" type=submit style=margin-top:8px>Set Crossfade</button>
+</form>
+<div style="font-size:10px;color:#555;margin-top:8px">Applies from the next song — a fade already running keeps its length. Longer fades need the next track prefetched earlier.</div>
 </div>
 
 <div class=card>

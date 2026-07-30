@@ -2,6 +2,7 @@ package com.applemusicktv.ui
 
 import android.app.Activity
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -9,7 +10,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
@@ -55,9 +59,14 @@ fun AppShell(modifier: Modifier = Modifier) {
     LaunchedEffect(goToNowPlaying) {
         if (goToNowPlaying) {
             selectedTab = TopNavTab.NowPlaying
-            navController.navigate(Screen.NowPlaying.route) {
-                popUpTo(Screen.Home.route) { saveState = true }
-                launchSingleTop = true; restoreState = true
+            // If we got here *from* Now Playing (e.g. Now Playing → Artist, then
+            // Menu), pop back to that instance so it keeps its state instead of
+            // pushing a second copy on top and growing the back stack.
+            if (!navController.popBackStack(Screen.NowPlaying.route, inclusive = false)) {
+                navController.navigate(Screen.NowPlaying.route) {
+                    popUpTo(Screen.Home.route) { saveState = true }
+                    launchSingleTop = true; restoreState = true
+                }
             }
             navVm.consumeNowPlayingNavigation()
         }
@@ -68,6 +77,14 @@ fun AppShell(modifier: Modifier = Modifier) {
     // last → it sits on a higher layer. Non-fullscreen screens get top padding
     // equal to the bar so their content isn't hidden underneath it.
     val navBarHeight = 64.dp
+
+    // Exit confirmation on back from root
+    var showExitDialog by remember { mutableStateOf(false) }
+    BackHandler(enabled = showExitDialog) { showExitDialog = false }
+    BackHandler(enabled = !showExitDialog && (currentRoute == Screen.Home.route || currentRoute == Screen.Browse.route)) {
+        showExitDialog = true
+    }
+
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         NavHost(
             navController    = navController,
@@ -124,7 +141,8 @@ fun AppShell(modifier: Modifier = Modifier) {
                 arguments = listOf(navArgument("albumId") { type = NavType.StringType }),
             ) {
                 AlbumDetailScreen(playerVm = playerVm, onBack = { navController.popBackStack() },
-                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) })
+                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) })
             }
             composable(
                 route     = Screen.ArtistDetail.route,
@@ -173,6 +191,81 @@ fun AppShell(modifier: Modifier = Modifier) {
                         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(50)),
                         colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = androidx.compose.ui.graphics.Color(0x33FFFFFF), focusedContainerColor = androidx.compose.ui.graphics.Color(0x55FFFFFF)),
                     ) { androidx.compose.material3.Text("✕", color = androidx.compose.ui.graphics.Color.White, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) }
+                }
+            }
+        }
+
+        // Preview mode banner
+        if (!playerState.isFullStream && playerState.currentSong != null) {
+            Box(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .background(androidx.compose.ui.graphics.Color(0xFFB22222))
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+            ) {
+                androidx.compose.material3.Text(
+                    "PLAYING PREVIEWS — set token at :8080",
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                )
+            }
+        }
+
+        // Exit dialog
+        if (showExitDialog) {
+            val cancelFocus = remember { FocusRequester() }
+            LaunchedEffect(Unit) { cancelFocus.requestFocus() }
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color(0x88000000)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF1C1C1E))
+                        .padding(horizontal = 48.dp, vertical = 36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
+                    androidx.compose.material3.Text(
+                        "Exit Apple Music TV?",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        androidx.tv.material3.Surface(
+                            onClick = { showExitDialog = false },
+                            modifier = Modifier.focusRequester(cancelFocus),
+                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                                containerColor = Color(0xFF3A3A3C),
+                                focusedContainerColor = Color(0xFF5A5A5C),
+                            ),
+                        ) {
+                            androidx.compose.material3.Text(
+                                "Cancel",
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
+                            )
+                        }
+                        androidx.tv.material3.Surface(
+                            onClick = { activity?.moveTaskToBack(true) },
+                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                                containerColor = Color(0xFFB22222),
+                                focusedContainerColor = Color(0xFFD44040),
+                            ),
+                        ) {
+                            androidx.compose.material3.Text(
+                                "Exit",
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
+                            )
+                        }
+                    }
                 }
             }
         }

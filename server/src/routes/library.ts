@@ -1,14 +1,20 @@
 import { Hono } from "hono";
 import axios from "axios";
-import { getMUT, getBearerToken } from "../auth";
+import { getMUT, getBearerToken, ensureBearer, invalidateBearer } from "../auth";
+import { logAppleStatusOnError } from "../apple-status";
 import { normaliseAlbum, normaliseArtist, normaliseSong, normalisePlaylist } from "./search";
 
 // Library songs have minimal attributes; pull real catalog data from the relationship.
 function normaliseLibrarySong(s: any) {
   const cat = s.relationships?.catalog?.data?.[0];
-  // Use catalog item if available (better metadata + catalog ID for streaming)
-  if (cat) return normaliseSong(cat);
-  // Fallback: use library item as-is (id will be i.xxx which the stream route handles)
+  if (cat) {
+    const song = normaliseSong(cat);
+    return {
+      ...song,
+      artistId: song.artistId ?? s.relationships?.artists?.data?.[0]?.id ?? null,
+      albumId:  song.albumId  ?? s.relationships?.albums?.data?.[0]?.id  ?? null,
+    };
+  }
   return normaliseSong(s);
 }
 
@@ -29,6 +35,24 @@ function normaliseLibraryPlaylist(p: any) {
     description: attr.description?.short ?? cat?.attributes?.description?.short ?? null,
     playlistType: attr.playlistType ?? null,
   };
+}
+
+/** axios.get wrapper: on 401/403, invalidate bearer, re-scrape, then retry once. On 500, logs Apple status. */
+async function appleGet(url: string, params: any, mut: string): Promise<any> {
+  await ensureBearer();
+  try {
+    return await axios.get(url, { params, headers: appleHeaders(mut) });
+  } catch (e: any) {
+    const status = e?.response?.status;
+    if (status === 401 || status === 403) {
+      console.warn(`[library] Apple returned ${status} — refreshing bearer and retrying`);
+      invalidateBearer();
+      await ensureBearer();
+      return axios.get(url, { params, headers: appleHeaders(mut) });
+    }
+    if (status === 500) logAppleStatusOnError().catch(() => {});
+    throw e;
+  }
 }
 
 const library = new Hono();
@@ -55,15 +79,17 @@ library.get("/songs", async (c) => {
     const all: any[] = [];
     let url: string | null = "https://amp-api-edge.music.apple.com/v1/me/library/songs";
     while (url && all.length < 2000) {
-      const res = await axios.get(url, {
-        params: all.length === 0 ? { limit: 100, include: "catalog" } : undefined,
-        headers: appleHeaders(mut),
-      });
+      const res = await (all.length === 0
+        ? appleGet(url, { limit: 100, include: "catalog" }, mut)
+        : axios.get(url, { headers: appleHeaders(mut) }));
       all.push(...(res.data?.data ?? []));
       url = res.data?.next ? `https://amp-api-edge.music.apple.com${res.data.next}` : null;
     }
     return c.json({ songs: all.map((s: any) => normaliseSong(s)) });
-  } catch (e: any) { return c.json({ error: e.message }, 500); }
+  } catch (e: any) {
+    console.error("[library/songs]", e?.response?.data ?? e.message);
+    return c.json({ error: e.message }, 500);
+  }
 });
 
 library.get("/albums", async (c) => {
@@ -72,35 +98,38 @@ library.get("/albums", async (c) => {
     const all: any[] = [];
     let url: string | null = "https://amp-api-edge.music.apple.com/v1/me/library/albums";
     while (url && all.length < 2000) {
-      const res = await axios.get(url, {
-        params: all.length === 0 ? { limit: 100, include: "catalog" } : undefined,
-        headers: appleHeaders(mut),
-      });
+      const res = await (all.length === 0
+        ? appleGet(url, { limit: 100, include: "catalog" }, mut)
+        : axios.get(url, { headers: appleHeaders(mut) }));
       all.push(...(res.data?.data ?? []));
       url = res.data?.next ? `https://amp-api-edge.music.apple.com${res.data.next}` : null;
     }
     return c.json({ albums: all.map((a: any) => normaliseAlbum(a)) });
-  } catch (e: any) { return c.json({ error: e.message }, 500); }
+  } catch (e: any) {
+    console.error("[library/albums]", e?.response?.data ?? e.message);
+    return c.json({ error: e.message }, 500);
+  }
 });
 
 library.get("/playlists", async (c) => {
   const mut = guard(c); if (!mut) return;
   const limit = Number(c.req.query("limit") ?? "100");
   try {
-    // Paginate to get all playlists (Apple caps at 100 per page)
     const all: any[] = [];
     let url: string | null = "https://amp-api-edge.music.apple.com/v1/me/library/playlists";
     while (url && all.length < 500) {
-      const res = await axios.get(url, {
-        params: all.length === 0 ? { limit: Math.min(limit, 100), include: "catalog" } : undefined,
-        headers: appleHeaders(mut),
-      });
+      const res = await (all.length === 0
+        ? appleGet(url, { limit: Math.min(limit, 100), include: "catalog" }, mut)
+        : axios.get(url, { headers: appleHeaders(mut) }));
       all.push(...(res.data?.data ?? []));
       url = res.data?.next ? `https://amp-api-edge.music.apple.com${res.data.next}` : null;
     }
     const playlists = all.map((p: any) => normaliseLibraryPlaylist(p));
     return c.json({ playlists });
-  } catch (e: any) { return c.json({ error: e.message }, 500); }
+  } catch (e: any) {
+    console.error("[library/playlists]", e?.response?.data ?? e.message);
+    return c.json({ error: e.message }, 500);
+  }
 });
 
 library.get("/artists", async (c) => {
@@ -109,31 +138,33 @@ library.get("/artists", async (c) => {
     const all: any[] = [];
     let url: string | null = "https://amp-api-edge.music.apple.com/v1/me/library/artists";
     while (url && all.length < 2000) {
-      const res = await axios.get(url, {
-        params: all.length === 0 ? { limit: 100 } : undefined,
-        headers: appleHeaders(mut),
-      });
+      const res = await (all.length === 0
+        ? appleGet(url, { limit: 100 }, mut)
+        : axios.get(url, { headers: appleHeaders(mut) }));
       all.push(...(res.data?.data ?? []));
       url = res.data?.next ? `https://amp-api-edge.music.apple.com${res.data.next}` : null;
     }
     return c.json({ artists: all.map((a: any) => normaliseArtist(a)) });
-  } catch (e: any) { return c.json({ error: e.message }, 500); }
+  } catch (e: any) {
+    console.error("[library/artists]", e?.response?.data ?? e.message);
+    return c.json({ error: e.message }, 500);
+  }
 });
 
 library.get("/recent", async (c) => {
   const mut = guard(c); if (!mut) return;
   try {
-    const res = await axios.get(
-      "https://amp-api-edge.music.apple.com/v1/me/recent/played",
-      { params: { limit: 20 }, headers: appleHeaders(mut) }
-    );
+    const res = await appleGet("https://amp-api-edge.music.apple.com/v1/me/recent/played", { limit: 20 }, mut);
     const items = (res.data?.data ?? []).map((item: any) => {
       if (item.type === "albums") return { type: "album", ...normaliseAlbum(item) };
       if (item.type === "playlists") return { type: "playlist", ...normalisePlaylist(item) };
       return { type: "song", ...normaliseSong(item) };
     });
     return c.json({ items });
-  } catch (e: any) { return c.json({ error: e.message }, 500); }
+  } catch (e: any) {
+    console.error("[library/recent]", e?.response?.data ?? e.message);
+    return c.json({ error: e.message }, 500);
+  }
 });
 
 library.get("/playlists/:id/tracks", async (c) => {
@@ -145,12 +176,12 @@ library.get("/playlists/:id/tracks", async (c) => {
     const songs: any[] = [];
 
     if (id.startsWith("pl.")) {
-      // Catalog/editorial/shared/generated playlists — use catalog endpoint
+      // Catalog/editorial and personal playlists — no include, artistId/albumId fetched lazily by client
       const sf = getStorefront() || "us";
       let offset = 0;
       while (songs.length < 2000) {
         const res = await axios.get(`https://amp-api-edge.music.apple.com/v1/catalog/${sf}/playlists/${id}/tracks`, {
-          params: { limit: 100, offset, include: "albums,artists" },
+          params: { limit: 100, offset },
           headers: appleHeaders(mut),
         });
         const batch = res.data?.data ?? [];
@@ -159,7 +190,7 @@ library.get("/playlists/:id/tracks", async (c) => {
         offset += 100;
       }
     } else {
-      // User library playlists — use library endpoint; include catalog on every page for artwork/IDs
+      // User/personal/library playlists — library endpoint with catalog lookup
       let offset = 0;
       while (songs.length < 2000) {
         const res = await axios.get(`https://amp-api-edge.music.apple.com/v1/me/library/playlists/${id}/tracks`, {

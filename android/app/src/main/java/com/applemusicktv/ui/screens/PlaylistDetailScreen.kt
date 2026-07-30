@@ -6,19 +6,24 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
@@ -56,7 +61,24 @@ fun PlaylistDetailScreen(
         if (descending) base.reversed() else base
     }
 
-    Row(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+    var menuSongState by remember { mutableStateOf<Song?>(null) }
+    var lastDismissMs by remember { mutableStateOf(0L) }
+    val dismissMenu: () -> Unit = {
+        lastDismissMs = System.currentTimeMillis()
+        menuSongState = null
+    }
+    menuSongState?.let { s ->
+        LaunchedEffect(s.id) {
+            if (s.artistId == null || s.albumId == null) {
+                val (aId, alId) = playerVm.lookupSongIds(s.id)
+                if (aId != null || alId != null)
+                    menuSongState = s.copy(artistId = aId ?: s.artistId, albumId = alId ?: s.albumId)
+            }
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+    Row(modifier = Modifier.fillMaxSize()) {
         // Left panel — artwork + info only
         Column(
             modifier = Modifier.width(300.dp).fillMaxHeight()
@@ -92,13 +114,14 @@ fun PlaylistDetailScreen(
         // Right panel — Play/Shuffle header + track list
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
             when {
-                state.loading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                state.loading && state.tracks.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     CircularProgressIndicator(color = Color(0xFFFA233B))
                 }
                 state.tracks.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     Text("No tracks", color = Color(0xFF555555), fontSize = 14.sp)
                 }
-                else -> LazyColumn(
+                else -> {
+                    LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 48.dp),
                 ) {
@@ -120,7 +143,7 @@ fun PlaylistDetailScreen(
                                 }
                             }
                             Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks.shuffled(), 0) },
+                                onClick = { playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true) },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
                             ) {
@@ -161,25 +184,68 @@ fun PlaylistDetailScreen(
                             }
                         }
                     }
-                    trackItems(sortedTracks, playerVm, onArtistClick, onAlbumClick)
+                    trackItems(sortedTracks, playerVm) { song ->
+                        val now = System.currentTimeMillis()
+                        if (menuSongState == null && now - lastDismissMs > 600) menuSongState = song
+                    }
+                }
+                }  // end else block
+            }
+        }
+    } // Row
+
+    // Fullscreen context menu overlay — no Dialog API, no focus/dismiss races
+    menuSongState?.let { s ->
+        Box(
+            Modifier.fillMaxSize()
+                .background(Color(0x88000000))
+                .onKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown &&
+                        (event.key == Key.Back || event.key == Key.Escape)) {
+                        dismissMenu(); true
+                    } else false
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            val firstFocus = remember { FocusRequester() }
+            var clickBlocked by remember(s.id) { mutableStateOf(true) }
+            LaunchedEffect(s.id) {
+                kotlinx.coroutines.delay(800)
+                clickBlocked = false
+                runCatching { firstFocus.requestFocus() }
+            }
+            Column(
+                Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
+                PlaylistContextItem("▶", "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
+                PlaylistContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                if (s.artistId != null || s.albumId != null) {
+                    HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
+                    if (s.artistId != null) PlaylistContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(s.artistId); dismissMenu() } })
+                    if (s.albumId  != null) PlaylistContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(s.albumId);   dismissMenu() } })
                 }
             }
         }
     }
+
+    } // outer Box
 }
 
 private enum class PlaylistSort(val label: String) {
     DEFAULT("Default"), TITLE("Title"), ARTIST("Artist"), ALBUM("Album")
 }
 
-private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onArtistClick: (String) -> Unit = {}, onAlbumClick: (String) -> Unit = {}) {
+private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onLongPress: (Song) -> Unit = {}) {
     items(tracks.size) { idx ->
         val song = tracks[idx]
-        var menuSongState by remember { mutableStateOf<Song?>(null) }
         @OptIn(ExperimentalTvMaterial3Api::class)
         Surface(
             onClick     = { playerVm.playAlbum(tracks, idx) },
-            onLongClick = { menuSongState = song },
+            onLongClick = { onLongPress(song) },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
@@ -205,51 +271,25 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
                 Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFF555555))
             }
         }
-        menuSongState?.let { s ->
-            PlaylistTrackContextMenu(
-                song         = s,
-                onDismiss    = { menuSongState = null },
-                onPlayNext   = { playerVm.playNext(s); menuSongState = null },
-                onAddToQueue = { playerVm.addToQueue(s); menuSongState = null },
-                onGoToArtist = s.artistId?.let { id -> { onArtistClick(id); menuSongState = null } },
-                onGoToAlbum  = s.albumId?.let  { id -> { onAlbumClick(id);  menuSongState = null } },
-            )
-        }
     }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun PlaylistTrackContextMenu(
-    song: Song, onDismiss: () -> Unit,
-    onPlayNext: () -> Unit, onAddToQueue: () -> Unit,
-    onGoToArtist: (() -> Unit)? = null, onGoToAlbum: (() -> Unit)? = null,
-) {
-    Dialog(onDismissRequest = onDismiss) {
-        val firstFocus = remember { FocusRequester() }
-        LaunchedEffect(Unit) { kotlinx.coroutines.delay(150); runCatching { firstFocus.requestFocus() } }
-        Column(
-            Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(song.title, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(12.dp))
-            PlaylistContextItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
-            PlaylistContextItem("Add to Queue", onAddToQueue)
-            if (onGoToArtist != null) PlaylistContextItem("Go to Artist", onGoToArtist)
-            if (onGoToAlbum  != null) PlaylistContextItem("Go to Album",  onGoToAlbum)
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun PlaylistContextItem(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun PlaylistContextItem(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
     ) {
-        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(icon, fontSize = 16.sp, color = Color(0xFF888888), modifier = Modifier.width(22.dp))
+            Text(label, fontSize = 15.sp, color = Color.White)
+        }
     }
 }

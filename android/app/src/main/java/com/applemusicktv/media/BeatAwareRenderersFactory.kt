@@ -7,7 +7,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 
 class BeatAwareRenderersFactory(
     context: Context,
-    val beatAnalyzer: BeatAnalyzer,
+    val beatProcessor: BeatProcessor,
 ) : DefaultRenderersFactory(context) {
 
     override fun buildAudioSink(
@@ -16,7 +16,7 @@ class BeatAwareRenderersFactory(
         enableAudioTrackPlaybackParams: Boolean,
     ): AudioSink = DefaultAudioSink.Builder(context)
         .setAudioProcessorChain(
-            DefaultAudioSink.DefaultAudioProcessorChain(beatAnalyzer)
+            DefaultAudioSink.DefaultAudioProcessorChain(beatProcessor)
         )
         .setEnableFloatOutput(enableFloatOutput)
         .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)

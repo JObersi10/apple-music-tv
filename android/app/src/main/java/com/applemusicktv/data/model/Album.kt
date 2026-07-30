@@ -4,6 +4,7 @@ data class Album(
     val id:             String,
     val title:          String,
     val artistName:     String,
+    val artistId:       String?      = null,
     val artworkUrl:     String?,
     val type:           String       = "albums",
     val artworkBgColor: String?      = null,

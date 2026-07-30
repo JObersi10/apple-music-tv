@@ -92,13 +92,20 @@ private fun ContentRow(
             items(section.albums, key = { it.id }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
                 val isStation = album.id.startsWith("ra.")
-                AlbumCard(album = album, size = 130, onClick = {
-                    when {
-                        isStation -> { /* Apple Music Radio live streams not accessible via public API */ }
-                        isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
-                        else -> onAlbumClick(album.id)
-                    }
-                })
+                AlbumCard(
+                    album = album,
+                    size = 130,
+                    onClick = {
+                        when {
+                            isStation  -> { /* Apple Music Radio live streams not accessible via public API */ }
+                            isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
+                            else       -> onAlbumClick(album.id)
+                        }
+                    },
+                    onLongClick = {
+                        if (isPlaylist) playerVm.shufflePlayPlaylist(album.id)
+                    },
+                )
             }
         }
     }

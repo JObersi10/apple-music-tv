@@ -20,9 +20,10 @@ import com.applemusicktv.data.model.Album
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: () -> Unit = {}, modifier: Modifier = Modifier) {
     Card(
         onClick  = onClick,
+        onLongClick = onLongClick,
         modifier = modifier.width(size.dp),
         scale = CardDefaults.scale(focusedScale = 1.10f, pressedScale = 0.96f),
         glow  = CardDefaults.glow(

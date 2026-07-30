@@ -179,7 +179,7 @@ interface ProxyApi {
     suspend fun getAlbum(@Path("id") id: String): AlbumDto
 
     @GET("api/albums/{id}/tracks")
-    suspend fun getAlbumTracks(@Path("id") id: String, @Query("limit") limit: Int = 50): TracksResponse
+    suspend fun getAlbumTracks(@Path("id") id: String, @Query("limit") limit: Int = 100): TracksResponse
 
     @GET("api/albums/{id}/related")
     suspend fun getRelatedAlbums(@Path("id") id: String): AlbumsResponse
@@ -260,4 +260,18 @@ interface ProxyApi {
 
     @GET("health")
     suspend fun health(): Map<String, Boolean>
+
+    @GET("api/status/apple")
+    suspend fun appleStatus(): AppleStatusResponse
 }
+
+data class AppleStatusResponse(
+    val ok: Boolean,
+    val services: List<AppleServiceStatus>,
+    val checkedAt: String,
+)
+
+data class AppleServiceStatus(
+    val name: String,
+    val status: String,
+)

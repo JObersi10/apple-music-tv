@@ -1,11 +1,9 @@
 package com.applemusicktv.ui.screens
 
 import android.graphics.drawable.BitmapDrawable
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.RepeatMode as AnimRepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -33,11 +31,17 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -98,10 +102,10 @@ fun NowPlayingScreen(
         onDispose { playerVm.nowPlayingVisible = false }
     }
 
+    val artistFocusHolder = remember { FocusRequester() }
+
     Box(modifier = modifier.fillMaxSize()) {
-        val rawEnergy by playerVm.beatAnalyzer.energy.collectAsState()
-        val beatEnergy by animateFloatAsState(rawEnergy, tween(80), label = "beat")
-        DynamicBackground(artworkUrl = song?.artworkUrl(1200), songKey = song?.id ?: "", energy = beatEnergy)
+        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity)
 
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -116,15 +120,31 @@ fun NowPlayingScreen(
             val fmt = SimpleDateFormat("h:mm a", Locale.getDefault())
             while (isActive) {
                 clockText = fmt.format(Date())
-                kotlinx.coroutines.delay(10_000)
+                kotlinx.coroutines.delay(1_000)
             }
         }
-        Text(
-            clockText,
+        val sleepLabel = when {
+            state.sleepAfterSong -> "Sleep: end of song"
+            state.sleepTimerEndsAt != null -> {
+                val remaining = (state.sleepTimerEndsAt!! - System.currentTimeMillis()).coerceAtLeast(0)
+                val mins = remaining / 60_000
+                val secs = (remaining % 60_000) / 1_000
+                "Sleep: ${mins}:${secs.toString().padStart(2, '0')}"
+            }
+            else -> null
+        }
+        Row(
             modifier = Modifier.align(Alignment.TopEnd).padding(end = 72.dp, top = 14.dp),
-            fontSize = 15.sp,
-            color = Color(0xCCFFFFFF),
-        )
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (sleepLabel != null) {
+                Text(sleepLabel, style = TextStyle(fontSize = 15.sp, color = Color(0xCCFFFFFF), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f)))
+            }
+            Text(clockText, style = TextStyle(fontSize = 15.sp, color = Color(0xCCFFFFFF), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f)))
+        }
+
+        val playFocus = remember { FocusRequester() }
 
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 72.dp, vertical = 40.dp),
@@ -138,34 +158,32 @@ fun NowPlayingScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(280.dp)
+                        .size(240.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
                     if (song.artworkUrl != null) {
                         AsyncImage(
-                            model = song.artworkUrl(560),
+                            model = song.artworkUrl(600),
                             contentDescription = song.title,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    // Animated (motion) album art loops on top of the static
-                    // cover when Apple provides it; fades in over the artwork.
                     if (state.motionUrl != null) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(10.dp))
 
                 var showOptionsMenu by remember { mutableStateOf(false) }
                 var showSleepSubmenu by remember { mutableStateOf(false) }
 
                 Box(Modifier.fillMaxWidth()) {
                     MarqueeText(
-                        song.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                        modifier = Modifier.fillMaxWidth().padding(end = 36.dp),
+                        song.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 38.dp),
                     )
                     Surface(
                         onClick = { showOptionsMenu = true; showSleepSubmenu = false },
@@ -174,36 +192,44 @@ fun NowPlayingScreen(
                         modifier = Modifier.align(Alignment.CenterEnd).size(32.dp),
                     ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("···", fontSize = 13.sp, color = Color.White) } }
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(5.dp))
                 if (song.artistId != null) {
                     Surface(
                         onClick = { onArtistClick(song.artistId) },
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
                         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0x1AFFFFFF)),
                         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                        modifier = Modifier.focusRequester(artistFocusHolder).fillMaxWidth().padding(horizontal = 4.dp),
                     ) {
-                        Text(song.artistName, fontSize = 14.sp, color = Color(0xFFAAAAAA), modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                        MarqueeText(song.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp))
                     }
                 } else {
-                    Text(song.artistName, fontSize = 14.sp, color = Color(0xFFAAAAAA))
+                    MarqueeText(song.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
+                        modifier = Modifier.fillMaxWidth())
                 }
-                Text(song.albumName, fontSize = 12.sp, color = Color(0xFF888888))
+                MarqueeText(song.albumName, fontSize = 12.sp, color = Color(0xFF888888),
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp))
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
-                val playFocus = remember { FocusRequester() }
                 LaunchedEffect(song.id) {
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TransportButton("⏮", onClick = playerVm::prev)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TransportButton(TransportIcon.Prev, onClick = playerVm::prev,
+                        modifier = Modifier.focusProperties { left = artistFocusHolder })
                     TransportButton(
-                        if (state.isPlaying) "⏸" else "▶",
+                        if (state.isPlaying) TransportIcon.Pause else TransportIcon.Play,
+                        loading = state.isLoading,
                         onClick = playerVm::togglePlayPause,
                         large = true,
                         modifier = Modifier.focusRequester(playFocus),
                     )
-                    TransportButton("⏭", onClick = playerVm::next)
+                    TransportButton(TransportIcon.Next, onClick = playerVm::next)
                 }
 
                 // ⋯ options dialog
@@ -233,9 +259,15 @@ fun NowPlayingScreen(
                                     else -> "Sleep Timer"
                                 }
                                 NpMenuItem(timerLabel, Modifier.focusRequester(menuFocus)) { showSleepSubmenu = true }
-                                NpMenuItem(if (state.isShuffled) "Shuffle: On" else "Shuffle: Off") { playerVm.toggleShuffle(); showOptionsMenu = false }
+                                val beatLabel = when (state.beatIntensity) { 1.0f -> "Beat Pulse: Normal"; 2.0f -> "Beat Pulse: Strong"; else -> "Beat Pulse: Insane" }
+                                NpMenuItem(beatLabel) { playerVm.cycleBeatIntensity() }
+                                NpMenuItem(if (state.crossfadeEnabled) "Crossfade: On" else "Crossfade: Off") { playerVm.toggleCrossfade() }
+                                // Settings items leave the menu open so you can see the label
+                                // flip and keep cycling. Only navigation and the sleep timer
+                                // close it; Back dismisses.
+                                NpMenuItem(if (state.isShuffled) "Shuffle: On" else "Shuffle: Off") { playerVm.toggleShuffle() }
                                 val repeatLabel = when (state.repeatMode) { RepeatMode.Off -> "Repeat: Off"; RepeatMode.All -> "Repeat: All"; RepeatMode.One -> "Repeat: One" }
-                                NpMenuItem(repeatLabel) { playerVm.toggleRepeat(); showOptionsMenu = false }
+                                NpMenuItem(repeatLabel) { playerVm.toggleRepeat() }
                                 if (song.artistId != null) NpMenuItem("Go to Artist") { onArtistClick(song.artistId); showOptionsMenu = false }
                                 if (song.albumId != null) NpMenuItem("Go to Album") { onAlbumClick(song.albumId); showOptionsMenu = false }
                             }
@@ -247,12 +279,47 @@ fun NowPlayingScreen(
 
                 val duration = song.durationMs.takeIf { it > 0 } ?: 1L
                 val progress = (smoothProgressMs.toFloat() / duration).coerceIn(0f, 1f)
-                Box(modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(Color(0x33FFFFFF))) {
-                    Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFA233B)))
+                var seekBarFocused by remember { mutableStateOf(false) }
+                var scrubMs by remember(song.id) { mutableLongStateOf(smoothProgressMs) }
+                // Keep scrub cursor in sync with playback when not focused
+                LaunchedEffect(smoothProgressMs, seekBarFocused) {
+                    if (!seekBarFocused) scrubMs = smoothProgressMs
                 }
-                Row(Modifier.fillMaxWidth().padding(top = 6.dp), Arrangement.SpaceBetween) {
-                    Text(formatMs(smoothProgressMs), fontSize = 11.sp, color = Color(0xFFAAAAAA))
-                    Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
+                val scrubProgress = (scrubMs.toFloat() / duration).coerceIn(0f, 1f)
+                val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
+                Surface(
+                    onClick = { if (seekBarFocused) { playerVm.player.seekTo(scrubMs); runCatching { playFocus.requestFocus() } } },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
+                    colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                    border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
+                    modifier = Modifier.fillMaxWidth()
+                        .onFocusChanged { seekBarFocused = it.isFocused }
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown) {
+                                when (event.key) {
+                                    Key.DirectionLeft  -> { scrubMs = (scrubMs - 10_000).coerceAtLeast(0); true }
+                                    Key.DirectionRight -> { scrubMs = (scrubMs + 10_000).coerceAtMost(duration); true }
+                                    else -> false
+                                }
+                            } else false
+                        },
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        Box(modifier = Modifier.fillMaxWidth().height(if (seekBarFocused) 6.dp else 4.dp).clip(RoundedCornerShape(3.dp)).background(Color(0x44FFFFFF))) {
+                            Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFA233B)))
+                            if (seekBarFocused) {
+                                Box(modifier = Modifier.fillMaxWidth(scrubProgress).fillMaxHeight().background(Color.White.copy(alpha = 0.35f)))
+                            }
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
+                    Text(
+                        if (seekBarFocused) formatMs(scrubMs) else formatMs(smoothProgressMs),
+                        style = TextStyle(fontSize = 11.sp, color = if (seekBarFocused) Color.White else Color(0xFFAAAAAA), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f))
+                    )
+                    Text(song.durationFormatted, style = TextStyle(fontSize = 11.sp, color = Color(0xFFAAAAAA), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f)))
                 }
             }
 
@@ -274,8 +341,11 @@ fun NowPlayingScreen(
                         QueuePanel(
                             queue = state.queue,
                             currentIndex = state.queueIndex,
+                            userQueue = state.userQueue,
                             onSelect = { idx -> playerVm.playFromQueue(idx) },
+                            onSelectUserQueue = { idx -> playerVm.playFromUserQueue(idx) },
                             onMove = { from, to -> playerVm.moveQueueItem(from, to) },
+                            leftFocus = playFocus,
                         )
                     } else if (state.lyrics.isNotEmpty()) {
                         LyricsPanel(
@@ -287,8 +357,11 @@ fun NowPlayingScreen(
                         QueuePanel(
                             queue = state.queue,
                             currentIndex = state.queueIndex,
+                            userQueue = state.userQueue,
                             onSelect = { idx -> playerVm.playFromQueue(idx) },
+                            onSelectUserQueue = { idx -> playerVm.playFromUserQueue(idx) },
                             onMove = { from, to -> playerVm.moveQueueItem(from, to) },
+                            leftFocus = playFocus,
                         )
                     }
                 }
@@ -330,6 +403,7 @@ private fun rememberSmoothProgressMs(reportedMs: Long, isPlaying: Boolean): Long
 @Composable
 internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var ready by remember(url) { mutableStateOf(false) }
 
     val exo = remember(url) {
@@ -347,30 +421,95 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
         }
     }
 
-    DisposableEffect(url) {
-        onDispose { exo.release() }
+    // On resume from background the surface reattaches and briefly shows a green
+    // YUV frame. Reset ready=false on pause so the shutter hides it until the
+    // first decoded frame arrives.
+    DisposableEffect(lifecycleOwner, exo) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> { ready = false; exo.pause() }
+                Lifecycle.Event.ON_RESUME -> {
+                    exo.play()
+                    // If already buffered, flip ready immediately; otherwise wait for listener
+                    if (exo.playbackState == androidx.media3.common.Player.STATE_READY) ready = true
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            exo.release()
+        }
     }
 
-    val alpha by animateFloatAsState(if (ready) 1f else 0f, tween(600), label = "motionFade")
+    val alpha by animateFloatAsState(if (ready) 1f else 0f, tween(400), label = "motionFade")
 
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
             androidx.media3.ui.PlayerView(ctx).apply {
                 useController = false
                 resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                // Keep shutter black — hides the green YUV frame on surface reattach.
+                // Alpha on the outer modifier handles the fade-in instead.
+                setShutterBackgroundColor(android.graphics.Color.BLACK)
                 player = exo
             }
         },
+        update = { view -> view.player = exo },
         modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
 }
+
+private fun Color.hsvHue(): Float {
+    val r = red; val g = green; val b = blue
+    val max = maxOf(r, g, b); val min = minOf(r, g, b)
+    val delta = max - min
+    if (delta < 0.001f) return 0f
+    val h = when (max) {
+        r -> 60f * (((g - b) / delta).mod(6f))
+        g -> 60f * (((b - r) / delta) + 2f)
+        else -> 60f * (((r - g) / delta) + 4f)
+    }
+    return if (h < 0f) h + 360f else h
+}
+
+private fun hueDist(a: Float, b: Float): Float {
+    val d = kotlin.math.abs(a - b); return minOf(d, 360f - d)
+}
+
+// Deduplicate colors that are too close in hue; keeps order (population-sorted input → dominant colors first)
+private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 28f): List<Color> {
+    val result = mutableListOf<Color>()
+    val chosenHues = mutableListOf<Float>()
+    for (c in colors) {
+        val h = c.hsvHue()
+        if (chosenHues.all { hueDist(h, it) >= minAngle }) {
+            result.add(c); chosenHues.add(h)
+            if (result.size == n) break
+        }
+    }
+    // Fill remaining slots with closest non-duplicate if we didn't get n
+    if (result.size < n) {
+        for (c in colors) {
+            if (c !in result) { result.add(c); if (result.size == n) break }
+        }
+    }
+    return result
+}
+
+// Backdrop vibrancy. Raising SAT_* makes colors read as colors rather than tints;
+// VALUE_CEILING is the safety rail that keeps them from turning pale and competing
+// with the white lyrics on the right half of the screen. Don't push it past ~0.85.
+private const val SAT_BOOST = 1.45f
+private const val SAT_FLOOR = 0.55f
+private const val VALUE_CEILING = 0.80f
 
 /** Extracts a dark base color + a vibrant accent color from the artwork. */
 @Composable
 private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
     val context = LocalContext.current
-    val fallback = listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460), Color(0xFF533483), Color(0xFF0D0D0D), Color(0xFF220033))
+    val fallback = listOf(Color(0xFF0A0A0A), Color(0xFF0D0D0D), Color(0xFF0A0A0A), Color(0xFF111111), Color(0xFF080808), Color(0xFF0D0D0D))
     var colors by remember(artworkUrl) { mutableStateOf(fallback) }
     LaunchedEffect(artworkUrl) {
         if (artworkUrl == null) return@LaunchedEffect
@@ -381,29 +520,51 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
             val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
             val p = Palette.from(bitmap).generate()
             val picked = listOfNotNull(
-                p.vibrantSwatch, p.darkVibrantSwatch, p.mutedSwatch,
-                p.lightVibrantSwatch, p.darkMutedSwatch, p.lightMutedSwatch, p.dominantSwatch,
-            ).map { swatch ->
-                // Darken bright colors: scale down luminance so nothing blows out
-                val c = Color(swatch.rgb)
-                val lum = 0.2126f * c.red + 0.7152f * c.green + 0.0722f * c.blue
-                val scale = if (lum > 0.55f) 0.55f / lum else 1f
-                Color(c.red * scale, c.green * scale, c.blue * scale)
+                p.vibrantSwatch, p.lightVibrantSwatch, p.darkVibrantSwatch,
+                p.mutedSwatch, p.lightMutedSwatch, p.darkMutedSwatch, p.dominantSwatch,
+            ).sortedByDescending { it.population }.map { swatch ->
+                // Push toward vivid, and away from white. A pale high-value swatch is
+                // what makes the backdrop compete with the white lyrics — so floor the
+                // saturation and cap the value instead of just clipping near-white.
+                // Deep saturated colors read as color; pastels read as light grey.
+                val hsv = FloatArray(3)
+                android.graphics.Color.colorToHSV(swatch.rgb, hsv)
+                hsv[1] = (hsv[1] * SAT_BOOST).coerceIn(SAT_FLOOR, 1f)
+                hsv[2] = hsv[2].coerceAtMost(VALUE_CEILING)
+                Color(android.graphics.Color.HSVToColor(hsv))
             }.distinct()
-            if (picked.size >= 2) colors = picked.take(6)
+            val dom = Color(p.getDominantColor(0xFF050505.toInt()))
+            val domLum = 0.2126f * dom.red + 0.7152f * dom.green + 0.0722f * dom.blue
+
+            if (domLum < 0.06f) {
+                // Truly black artwork — nothing to extract
+                colors = fallback
+            } else if (picked.size >= 2) {
+                colors = spreadByHue(picked, 6)
+            } else {
+                val dark  = Color(dom.red * 0.4f, dom.green * 0.4f, dom.blue * 0.4f)
+                val light = Color((dom.red + 0.3f).coerceAtMost(1f), (dom.green + 0.3f).coerceAtMost(1f), (dom.blue + 0.3f).coerceAtMost(1f))
+                colors = listOf(dom, light, dark, dom, light, dark)
+            }
         } catch (_: Exception) {}
     }
     return colors
 }
 
 /**
- * Living "pool of colors" backdrop — several soft radial blobs of the cover's
- * palette that slowly drift and pulse, blended over black. No artwork image, so
- * it's never pixelated; pure gradient light like Apple Music's ambient mode.
+ * Full-screen backdrop: blurred album artwork (loaded tiny → upscaled) with
+ * 4 radial color blobs drifting in quadrants, Screen-blended on top.
+ * Beat energy pulses blob radius and alpha.
  */
 @Composable
-private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Float = 0f) {
-    val palette = rememberArtworkPalette(artworkUrl)
+private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f) {
+    val rawEnergy by beatAnalyzer.energy.collectAsState()
+    val scaledRaw = (rawEnergy * beatMultiplier).coerceIn(0f, 1f)
+    val energy by animateFloatAsState(scaledRaw, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
+
+    // Palette derived from the full-res artwork for color accuracy
+    val paletteUrl = artworkUrlTemplate?.replace("{w}", "1200")?.replace("{h}", "1200")?.replace("{f}", "jpg")
+    val palette = rememberArtworkPalette(paletteUrl)
     val animated = palette.mapIndexed { i, c ->
         animateColorAsState(c, tween(1500), label = "blob$i").value
     }
@@ -412,17 +573,23 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
     val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
     val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
     val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
+    val t4 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(15_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
 
-    // 4 blobs — Screen blend forces an offscreen composite per draw; 4 is the perf ceiling on Fire TV
-    val colors4 = List(4) { animated[it % animated.size] }
+    // Each blob slowly cycles between two palette colors for a "vibing" effect
+    val n = animated.size
+    val colorFracs = listOf(t4, 1f - t3, t1, 1f - t2)
+    val colors4 = List(4) { i ->
+        lerp(animated[(i * 2) % n], animated[(i * 2 + 1) % n], colorFracs[i])
+    }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
+        // Color blobs
         Box(Modifier.fillMaxSize().drawBehind {
             val w = size.width; val h = size.height
-            val beatScale = 1f + energy * 0.18f
-            val beatAlpha = 0.52f + energy * 0.12f
+            val beatScale = 1f + energy * 0.25f
+            val beatAlpha = 0.66f + energy * 0.22f
             val r = maxOf(w, h) * 0.62f * beatScale
-            val nudge = energy * maxOf(w, h) * 0.04f
+            val nudge = energy * maxOf(w, h) * 0.02f
             val nudgeOffsets = listOf(
                 Offset( nudge,  nudge * 0.5f),
                 Offset(-nudge, -nudge * 0.7f),
@@ -430,10 +597,10 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
                 Offset(-nudge * 0.4f,  nudge * 0.8f),
             )
             val centers = listOf(
-                Offset(lerp(0.05f, 0.40f, t1) * w, lerp(0.10f, 0.45f, t2) * h),
-                Offset(lerp(0.95f, 0.60f, t2) * w, lerp(0.05f, 0.50f, t3) * h),
-                Offset(lerp(0.15f, 0.50f, t3) * w, lerp(0.90f, 0.55f, t1) * h),
-                Offset(lerp(0.80f, 0.45f, t1) * w, lerp(0.80f, 0.40f, t3) * h),
+                Offset(lerp(0.02f, 0.28f, t1) * w, lerp(0.05f, 0.32f, t2) * h),
+                Offset(lerp(0.72f, 0.98f, t2) * w, lerp(0.05f, 0.35f, t3) * h),
+                Offset(lerp(0.05f, 0.30f, t3) * w, lerp(0.68f, 0.95f, t1) * h),
+                Offset(lerp(0.70f, 0.98f, t1) * w, lerp(0.65f, 0.95f, t3) * h),
             ).mapIndexed { i, c -> c + nudgeOffsets[i] }
             colors4.forEachIndexed { i, color ->
                 drawCircle(
@@ -445,14 +612,24 @@ private fun DynamicBackground(artworkUrl: String?, songKey: String, energy: Floa
                     blendMode = BlendMode.Screen,
                 )
             }
-            // Suppress hotspot where blobs converge centrally
+            // Center darkening
             drawCircle(
                 brush = Brush.radialGradient(
-                    listOf(Color(0x44000000), Color(0x00000000)),
-                    center = Offset(w * 0.5f, h * 0.5f), radius = maxOf(w, h) * 0.35f,
+                    listOf(Color(0x77000000), Color(0x00000000)),
+                    center = Offset(w * 0.5f, h * 0.5f), radius = maxOf(w, h) * 0.55f,
                 ),
-                radius = maxOf(w, h) * 0.35f, center = Offset(w * 0.5f, h * 0.5f),
+                radius = maxOf(w, h) * 0.55f, center = Offset(w * 0.5f, h * 0.5f),
             )
+            // Right-side darkening for lyrics readability
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    listOf(Color(0x00000000), Color(0x7A000000)),
+                    startX = w * 0.35f, endX = w,
+                ),
+            )
+            // Kept low: the flat veil mutes every hue equally, so readability comes
+            // from the right-side gradient above instead.
+            drawRect(Color(0x22000000))
         })
     }
 }
@@ -517,7 +694,12 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
 
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().padding(end = 16.dp).nestedScroll(nestedScrollConnection),
+        modifier = Modifier.fillMaxSize().padding(end = 16.dp).nestedScroll(nestedScrollConnection)
+            .onPreviewKeyEvent { ev: androidx.compose.ui.input.key.KeyEvent ->
+                // Block upward D-pad escape to top nav bar from lyrics
+                ev.key == Key.DirectionUp && ev.type == KeyEventType.KeyDown &&
+                    listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+            },
         contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
@@ -709,14 +891,18 @@ private fun LyricLineRow(
 private fun QueuePanel(
     queue: List<com.applemusicktv.data.model.Song>,
     currentIndex: Int,
+    userQueue: List<com.applemusicktv.data.model.Song> = emptyList(),
     onSelect: (Int) -> Unit,
+    onSelectUserQueue: (Int) -> Unit = {},
     onMove: (from: Int, to: Int) -> Unit = { _, _ -> },
+    leftFocus: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     val listState = rememberLazyListState()
     var movingIndex by remember { mutableStateOf<Int?>(null) }
 
-    LaunchedEffect(queue, currentIndex) {
-        if (queue.isNotEmpty()) listState.scrollToItem(currentIndex.coerceIn(0, queue.lastIndex))
+    // Always scroll to top (current song) when index changes or userQueue gains items
+    LaunchedEffect(currentIndex, userQueue.size) {
+        listState.animateScrollToItem(0)
     }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -725,23 +911,48 @@ private fun QueuePanel(
         }
         Spacer(Modifier.height(12.dp))
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(queue.size, key = { idx -> "${queue[idx].id}_$idx" }) { idx ->
-                val song = queue[idx]
-                val isCurrent = idx == currentIndex
-                val isMoving = idx == movingIndex
-                var visible by remember(idx, currentIndex) { mutableStateOf(idx >= currentIndex) }
-                LaunchedEffect(currentIndex) {
-                    if (idx < currentIndex) visible = false
+            if (userQueue.isNotEmpty()) {
+                item {
+                    Text("Next Up", fontSize = 10.sp, color = Color(0xFFFA233B), fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                 }
-                AnimatedVisibility(
-                    visible = visible,
-                    exit = slideOutVertically(tween(350)) { -it } + fadeOut(tween(300)),
-                ) {
+                items(userQueue.size, key = { "uq_${userQueue[it].id}_$it" }) { idx ->
+                    val song = userQueue[idx]
+                    Surface(
+                        onClick = { onSelectUserQueue(idx) },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x15FA233B), focusedContainerColor = Color(0x25FA233B)),
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+                        modifier = Modifier.fillMaxWidth().let { m ->
+                            if (leftFocus != null) m.focusProperties { left = leftFocus } else m
+                        },
+                    ) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("◆", fontSize = 9.sp, color = Color(0xFFFA233B), modifier = Modifier.width(20.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(song.title, fontSize = 13.sp, color = Color(0xFFDDDDDD), maxLines = 1)
+                                Text(song.artistName, fontSize = 11.sp, color = Color(0xFFAAAAAA), maxLines = 1)
+                            }
+                            Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
+                        }
+                    }
+                }
+                item {
+                    Text("From Queue", fontSize = 10.sp, color = Color(0xFF666666), fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                }
+            }
+            val visibleQueue = queue.drop(currentIndex + 1)
+            items(visibleQueue.size, key = { rel -> "${queue.getOrNull(currentIndex + rel)?.id}_${currentIndex + rel}" }) { rel ->
+                val idx = currentIndex + rel
+                val song = visibleQueue[rel]
+                val isCurrent = rel == 0
+                val isMoving = idx == movingIndex
                 val movingMod = if (isMoving) Modifier.onKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                     when (event.key) {
                         Key.DirectionUp -> {
-                            val target = (movingIndex!! - 1).coerceAtLeast(0)
+                            val target = (movingIndex!! - 1).coerceAtLeast(currentIndex)
                             if (target != movingIndex) { onMove(movingIndex!!, target); movingIndex = target }
                             true
                         }
@@ -756,14 +967,16 @@ private fun QueuePanel(
                 } else Modifier
                 Surface(
                     onClick = { if (movingIndex == idx) movingIndex = null else onSelect(idx) },
-                    onLongClick = { if (idx > currentIndex) movingIndex = idx },
+                    onLongClick = { if (rel > 0) movingIndex = idx },
                     shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                     colors = ClickableSurfaceDefaults.colors(
                         containerColor        = when { isMoving -> Color(0x44FA233B); isCurrent -> Color(0x26FFFFFF); else -> Color.Transparent },
                         focusedContainerColor = if (isMoving) Color(0x55FA233B) else Color(0x33FFFFFF),
                     ),
                     scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-                    modifier = Modifier.fillMaxWidth().then(movingMod),
+                    modifier = Modifier.fillMaxWidth().then(movingMod).let { m ->
+                        if (leftFocus != null) m.focusProperties { left = leftFocus } else m
+                    },
                 ) {
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
@@ -779,34 +992,113 @@ private fun QueuePanel(
                         Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
                     }
                 }
-                } // AnimatedVisibility
             }
         }
     }
 }
 
+private enum class TransportIcon { Play, Pause, Prev, Next }
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TransportButton(icon: String, onClick: () -> Unit, large: Boolean = false, tint: Color = Color.White, modifier: Modifier = Modifier) {
-    val size = if (large) 52.dp else 40.dp
+private fun TransportButton(
+    icon: TransportIcon,
+    onClick: () -> Unit,
+    large: Boolean = false,
+    loading: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val btnSize = if (large) 60.dp else 44.dp
+    val canvasSize = if (large) 28.dp else 20.dp
     val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
     Surface(
         onClick = onClick,
-        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor        = if (large) Color(0xFFFA233B) else Color(0x26FFFFFF),
-            focusedContainerColor = if (large) Color(0xFFE01F33) else Color(0x40FFFFFF),
+            containerColor        = Color.Transparent,
+            focusedContainerColor = Color(0x22FFFFFF),
         ),
-        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.12f),
-        glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color(0xFFFA233B).copy(alpha = 0.5f), 12.dp)),
+        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.10f),
+        glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.White.copy(alpha = 0.3f), 10.dp)),
         border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
-        modifier = modifier.size(size),
+        modifier = modifier.size(btnSize),
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
-            Text(icon, fontSize = if (large) 18.sp else 14.sp, color = tint)
+            // Spinning ring while the track decrypts. Only composed when loading, so it
+            // costs nothing during normal playback.
+            if (loading) {
+                val spin = rememberInfiniteTransition(label = "spin")
+                val angle by spin.animateFloat(
+                    0f, 360f,
+                    infiniteRepeatable(tween(900, easing = LinearEasing), AnimRepeatMode.Restart),
+                    label = "spinAngle",
+                )
+                Canvas(Modifier.size(btnSize * 0.82f)) {
+                    val sw = if (large) 3f.dp.toPx() else 2.2f.dp.toPx()
+                    val inset = sw / 2f
+                    drawArc(
+                        color = Color.White.copy(alpha = 0.22f),
+                        startAngle = 0f, sweepAngle = 360f, useCenter = false,
+                        topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+                        size = androidx.compose.ui.geometry.Size(size.width - sw, size.height - sw),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = StrokeCap.Round),
+                    )
+                    drawArc(
+                        color = Color.White,
+                        startAngle = angle, sweepAngle = 90f, useCenter = false,
+                        topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+                        size = androidx.compose.ui.geometry.Size(size.width - sw, size.height - sw),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = StrokeCap.Round),
+                    )
+                }
+            }
+            val color = if (loading) Color.White.copy(alpha = 0.45f) else Color.White
+            val strokeW = if (large) 3.2f else 2.6f
+            Canvas(Modifier.size(canvasSize)) {
+                // Use DrawScope.size (canvas px dimensions), not the Dp variables above
+                val w = this.size.width
+                val h = this.size.height
+                val sw = strokeW
+                when (icon) {
+                    TransportIcon.Play -> {
+                        val path = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(w * 0.12f, 0f)
+                            lineTo(w, h * 0.5f)
+                            lineTo(w * 0.12f, h)
+                            close()
+                        }
+                        drawPath(path, color = color)
+                    }
+                    TransportIcon.Pause -> {
+                        drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(w * 0.10f, 0f), size = androidx.compose.ui.geometry.Size(w * 0.28f, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw, sw))
+                        drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(w * 0.62f, 0f), size = androidx.compose.ui.geometry.Size(w * 0.28f, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw, sw))
+                    }
+                    TransportIcon.Prev -> {
+                        drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(sw * 1.5f, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw, sw))
+                        val path = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(w, 0f)
+                            lineTo(sw * 2.5f, h * 0.5f)
+                            lineTo(w, h)
+                            close()
+                        }
+                        drawPath(path, color = color)
+                    }
+                    TransportIcon.Next -> {
+                        val path = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(0f, 0f)
+                            lineTo(w - sw * 2.5f, h * 0.5f)
+                            lineTo(0f, h)
+                            close()
+                        }
+                        drawPath(path, color = color)
+                        drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(w - sw * 1.5f, 0f), size = androidx.compose.ui.geometry.Size(sw * 1.5f, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw, sw))
+                    }
+                }
+            }
         }
     }
 }
+
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -825,28 +1117,38 @@ private fun NpMenuItem(label: String, modifier: Modifier = Modifier, onClick: ()
 private fun MarqueeText(text: String, modifier: Modifier = Modifier, fontSize: androidx.compose.ui.unit.TextUnit = 16.sp, fontWeight: FontWeight = FontWeight.Normal, color: Color = Color.White) {
     val scrollState = rememberScrollState()
     var overflows by remember(text) { mutableStateOf(false) }
+    var measured  by remember(text) { mutableStateOf(false) }
+    val alphaAnim = remember(text) { androidx.compose.animation.core.Animatable(1f) }
     LaunchedEffect(text, overflows) {
         if (!overflows) return@LaunchedEffect
-        kotlinx.coroutines.delay(1200)
-        while (true) {
-            scrollState.animateScrollTo(scrollState.maxValue, androidx.compose.animation.core.tween(4000, easing = androidx.compose.animation.core.LinearEasing))
-            kotlinx.coroutines.delay(800)
-            scrollState.scrollTo(0)
-            kotlinx.coroutines.delay(1200)
-        }
+        alphaAnim.snapTo(1f)
+        kotlinx.coroutines.delay(1400)
+        scrollState.animateScrollTo(
+            scrollState.maxValue,
+            androidx.compose.animation.core.tween(6000, easing = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0.8f, 1f)),
+        )
+        kotlinx.coroutines.delay(600)
+        alphaAnim.animateTo(0f, androidx.compose.animation.core.tween(500))
+        scrollState.scrollTo(0)
+        kotlinx.coroutines.delay(200)
+        alphaAnim.animateTo(1f, androidx.compose.animation.core.tween(500))
+        // stay — no further scroll
     }
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+    Box(modifier = modifier.clipToBounds(), contentAlignment = Alignment.Center) {
         Text(
             text = text,
-            fontSize = fontSize, fontWeight = fontWeight, color = color,
+            style = TextStyle(fontSize = fontSize, fontWeight = fontWeight, color = color,
+                shadow = Shadow(color = Color.Black.copy(alpha = 0.85f), offset = androidx.compose.ui.geometry.Offset(0f, 2f), blurRadius = 10f)),
             maxLines = 1, softWrap = false,
             textAlign = if (overflows) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center,
+            overflow = if (overflows) androidx.compose.ui.text.style.TextOverflow.Visible else androidx.compose.ui.text.style.TextOverflow.Clip,
             modifier = if (overflows)
-                Modifier.fillMaxWidth().horizontalScroll(scrollState, enabled = false)
+                Modifier.horizontalScroll(scrollState, enabled = false).graphicsLayer { alpha = alphaAnim.value }
             else
-                Modifier.fillMaxWidth().onGloballyPositioned { coords ->
-                    overflows = coords.size.width >= (coords.parentCoordinates?.size?.width ?: Int.MAX_VALUE)
-                },
+                Modifier.fillMaxWidth(),
+            onTextLayout = { result ->
+                if (!measured) { measured = true; overflows = result.didOverflowWidth }
+            },
         )
     }
 }

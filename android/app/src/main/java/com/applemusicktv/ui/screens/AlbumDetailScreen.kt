@@ -3,19 +3,24 @@ package com.applemusicktv.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -32,12 +37,13 @@ fun AlbumDetailScreen(
     playerVm: PlayerViewModel,
     onBack: () -> Unit = {},
     onArtistClick: (String) -> Unit = {},
+    onAlbumClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val vm: AlbumDetailViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
 
-    if (state.isLoading) {
+    if (state.isLoading && state.tracks.isEmpty()) {
         Box(modifier.fillMaxSize(), Alignment.Center) {
             CircularProgressIndicator(color = Color(0xFFFA233B))
         }
@@ -47,16 +53,8 @@ fun AlbumDetailScreen(
     val album = state.album ?: return
     var menuSong by remember { mutableStateOf<Song?>(null) }
 
-    menuSong?.let { s ->
-        AlbumTrackContextMenu(
-            song         = s,
-            onDismiss    = { menuSong = null },
-            onPlayNext   = { playerVm.playNext(s); menuSong = null },
-            onAddToQueue = { playerVm.addToQueue(s); menuSong = null },
-        )
-    }
-
-    Row(modifier = modifier.fillMaxSize().padding(48.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
+    Box(modifier = modifier.fillMaxSize()) {
+    Row(modifier = Modifier.fillMaxSize().padding(48.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
         // Left: artwork + info only
         Column(modifier = Modifier.width(260.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(modifier = Modifier.size(260.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1A1A2E))) {
@@ -73,8 +71,22 @@ fun AlbumDetailScreen(
             Spacer(Modifier.height(20.dp))
             Text(album.title, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                 color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(album.artistName, fontSize = 15.sp, color = Color(0xFFFA233B),
-                modifier = Modifier.padding(top = 4.dp))
+            val albumArtistId = album.artistId ?: state.tracks.firstOrNull()?.artistId
+            if (albumArtistId != null) {
+                Surface(
+                    onClick = { onArtistClick(albumArtistId) },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
+                    colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0x1AFA233B)),
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Text(album.artistName, fontSize = 15.sp, color = Color(0xFFFA233B),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+            } else {
+                Text(album.artistName, fontSize = 15.sp, color = Color(0xFFFA233B),
+                    modifier = Modifier.padding(top = 4.dp))
+            }
             album.releaseDate?.let {
                 Text(it.take(4), fontSize = 12.sp, color = Color(0xFF555555), modifier = Modifier.padding(top = 4.dp))
             }
@@ -105,7 +117,7 @@ fun AlbumDetailScreen(
                         }
                     }
                     Surface(
-                        onClick = { playerVm.playAlbum(state.tracks.shuffled()) },
+                        onClick = { playerVm.playAlbum(state.tracks.shuffled(), shuffle = true) },
                         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                         colors = ClickableSurfaceDefaults.colors(
                             containerColor        = Color(0xFF2A2A2A),
@@ -129,36 +141,74 @@ fun AlbumDetailScreen(
                 )
             }
         }
-    }
-}
+    } // Row
 
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun AlbumTrackContextMenu(song: Song, onDismiss: () -> Unit, onPlayNext: () -> Unit, onAddToQueue: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss) {
-        val firstFocus = remember { FocusRequester() }
-        LaunchedEffect(Unit) { kotlinx.coroutines.delay(500); runCatching { firstFocus.requestFocus() } }
-        Column(
-            Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+    // Fullscreen context menu overlay
+    menuSong?.let { s ->
+        LaunchedEffect(s.id) {
+            if (s.artistId == null && s.albumId == null) {
+                val (aId, alId) = playerVm.lookupSongIds(s.id)
+                if (aId != null || alId != null)
+                    menuSong = s.copy(artistId = aId ?: s.artistId, albumId = alId ?: s.albumId)
+            }
+        }
+        val dismissMenu = { menuSong = null }
+        Box(
+            Modifier.fillMaxSize()
+                .background(Color(0x88000000))
+                .onKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown &&
+                        (event.key == Key.Back || event.key == Key.Escape)) {
+                        dismissMenu(); true
+                    } else false
+                },
+            contentAlignment = Alignment.Center,
         ) {
-            Text(song.title, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(12.dp))
-            AlbumContextItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
-            AlbumContextItem("Add to Queue", onAddToQueue)
+            val firstFocus = remember { FocusRequester() }
+            var clickBlocked by remember(s.id) { mutableStateOf(true) }
+            LaunchedEffect(s.id) {
+                kotlinx.coroutines.delay(800)
+                clickBlocked = false
+                runCatching { firstFocus.requestFocus() }
+            }
+            Column(
+                Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
+                AlbumContextItem("▶", "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
+                AlbumContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                if (s.artistId != null || s.albumId != null) {
+                    HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
+                    if (s.artistId != null) AlbumContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(s.artistId); dismissMenu() } })
+                    if (s.albumId  != null) AlbumContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(s.albumId);   dismissMenu() } })
+                }
+            }
         }
     }
+
+    } // outer Box
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun AlbumContextItem(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun AlbumContextItem(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
     ) {
-        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(icon, fontSize = 16.sp, color = Color(0xFF888888), modifier = Modifier.width(22.dp))
+            Text(label, fontSize = 15.sp, color = Color.White)
+        }
     }
 }
 

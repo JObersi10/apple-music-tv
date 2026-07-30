@@ -10,15 +10,17 @@ import java.nio.ByteOrder
 import java.util.ArrayDeque
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Pass-through AudioProcessor that computes short-time RMS energy from PCM frames.
- * Energy emission is delayed by [latencyMs] to compensate for audio output latency
- * (e.g. Bluetooth A2DP adds ~150-300ms between PCM write and audible output).
+ * Shared beat bus. Each ExoPlayer gets its own [BeatProcessor] (an AudioProcessor
+ * can't be shared between two audio sinks), but only the *active* processor is
+ * allowed to publish — so during a crossfade the visuals keep following whichever
+ * player is the one we're actually listening to.
  */
 @Singleton
-class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
+class BeatAnalyzer @Inject constructor() {
 
     private val _energy = MutableStateFlow(0f)
     val energy: StateFlow<Float> = _energy
@@ -26,16 +28,94 @@ class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
     /** Set to match current audio output latency (0 for speakers, ~200 for BT). */
     @Volatile var latencyMs: Long = 0L
 
-    private var isFloat = false
-    private var runningAvg = 0f
+    @Volatile private var activeId: Int = -1
+    @Volatile private var active: BeatProcessor? = null
+    private var nextId = 0
 
-    // Ring buffer of (emitAtMs, energy) pairs
+    fun newProcessor(): BeatProcessor = BeatProcessor(this, nextId++)
+
+    /** Make [p] the only processor allowed to drive [energy]. */
+    fun activate(p: BeatProcessor) {
+        activeId = p.id
+        active = p
+        p.resetBeat()
+    }
+
+    internal fun publish(id: Int, value: Float) {
+        if (id == activeId) _energy.value = value
+    }
+
+    internal fun isActive(id: Int) = id == activeId
+
+    /** Drop buffered pulses and detector history (e.g. after a latency change). */
+    fun resetBeat() {
+        active?.resetBeat()
+        _energy.value = 0f
+    }
+}
+
+/**
+ * Bass-focused onset detector. Instead of tracking overall loudness (which stays
+ * flat through dense mixes and reacts to vocals/cymbals), it:
+ *  1. downmixes to mono, blocks DC, then cascades 3 low-pass poles at 100 Hz
+ *     (-18 dB/oct) so only kick/bass gets through — one pole let vocals in,
+ *  2. measures energy in fixed 10 ms windows so timing doesn't depend on buffer size,
+ *  3. flags an onset when a window jumps above `mean + k·stddev` of the last ~1 s,
+ *     with a refractory gap so one kick fires once,
+ *  4. outputs a punch-then-decay envelope, which is what actually reads as rhythmic.
+ *
+ * Emission is delayed by [BeatAnalyzer.latencyMs] to compensate for output latency
+ * (Bluetooth A2DP adds ~150-300 ms between PCM write and audible sound).
+ */
+class BeatProcessor internal constructor(
+    private val bus: BeatAnalyzer,
+    internal val id: Int,
+) : BaseAudioProcessor() {
+
+    private var isFloat = false
+    private var channels = 2
+    private var sampleRate = 44100
+
+    // --- cascaded one-pole low-pass (bass isolation) ---
+    // A single pole rolls off at only -6 dB/oct, so a 130 Hz cutoff still passed
+    // most of a vocal fundamental. Three stages => -18 dB/oct, vocals stay out.
+    private var lpAlpha = 0.02f
+    private val lp = FloatArray(LP_STAGES)
+    // --- DC / rumble removal ---
+    private var hpAlpha = 0.004f
+    private var hp = 0f
+
+    // --- fixed analysis window ---
+    private var windowSamples = 441          // 10 ms @ 44.1 kHz
+    private var winAcc = 0f                  // sum of squares
+    private var winCount = 0
+
+    // --- adaptive threshold over the last ~1 s of windows ---
+    private val hist = ArrayDeque<Float>()
+    private var histSum = 0f
+    private var histSumSq = 0f
+    private val histMax = 100
+
+    // --- output envelope ---
+    private var level = 0f
+    private var windowsSinceBeat = 99
+    private var lastEmitted = -1f
+
+    // Ring buffer of (emitAtMs, energy) pairs for latency compensation
     private val pending = ArrayDeque<Pair<Long, Float>>()
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return when (inputAudioFormat.encoding) {
-            C.ENCODING_PCM_16BIT -> { isFloat = false; inputAudioFormat }
-            C.ENCODING_PCM_FLOAT -> { isFloat = true;  inputAudioFormat }
+            C.ENCODING_PCM_16BIT, C.ENCODING_PCM_FLOAT -> {
+                isFloat = inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT
+                channels = inputAudioFormat.channelCount.coerceAtLeast(1)
+                sampleRate = inputAudioFormat.sampleRate.coerceAtLeast(8000)
+                windowSamples = (sampleRate / 100).coerceAtLeast(64)
+                // alpha for a one-pole LPF at CUTOFF_HZ
+                lpAlpha = (2f * Math.PI.toFloat() * CUTOFF_HZ / sampleRate).coerceIn(0.001f, 0.9f)
+                hpAlpha = (2f * Math.PI.toFloat() * HP_HZ / sampleRate).coerceIn(0.0001f, 0.5f)
+                inputAudioFormat
+            }
             else -> AudioProcessor.AudioFormat.NOT_SET
         }
     }
@@ -44,39 +124,25 @@ class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
         val byteCount = inputBuffer.remaining()
         if (byteCount == 0) return
 
-        val dup = inputBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-        val e = if (isFloat) {
-            val view = dup.asFloatBuffer()
-            var sumSq = 0f; var n = 0
-            while (view.hasRemaining()) { val s = view.get(); sumSq += s * s; n++ }
-            if (n > 0) sqrt(sumSq / n).coerceIn(0f, 1f) else null
-        } else {
-            val view = dup.asShortBuffer()
-            var sumSq = 0L; var n = 0
-            while (view.hasRemaining()) { val s = view.get().toLong(); sumSq += s * s; n++ }
-            if (n > 0) (sqrt(sumSq.toFloat() / n) / 32768f).coerceIn(0f, 1f) else null
-        }
-
-        val now = System.currentTimeMillis()
-        val delay = latencyMs
-
-        // Onset detection: emit a pulse when energy rises sharply above the running average.
-        // This makes visuals fire on actual beats rather than tracking volume level.
-        if (e != null) {
-            val avg = runningAvg
-            runningAvg = avg * 0.92f + e * 0.08f   // slow-decay average
-            val onset = if (avg > 0.01f) (e / avg).coerceIn(0f, 3f) / 3f else e
-            val out = onset.coerceIn(0f, 1f)
-            if (delay <= 0L) {
-                _energy.value = out
+        // Skip all DSP entirely when this player isn't the one being heard.
+        if (bus.isActive(id)) {
+            val dup = inputBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            if (isFloat) {
+                val v = dup.asFloatBuffer()
+                while (v.remaining() >= channels) {
+                    var mono = 0f
+                    for (c in 0 until channels) mono += v.get()
+                    feed(mono / channels)
+                }
             } else {
-                pending.addLast(Pair(now + delay, out))
+                val v = dup.asShortBuffer()
+                while (v.remaining() >= channels) {
+                    var mono = 0f
+                    for (c in 0 until channels) mono += v.get().toFloat()
+                    feed(mono / (channels * 32768f))
+                }
             }
-        }
-
-        // Drain anything whose emit time has passed
-        while (pending.isNotEmpty() && pending.peekFirst().first <= now) {
-            _energy.value = pending.pollFirst().second
+            drain()
         }
 
         val out = replaceOutputBuffer(byteCount)
@@ -84,11 +150,83 @@ class BeatAnalyzer @Inject constructor() : BaseAudioProcessor() {
         out.flip()
     }
 
+    /** One mono sample: low-pass, accumulate, close the window when full. */
+    private fun feed(sample: Float) {
+        hp += hpAlpha * (sample - hp)          // running DC estimate
+        var x = sample - hp                     // high-passed
+        for (i in 0 until LP_STAGES) {          // cascaded low-pass
+            lp[i] += lpAlpha * (x - lp[i])
+            x = lp[i]
+        }
+        winAcc += x * x
+        if (++winCount < windowSamples) return
+
+        val e = sqrt(winAcc / winCount)
+        winAcc = 0f; winCount = 0
+        closeWindow(e)
+    }
+
+    private fun closeWindow(e: Float) {
+        val n = hist.size
+        val mean = if (n > 0) histSum / n else 0f
+        val varr = if (n > 0) (histSumSq / n - mean * mean).coerceAtLeast(0f) else 0f
+        val sd = sqrt(varr)
+
+        // Decay the envelope one window's worth.
+        level *= DECAY_PER_WINDOW
+        windowsSinceBeat++
+
+        if (n >= MIN_HIST && windowsSinceBeat >= REFRACTORY_WINDOWS) {
+            val thresh = mean + SENSITIVITY * sd + 1e-5f
+            if (e > thresh && e > FLOOR) {
+                // How far past the threshold it landed → how hard the pulse hits.
+                val strength = ((e - mean) / (sd + 1e-5f) / 4f).coerceIn(0.4f, 1f)
+                if (strength > level) level = strength
+                windowsSinceBeat = 0
+            }
+        }
+
+        hist.addLast(e); histSum += e; histSumSq += e * e
+        if (hist.size > histMax) {
+            val old = hist.pollFirst(); histSum -= old; histSumSq -= old * old
+        }
+
+        // Emit sparsely — this drives recomposition of the whole background.
+        if (abs(level - lastEmitted) > 0.015f || (level == 0f && lastEmitted != 0f)) {
+            lastEmitted = level
+            val delay = bus.latencyMs
+            if (delay <= 0L) bus.publish(id, level)
+            else pending.addLast(Pair(System.currentTimeMillis() + delay, level))
+        }
+    }
+
+    /** Release anything whose latency-compensated emit time has arrived. */
+    private fun drain() {
+        val now = System.currentTimeMillis()
+        while (pending.isNotEmpty() && pending.peekFirst().first <= now) {
+            bus.publish(id, pending.pollFirst().second)
+        }
+    }
+
     fun resetBeat() {
         pending.clear()
-        runningAvg = 0f
-        _energy.value = 0f
+        hist.clear(); histSum = 0f; histSumSq = 0f
+        winAcc = 0f; winCount = 0
+        lp.fill(0f); hp = 0f; level = 0f; lastEmitted = -1f
+        windowsSinceBeat = 99
+        bus.publish(id, 0f)
     }
 
     override fun onReset() { resetBeat() }
+
+    private companion object {
+        const val LP_STAGES = 3             // -18 dB/oct
+        const val CUTOFF_HZ = 100f          // kick/bass band
+        const val HP_HZ = 25f               // kill DC and sub rumble
+        const val SENSITIVITY = 1.5f        // stddevs above mean to count as a beat
+        const val REFRACTORY_WINDOWS = 12   // 120 ms → max ~500 BPM
+        const val MIN_HIST = 25             // need 250 ms of history before firing
+        const val FLOOR = 0.004f            // ignore near-silence
+        const val DECAY_PER_WINDOW = 0.955f // ~10 ms step → ~250 ms fall
+    }
 }

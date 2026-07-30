@@ -1,11 +1,14 @@
 package com.applemusicktv.ui.viewmodel
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.annotation.OptIn
 import androidx.core.content.edit
 import androidx.lifecycle.ViewModel
@@ -56,10 +59,16 @@ data class PlayerState(
     val motionUrl:        String?         = null,
     val lyricsOffsetMs:   Long            = 0L,
     val isShuffled:       Boolean         = false,
+    val originalQueue:    List<Song>      = emptyList(),
     val repeatMode:       RepeatMode      = RepeatMode.Off,
     val sleepTimerEndsAt: Long?           = null,
     val sleepAfterSong:   Boolean         = false,
     val mutExpired:       Boolean         = false,
+    val beatIntensity:    Float           = 1.0f,
+    val userQueue:        List<Song>      = emptyList(),
+    val crossfadeEnabled: Boolean         = true,
+    /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
+    val isLoading:        Boolean         = false,
 )
 
 @HiltViewModel
@@ -71,6 +80,7 @@ class PlayerViewModel @Inject constructor(
     private val serverPrefs: ServerPreferences,
     private val appleClient: AppleDirectClient,
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
+    private val crossfadePrefs: com.applemusicktv.data.CrossfadePreferences,
     private val webServer: InAppWebServer,
     val beatAnalyzer: BeatAnalyzer,
 ) : ViewModel() {
@@ -92,7 +102,12 @@ class PlayerViewModel @Inject constructor(
     private var motionJob: kotlinx.coroutines.Job? = null
     private var fadeJob: kotlinx.coroutines.Job? = null
     private var crossfadeInProgress = false
-    private val crossfadeDurationMs = 4_000L
+    /** Mirrors [crossfadePrefs] — read on the polling thread, so keep it a plain field. */
+    @Volatile private var crossfadeDurationMs = com.applemusicktv.data.CrossfadePreferences.DEFAULT_MS
+    private var crossfadeExo: ExoPlayer? = null
+    private var cfExoErrListener: Player.Listener? = null  // stored so STATE_ENDED snap can remove it
+    private var preloadedForSongId: String? = null
+    private var crossfadeSkipSongId: String? = null
 
     // True while the on-device (Widevine) path is driving playback, so the
     // error handler doesn't bounce back to the proxy in a loop.
@@ -101,7 +116,7 @@ class PlayerViewModel @Inject constructor(
 
 
     @OptIn(UnstableApi::class)
-    val player: ExoPlayer = run {
+    private fun buildExoPlayer(): ExoPlayer = run {
         // The proxy holds the HTTP connection open for a few seconds while it
         // decrypts (no bytes until mp4decrypt finishes), so give ExoPlayer
         // generous connect/read timeouts — otherwise the first play of a fresh
@@ -131,7 +146,9 @@ class PlayerViewModel @Inject constructor(
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setRenderersFactory(
-                BeatAwareRenderersFactory(context, beatAnalyzer)
+                BeatAwareRenderersFactory(context, beatAnalyzer.newProcessor().also { p ->
+                    mainProc = p; beatAnalyzer.activate(p)
+                })
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                     .setEnableDecoderFallback(true)
             )
@@ -145,46 +162,168 @@ class PlayerViewModel @Inject constructor(
             .build().also { it.repeatMode = Player.REPEAT_MODE_OFF }
     }
 
+    /** Processor feeding the beat bus for [player]; [cfProc] for the crossfade player. */
+    private var mainProc: com.applemusicktv.media.BeatProcessor? = null
+    private var cfProc: com.applemusicktv.media.BeatProcessor? = null
+
+    /** Hand the beat bus over to the crossfade player once it becomes the one we hear. */
+    private fun promoteCrossfadeBeat() {
+        cfProc?.let { beatAnalyzer.activate(it); mainProc = it }
+        cfProc = null
+    }
+
+    /** Crossfade-only player. Own BeatProcessor so it can drive the visuals after the swap. */
+    @OptIn(UnstableApi::class)
+    private fun buildCrossfadeExo(): ExoPlayer {
+        val httpFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(60_000).setReadTimeoutMs(60_000)
+            .setAllowCrossProtocolRedirects(true)
+        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            .setMp4ExtractorFlags(androidx.media3.extractor.mp4.Mp4Extractor.FLAG_WORKAROUND_IGNORE_EDIT_LISTS)
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15_000, 60_000, 1_500, 3_000)
+            .setPrioritizeTimeOverSizeThresholds(true).build()
+        return ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory))
+            .setLoadControl(loadControl)
+            .setRenderersFactory(
+                BeatAwareRenderersFactory(context, beatAnalyzer.newProcessor().also { cfProc = it })
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+                    .setEnableDecoderFallback(true)
+            )
+            .setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), false)
+            .setHandleAudioBecomingNoisy(false)
+            .build().also { it.repeatMode = Player.REPEAT_MODE_OFF }
+    }
+
+    @OptIn(UnstableApi::class)
+    var player: ExoPlayer = buildExoPlayer()
+        private set
+
+    init {
+        // Offset can also be changed from the phone web server — follow it live.
+        viewModelScope.launch {
+            lyricsOffsetPrefs.offsetMs.collect { ms ->
+                _state.update { it.copy(lyricsOffsetMs = ms) }
+            }
+        }
+        // Same for crossfade length. Takes effect at the next song boundary — an
+        // in-flight fade keeps the length it started with.
+        viewModelScope.launch {
+            crossfadePrefs.durationMs.collect { crossfadeDurationMs = it }
+        }
+    }
+
     fun setLyricsOffset(ms: Long) {
         lyricsOffsetPrefs.setOffset(ms)
         _state.update { it.copy(lyricsOffsetMs = ms) }
     }
 
-    init {
-        _state.update { it.copy(lyricsOffsetMs = lyricsOffsetPrefs.getOffset()) }
-        player.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                _state.update { it.copy(isPlaying = isPlaying) }
+    private val playerListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            val pos = player.currentPosition
+            val song = _state.value.currentSong?.title ?: "?"
+            webServer.addLog("EXO", "isPlaying=$isPlaying pos=${pos}ms song=$song cfade=$crossfadeInProgress")
+            _state.update { it.copy(isPlaying = isPlaying) }
+        }
+        override fun onPlaybackStateChanged(state: Int) {
+            val name = when (state) {
+                Player.STATE_IDLE -> "IDLE"
+                Player.STATE_BUFFERING -> "BUFFERING"
+                Player.STATE_READY -> "READY"
+                Player.STATE_ENDED -> "ENDED"
+                else -> "UNKNOWN($state)"
             }
-            override fun onRepeatModeChanged(repeatMode: Int) {
-                if (repeatMode != Player.REPEAT_MODE_OFF) player.repeatMode = Player.REPEAT_MODE_OFF
+            val pos = player.currentPosition
+            val dur = player.duration
+            val song = _state.value.currentSong?.title ?: "?"
+            webServer.addLog("EXO", "state=$name pos=${pos}ms dur=${dur}ms song=$song cfade=$crossfadeInProgress")
+            // Old player ended naturally during crossfade — snap cfExo in immediately
+            if (state == Player.STATE_ENDED && crossfadeInProgress) {
+                webServer.addLog("CFXO", "STATE_ENDED mid-fade cfExo=${crossfadeExo != null} cfExoState=${crossfadeExo?.playbackState} fadeJob=${fadeJob?.isActive}")
+                try {
+                    fadeJob?.cancel()
+                    val cfExo = crossfadeExo
+                    crossfadeExo = null
+                    crossfadeInProgress = false
+                    val oldP = player
+                    oldP.removeListener(this)
+                    oldP.volume = 0f; oldP.stop(); oldP.release()
+                    if (cfExo != null && (cfExo.playbackState == Player.STATE_READY || cfExo.playbackState == Player.STATE_BUFFERING)) {
+                        cfExo.volume = 1f
+                        player = cfExo
+                        promoteCrossfadeBeat()
+                        cfExoErrListener?.let { cfExo.removeListener(it) }; cfExoErrListener = null
+                        cfExo.addListener(this)
+                        webServer.addLog("CFXO", "snap done cfExo.isPlaying=${cfExo.isPlaying} state=${cfExo.playbackState}")
+                        val sNow = _state.value
+                        val nextUp = sNow.userQueue.firstOrNull() ?: sNow.queue.getOrNull(sNow.queueIndex + 1)
+                        if (nextUp != null && preloadedForSongId != nextUp.id) {
+                            preloadedForSongId = nextUp.id; prefetchSong(nextUp)
+                        }
+                        _state.update { it.copy(isPlaying = cfExo.isPlaying) }
+                        // Rebuilding the MediaSession reinits the audio output pipeline —
+                        // defer it so it doesn't gap the audio right at the swap.
+                        viewModelScope.launch {
+                            delay(500)
+                            mediaSession?.release()
+                            mediaSession = buildMediaSession(player)
+                        }
+                    } else {
+                        // cfExo bad or null — need a fresh player, then advance
+                        webServer.addLog("CFXO", "snap: cfExo unusable (state=${cfExo?.playbackState}) — rebuilding player and advancing")
+                        try { cfExo?.stop(); cfExo?.release() } catch (_: Exception) {}
+                        player = buildExoPlayer().also { it.addListener(this) }
+                        mediaSession?.release()
+                        mediaSession = buildMediaSession(player)
+                        advanceQueue()
+                    }
+                } catch (e: Exception) {
+                    webServer.addLog("CFXO", "snap exception: ${e.message}")
+                    crossfadeInProgress = false
+                    advanceQueue()
+                }
             }
-            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                webServer.addLog("ERR", "${error.errorCodeName} — skip to next")
+        }
+        override fun onRepeatModeChanged(repeatMode: Int) {
+            // During crossfade, REPEAT_MODE_ONE is intentionally set on old player — don't reset it
+            if (repeatMode != Player.REPEAT_MODE_OFF && !crossfadeInProgress) player.repeatMode = Player.REPEAT_MODE_OFF
+        }
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            val pos = player.currentPosition
+            val song = _state.value.currentSong?.title ?: "?"
+            webServer.addLog("ERR", "${error.errorCodeName} pos=${pos}ms song=$song cfade=$crossfadeInProgress cause=${error.cause?.message}")
+            if (crossfadeInProgress && crossfadeExo != null) {
+                // Old player died mid-fade — snap cfExo to full volume immediately
+                crossfadeExo!!.volume = 1f
+                // cfExo is audible; keep UI showing playing so it doesn't flash paused
+                _state.update { it.copy(isPlaying = true) }
+            } else {
                 advanceQueue()
             }
-        })
-        // A MediaSession makes the system route external controller / Bluetooth
-        // media buttons (play/pause/next/prev) to our player — those don't come
-        // through Activity.dispatchKeyEvent, which is why the controller buttons
-        // seemed dead.
-        mediaSession = androidx.media3.session.MediaSession.Builder(context, player)
+        }
+    }
+
+    private fun buildMediaSession(exo: ExoPlayer): androidx.media3.session.MediaSession =
+        androidx.media3.session.MediaSession.Builder(context, exo)
             .setCallback(object : androidx.media3.session.MediaSession.Callback {
                 override fun onConnect(
                     session: androidx.media3.session.MediaSession,
                     controller: androidx.media3.session.MediaSession.ControllerInfo,
                 ): androidx.media3.session.MediaSession.ConnectionResult {
-                    // Block Fire TV system controllers (Alexa, AudioMediaPlayerWrapper)
-                    // from sending pause/stop commands that interrupt playback.
-                    // Remote buttons still work via MainActivity.dispatchKeyEvent.
                     val pkg = controller.packageName
                     val allowed = pkg == context.packageName
-                    webServer.addLog("PLR", "MediaSession connect pkg=$pkg allowed=$allowed")
                     return if (allowed) super.onConnect(session, controller)
                     else androidx.media3.session.MediaSession.ConnectionResult.reject()
                 }
-            })
-            .build()
+            }).build()
+
+    init {
+        _state.update { it.copy(lyricsOffsetMs = lyricsOffsetPrefs.getOffset()) }
+        player.addListener(playerListener)
+        mediaSession = buildMediaSession(player)
         player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
 
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -199,10 +338,16 @@ class PlayerViewModel @Inject constructor(
             override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>) { updateBtLatency() }
         }, null)
 
-        viewModelScope.launch { repo.authErrorFlow.collect { _state.update { it.copy(mutExpired = true) } } }
+        viewModelScope.launch {
+            repo.authErrorFlow.collect {
+                _state.update { it.copy(mutExpired = true) }
+                showAuthNotification()
+            }
+        }
         pollProgress()
         restoreState()
         checkServerReachable()
+        viewModelScope.launch { checkAppleServiceStatus() }
     }
 
     /** Health-check the configured server; flips to/from standalone accordingly. */
@@ -247,6 +392,8 @@ class PlayerViewModel @Inject constructor(
             putInt("queue_index", s.queueIndex)
             putLong("position_ms", player.currentPosition)
             putBoolean("full_stream", s.isFullStream)
+            putFloat("beat_intensity", s.beatIntensity)
+            putBoolean("crossfade_enabled", s.crossfadeEnabled)
         }
     }
 
@@ -261,12 +408,34 @@ class PlayerViewModel @Inject constructor(
             val queue = listAdapter.fromJson(prefs.getString("queue", "[]") ?: "[]") ?: listOf(song)
             val idx   = prefs.getInt("queue_index", 0).coerceIn(0, queue.lastIndex)
             val posMs = prefs.getLong("position_ms", 0L)
-            val full  = prefs.getBoolean("full_stream", false)
-            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full) }
+            val full  = hasMUT()
+            val beat      = prefs.getFloat("beat_intensity", 1.0f)
+            val crossfade = prefs.getBoolean("crossfade_enabled", true)
+            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, progressMs = posMs) }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
             webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}")
             player.setMediaItem(buildMediaItem(song, uri), posMs)
             player.prepare()
+
+            // N+1 prefetch normally happens in playQueueItem, which restore
+            // bypasses — so without this the song after a restored one is always
+            // cold and the crossfade into it always falls back to a hard cut.
+            // Wait for the restored song to be READY first: its own decrypt is
+            // cold too, and racing two decrypts delays the audio we need *now*.
+            val nextSong = queue.getOrNull(idx + 1)
+            if (full && nextSong != null) {
+                preloadedForSongId = null
+                val deadline = System.currentTimeMillis() + 60_000
+                while (player.playbackState != Player.STATE_READY &&
+                       System.currentTimeMillis() < deadline) {
+                    delay(500)
+                }
+                if (preloadedForSongId != nextSong.id) {
+                    preloadedForSongId = nextSong.id
+                    webServer.addLog("PRE", "prefetch N+1 after restore song=${nextSong.title}")
+                    prefetchSong(nextSong)
+                }
+            }
         } catch (_: Exception) {}
     }
 
@@ -274,13 +443,25 @@ class PlayerViewModel @Inject constructor(
 
     private fun advanceQueue() {
         val s = _state.value
-        if (s.sleepAfterSong) { _state.update { it.copy(sleepAfterSong = false) }; player.pause(); return }
+        val pos = player.currentPosition
+        webServer.addLog("ADV", "advanceQueue pos=${pos}ms from=${s.currentSong?.title} idx=${s.queueIndex}/${s.queue.size}")
+        if (s.sleepAfterSong) { _state.update { it.copy(sleepAfterSong = false) }; player.stop(); webServer.addLog("SLEEP", "sleepAfterSong — stopped"); return }
         // Repeat one: replay current
         if (s.repeatMode == RepeatMode.One) { playQueueItem(s.queueIndex, skipFadeIn = true); return }
 
+        // Drain user priority queue first (Play Next / Add to Queue songs)
+        if (s.userQueue.isNotEmpty()) {
+            val next = s.userQueue.first()
+            val insertIdx = (s.queueIndex + 1).coerceIn(0, s.queue.size)
+            val newQueue = s.queue.toMutableList().also { it.add(insertIdx, next) }
+            _state.update { it.copy(queue = newQueue, userQueue = it.userQueue.drop(1)) }
+            playQueueItem(insertIdx)
+            return
+        }
+
         val nextIdx = if (s.isShuffled && s.queue.size > 1) {
-            val candidates = s.queue.indices.filter { it != s.queueIndex }
-            candidates.random()
+            val candidates = s.queue.indices.filter { it > s.queueIndex }
+            candidates.randomOrNull() ?: (s.queueIndex + 1)
         } else s.queueIndex + 1
 
         webServer.addLog("PLR", "advance → idx=$nextIdx / ${s.queue.size}")
@@ -302,7 +483,22 @@ class PlayerViewModel @Inject constructor(
         playQueueItem(nextIdx)
     }
 
-    fun toggleShuffle() { _state.update { it.copy(isShuffled = !it.isShuffled) } }
+    fun toggleShuffle() {
+        _state.update { s ->
+            if (s.isShuffled) {
+                // Turning off: restore original order, keep current song position
+                val restored = if (s.originalQueue.isNotEmpty()) s.originalQueue else s.queue
+                val currentSongId = s.currentSong?.id
+                val newIdx = restored.indexOfFirst { it.id == currentSongId }.coerceAtLeast(s.queueIndex)
+                s.copy(isShuffled = false, queue = restored, queueIndex = newIdx, originalQueue = emptyList())
+            } else {
+                // Turning on: save original, shuffle remaining
+                val before = s.queue.subList(0, s.queueIndex + 1)
+                val after  = s.queue.subList(s.queueIndex + 1, s.queue.size).shuffled()
+                s.copy(isShuffled = true, originalQueue = s.queue, queue = before + after)
+            }
+        }
+    }
     fun toggleRepeat() {
         _state.update { it.copy(repeatMode = when (it.repeatMode) {
             RepeatMode.Off -> RepeatMode.All
@@ -314,6 +510,17 @@ class PlayerViewModel @Inject constructor(
     fun setSleepAfterSong() { _state.update { it.copy(sleepAfterSong = true, sleepTimerEndsAt = null) } }
     fun cancelSleepTimer() { _state.update { it.copy(sleepTimerEndsAt = null, sleepAfterSong = false) } }
     fun dismissMutExpired() { _state.update { it.copy(mutExpired = false) } }
+    fun cycleBeatIntensity() {
+        val next = when (_state.value.beatIntensity) { 1.0f -> 2.0f; 2.0f -> 3.5f; else -> 1.0f }
+        _state.update { it.copy(beatIntensity = next) }
+        prefs.edit { putFloat("beat_intensity", next) }
+    }
+
+    fun toggleCrossfade() {
+        val next = !_state.value.crossfadeEnabled
+        _state.update { it.copy(crossfadeEnabled = next) }
+        prefs.edit { putBoolean("crossfade_enabled", next) }
+    }
 
     private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false) {
         val q = _state.value.queue
@@ -321,7 +528,8 @@ class PlayerViewModel @Inject constructor(
             webServer.addLog("PLR", "playQueueItem idx=$idx out of bounds (size=${q.size}) — stopping")
             return
         }
-        beatAnalyzer.resetBeat()
+        beatAnalyzer.resetBeat(); mainProc?.resetBeat()
+        crossfadeSkipSongId = null
         // Cancel any in-progress crossfade
         fadeJob?.cancel()
         crossfadeInProgress = false
@@ -330,7 +538,8 @@ class PlayerViewModel @Inject constructor(
         val full = _state.value.isFullStream
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}")
-        _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null) }
+        _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
+        saveState()
         player.repeatMode = Player.REPEAT_MODE_OFF
         player.setMediaItem(buildMediaItem(song, uri))
         player.prepare()
@@ -350,19 +559,18 @@ class PlayerViewModel @Inject constructor(
                 }
             }
         }
+        preloadedForSongId = null
         if (full) loadLyrics(song.id)
         loadMotion(song.id)
-        // Pre-warm server cache for next song — hits /prefetch which returns instantly
-        val nextSong = q.getOrNull(idx + 1)
-        if (full && nextSong != null) viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val conn = java.net.URL(repo.prefetchUrl(nextSong.id)).openConnection() as java.net.HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.connectTimeout = 5_000
-                conn.readTimeout = 10_000
-                conn.getResponseCode()
-                conn.disconnect()
-            } catch (_: Exception) {}
+        if (song.artistId == null || song.albumId == null) enrichSongIds(song.id)
+        // Prefetch N+1 immediately so it's cached well before crossfade
+        val nextSong = (_state.value.userQueue.firstOrNull() ?: q.getOrNull(idx + 1))
+        if (full && nextSong != null) {
+            preloadedForSongId = nextSong.id
+            webServer.addLog("PRE", "prefetch N+1 song=${nextSong.title}")
+            prefetchSong(nextSong)
+        } else {
+            webServer.addLog("PRE", "prefetch N+1 skip — full=$full nextSong=${nextSong?.title}")
         }
     }
 
@@ -384,20 +592,30 @@ class PlayerViewModel @Inject constructor(
         player.play()
         if (useFullStream) loadLyrics(song.id)
         loadMotion(song.id)
+        if (song.artistId == null || song.albumId == null) enrichSongIds(song.id)
     }
 
-    fun playAlbum(songs: List<Song>, startIndex: Int = 0, useFullStream: Boolean = hasMUT()) {
+    fun playAlbum(songs: List<Song>, startIndex: Int = 0, useFullStream: Boolean = hasMUT(), shuffle: Boolean = false) {
         if (songs.isEmpty()) return
         val stack = Thread.currentThread().stackTrace
         val callers = (3..7).mapNotNull { stack.getOrNull(it) }.joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
-        webServer.addLog("PLR", "playAlbum size=${songs.size} idx=$startIndex << $callers")
+        webServer.addLog("PLR", "playAlbum size=${songs.size} idx=$startIndex shuffle=$shuffle << $callers")
         usingStandalone = false
         lastErrorKey = null
         hasPlayedSomething = true
         val idx = startIndex.coerceIn(0, songs.lastIndex)
-        val song = songs[idx]
-        _state.update { it.copy(queue = songs, isFullStream = useFullStream) }
-        playQueueItem(idx)
+        val queue = if (shuffle) {
+            val first = songs[idx]
+            listOf(first) + songs.filterIndexed { i, _ -> i != idx }.shuffled()
+        } else songs
+        val queueIdx = if (shuffle) 0 else idx
+        _state.update { it.copy(queue = queue, isFullStream = useFullStream, isShuffled = shuffle, originalQueue = if (shuffle) songs else emptyList()) }
+        playQueueItem(queueIdx)
+    }
+
+    fun shufflePlayPlaylist(playlistId: String) = viewModelScope.launch {
+        val tracks = repo.getPlaylistTracks(playlistId).getOrDefault(emptyList())
+        if (tracks.isNotEmpty()) playAlbum(tracks, startIndex = tracks.indices.random(), shuffle = true)
     }
 
     fun playStation(stationId: String) = viewModelScope.launch {
@@ -487,10 +705,32 @@ class PlayerViewModel @Inject constructor(
     fun pause() { player.pause() }
     fun togglePlayPause() { if (player.isPlaying) player.pause() else player.play() }
 
-    fun next() { fadeJob?.cancel(); crossfadeInProgress = false; player.volume = 1f; playQueueItem(_state.value.queueIndex + 1, skipFadeIn = true) }
+    fun next() {
+        val s = _state.value
+        webServer.addLog("NAV", "next() pos=${player.currentPosition}ms idx=${s.queueIndex} userQueue=${s.userQueue.size}")
+        fadeJob?.cancel(); crossfadeInProgress = false; player.volume = 1f; player.repeatMode = Player.REPEAT_MODE_OFF
+        crossfadeExo?.let { cfExoErrListener?.let { l -> it.removeListener(l) }; it.stop(); it.release() }
+        crossfadeExo = null; cfExoErrListener = null
+        preloadedForSongId = null
+        if (s.userQueue.isNotEmpty()) {
+            val nextSong = s.userQueue.first()
+            val insertIdx = (s.queueIndex + 1).coerceIn(0, s.queue.size)
+            val newQueue = s.queue.toMutableList().also { it.add(insertIdx, nextSong) }
+            _state.update { it.copy(queue = newQueue, userQueue = it.userQueue.drop(1)) }
+            playQueueItem(insertIdx, skipFadeIn = true)
+        } else {
+            playQueueItem(s.queueIndex + 1, skipFadeIn = true)
+        }
+    }
     fun prev() {
-        fadeJob?.cancel(); crossfadeInProgress = false; player.volume = 1f
-        val prevIdx = _state.value.queueIndex - 1
+        val s = _state.value
+        val pos = player.currentPosition
+        webServer.addLog("NAV", "prev() pos=${pos}ms idx=${s.queueIndex}")
+        fadeJob?.cancel(); crossfadeInProgress = false; player.volume = 1f; player.repeatMode = Player.REPEAT_MODE_OFF
+        crossfadeExo?.let { cfExoErrListener?.let { l -> it.removeListener(l) }; it.stop(); it.release() }
+        crossfadeExo = null; cfExoErrListener = null
+        preloadedForSongId = null
+        val prevIdx = s.queueIndex - 1
         if (prevIdx >= 0) playQueueItem(prevIdx, skipFadeIn = true) else player.seekTo(0L)
     }
 
@@ -510,12 +750,43 @@ class PlayerViewModel @Inject constructor(
     fun seekForward() { webServer.addLog("PLR", "seekForward pos=${player.currentPosition}"); player.seekTo((player.currentPosition + 15_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }
     fun seekBack()    { webServer.addLog("PLR", "seekBack pos=${player.currentPosition}"); player.seekTo((player.currentPosition - 15_000L).coerceAtLeast(0L)) }
 
-    fun addToQueue(song: Song) { _state.update { it.copy(queue = it.queue + song) } }
+    private fun prefetchSong(song: Song) {
+        if (!_state.value.isFullStream) return
+        val url = repo.prefetchUrl(song.id)
+        webServer.addLog("PRE", "prefetch start song=${song.title} url=$url")
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("X-Music-User-Token", mutPrefs.getMUT())
+                conn.connectTimeout = 5_000
+                conn.readTimeout = 10_000
+                val code = conn.responseCode
+                conn.disconnect()
+                webServer.addLog("PRE", "prefetch response=$code song=${song.title}")
+            } catch (e: Exception) {
+                webServer.addLog("PRE", "prefetch error=${e.message} song=${song.title}")
+            }
+        }
+    }
 
-    fun playNext(song: Song) {
-        val q = _state.value.queue.toMutableList()
-        q.add((_state.value.queueIndex + 1).coerceIn(0, q.size), song)
-        _state.update { it.copy(queue = q) }
+    // Add to end of user priority queue (plays before rest of playlist)
+    fun addToQueue(song: Song) { _state.update { it.copy(userQueue = it.userQueue + song) }; prefetchSong(song) }
+
+    // Insert at front of user priority queue (plays immediately next)
+    fun playNext(song: Song) { _state.update { it.copy(userQueue = listOf(song) + it.userQueue) }; prefetchSong(song) }
+
+    // Play a specific userQueue item immediately, removing it from the queue
+    fun playFromUserQueue(idx: Int) {
+        val s = _state.value
+        val song = s.userQueue.getOrNull(idx) ?: return
+        val newUserQueue = s.userQueue.toMutableList().also { it.removeAt(idx) }
+        _state.update { it.copy(userQueue = newUserQueue) }
+        hasPlayedSomething = true
+        val insertIdx = (s.queueIndex + 1).coerceIn(0, s.queue.size)
+        val newQueue = s.queue.toMutableList().also { it.add(insertIdx, song) }
+        _state.update { it.copy(queue = newQueue) }
+        playQueueItem(insertIdx, skipFadeIn = true)
     }
 
     private fun loadLyrics(songId: String) {
@@ -545,34 +816,207 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    private fun enrichSongIds(songId: String) = viewModelScope.launch {
+        repo.getSong(songId).onSuccess { enriched ->
+            if (enriched.artistId == null && enriched.albumId == null) return@onSuccess
+            _state.update { s ->
+                val updatedQueue = s.queue.map { q -> if (q.id == songId) q.copy(artistId = enriched.artistId ?: q.artistId, albumId = enriched.albumId ?: q.albumId) else q }
+                val updatedSong  = s.currentSong?.takeIf { it.id == songId }?.copy(artistId = enriched.artistId ?: s.currentSong.artistId, albumId = enriched.albumId ?: s.currentSong.albumId)
+                s.copy(queue = updatedQueue, currentSong = updatedSong ?: s.currentSong, song = updatedSong ?: s.song)
+            }
+        }
+    }
+
+    suspend fun lookupSongIds(songId: String): Pair<String?, String?> =
+        repo.getSong(songId).getOrNull()?.let { it.artistId to it.albumId } ?: (null to null)
+
+    private var lastAutoSaveMs = 0L
+
     private fun pollProgress() = viewModelScope.launch {
         while (true) {
             val playing = player.isPlaying
             val playState = player.playbackState
-            if (playing) _state.update { it.copy(progressMs = player.currentPosition) }
-            if (playState == Player.STATE_ENDED) advanceQueue()
+            // During a crossfade the UI already shows the NEXT song, so track that
+            // player's position — otherwise the bar sits frozen on the old song.
+            val cf = crossfadeExo
+            val progressSource = if (crossfadeInProgress && cf != null && cf.playbackState == Player.STATE_READY) cf else player
+            if (playing || progressSource !== player) {
+                _state.update { it.copy(progressMs = progressSource.currentPosition) }
+            }
+            // Buffering only counts as "loading" while we're mid-crossfade or actually
+            // trying to play — a paused player sitting at IDLE isn't waiting on anything.
+            val loading = (playState == Player.STATE_BUFFERING) &&
+                (player.playWhenReady || crossfadeInProgress)
+            if (loading != _state.value.isLoading) _state.update { it.copy(isLoading = loading) }
+            if (playState == Player.STATE_ENDED && !crossfadeInProgress) advanceQueue()
+            // Auto-save position every 10s while playing so restore lands at the right spot
+            val now = System.currentTimeMillis()
+            if (playing && now - lastAutoSaveMs > 10_000L) { lastAutoSaveMs = now; saveState() }
             val timerEnd = _state.value.sleepTimerEndsAt
             if (timerEnd != null && System.currentTimeMillis() >= timerEnd) {
+                val pos = player.currentPosition
+                webServer.addLog("SLEEP", "timer fired at pos=${pos}ms song=${_state.value.currentSong?.title}")
                 player.pause()
-                _state.update { it.copy(sleepTimerEndsAt = null) }
+                _state.update { it.copy(sleepTimerEndsAt = null, isPlaying = false) }
             }
 
-            // Start crossfade when within crossfadeDurationMs of natural end
+            // HTTP prefetch N+2 at 2/3 through current song
+            if (playing && playState == Player.STATE_READY && !crossfadeInProgress) {
+                val dur = player.duration
+                val pos = player.currentPosition
+                val s = _state.value
+                val n2Song = if (s.userQueue.size >= 2) s.userQueue[1]
+                             else if (s.userQueue.size == 1) s.queue.getOrNull(s.queueIndex + 2)
+                             else s.queue.getOrNull(s.queueIndex + 2)
+                if (dur > 0 && pos >= dur * 3 / 4 && n2Song != null && s.isFullStream
+                    && preloadedForSongId != n2Song.id) {
+                    preloadedForSongId = n2Song.id
+                    prefetchSong(n2Song)
+                    webServer.addLog("PRE", "prefetch N+2 at pos=${pos}ms/${dur}ms song=${n2Song.title}")
+                }
+            }
+
+            // Crossfade: old player fades out over 5s; new player fades IN only for the last 3s
             if (playing && playState == Player.STATE_READY && !crossfadeInProgress) {
                 val dur = player.duration
                 val pos = player.currentPosition
                 val remaining = dur - pos
-                val q = _state.value
-                val hasNext = q.queueIndex + 1 < q.queue.size
-                if (dur > 0 && remaining in 1..crossfadeDurationMs && hasNext) {
-                    crossfadeInProgress = true
-                    val startVol = player.volume
-                    fadeJob = viewModelScope.launch {
-                        val steps = 40
-                        val stepMs = remaining / steps
-                        for (i in 1..steps) {
-                            player.volume = (startVol * (1f - i.toFloat() / steps)).coerceAtLeast(0f)
-                            delay(stepMs)
+                val s = _state.value
+                val nextIdx = s.queueIndex + 1
+                // Repeat One replays the current song, so there is no "next" to fade
+                // into — fading would swap in the wrong track entirely. Repeat All on
+                // the last song wraps to index 0, but only if that isn't the same song.
+                val wrapsToStart = s.repeatMode == RepeatMode.All &&
+                    nextIdx >= s.queue.size && s.queue.size > 1
+                val hasNext = s.repeatMode != RepeatMode.One &&
+                    (s.userQueue.isNotEmpty() || nextIdx < s.queue.size || wrapsToStart)
+                if (dur > 0 && remaining in 1..crossfadeDurationMs && hasNext && s.crossfadeEnabled) {
+                    val nextSong = s.userQueue.firstOrNull()
+                        ?: s.queue.getOrNull(nextIdx)
+                        ?: s.queue.firstOrNull().takeIf { wrapsToStart }
+                    webServer.addLog("CFXO", "crossfade window: remaining=${remaining}ms next=${nextSong?.title} isFullStream=${s.isFullStream} enabled=${s.crossfadeEnabled} skip=${nextSong?.id == crossfadeSkipSongId}")
+                    // Gapless: consecutive tracks off the same album were often mastered
+                    // to run continuous (live records, mixes, segued sides). Fading them
+                    // talks over the transition the artist built, so hand off cleanly
+                    // instead. albumId is null on some library rows — fall back to name.
+                    val cur = s.queue.getOrNull(s.queueIndex)
+                    val sameAlbum = cur != null && nextSong != null &&
+                        (if (cur.albumId != null && nextSong.albumId != null) cur.albumId == nextSong.albumId
+                         else cur.albumName.isNotBlank() && cur.albumName == nextSong.albumName)
+                    val consecutive = cur?.trackNumber != null && nextSong?.trackNumber != null &&
+                        nextSong.trackNumber == cur.trackNumber + 1
+                    val gapless = sameAlbum && consecutive && s.userQueue.isEmpty()
+                    if (gapless) {
+                        webServer.addLog("CFXO", "gapless: same album consecutive tracks — no fade into ${nextSong?.title}")
+                    }
+                    if (nextSong != null && s.isFullStream && !gapless && nextSong.id != crossfadeSkipSongId) {
+                        crossfadeInProgress = true
+                        val cfExo = buildCrossfadeExo().also { e ->
+                            e.volume = 0f
+                            e.setMediaItem(buildMediaItem(nextSong, repo.streamUrl(nextSong.id)))
+                            e.prepare()
+                            e.play()
+                        }
+                        val preFadeQueue = s.queue; val preFadeIdx = s.queueIndex; val preFadeUserQueue = s.userQueue
+                        val newUserQueue = if (s.userQueue.isNotEmpty()) s.userQueue.drop(1) else s.userQueue
+                        val newQueue = if (s.userQueue.isNotEmpty()) {
+                            s.queue.toMutableList().also { it.add((s.queueIndex + 1).coerceIn(0, it.size), nextSong) }
+                        } else s.queue
+                        // Repeat All off the end of the queue wraps to 0; coerceIn would
+                        // otherwise clamp to lastIndex and leave the index on the song
+                        // we're fading *out* of.
+                        val actualNextIdx = if (wrapsToStart && s.userQueue.isEmpty()) 0
+                            else (s.queueIndex + 1).coerceIn(0, newQueue.lastIndex)
+                        val errListener = object : Player.Listener {
+                            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                                webServer.addLog("CFXO", "cfExo error: ${error.errorCodeName} — restoring old player")
+                                fadeJob?.cancel()
+                                crossfadeInProgress = false; crossfadeExo = null; cfExoErrListener = null
+                                crossfadeSkipSongId = nextSong.id
+                                cfExo.removeListener(this); cfExo.release()
+                                player.volume = 1f
+                                val prevSong = preFadeQueue.getOrNull(preFadeIdx)
+                                _state.update { it.copy(
+                                    currentSong = prevSong, song = prevSong, lyrics = emptyList(), motionUrl = null,
+                                    queue = preFadeQueue, queueIndex = preFadeIdx, userQueue = preFadeUserQueue,
+                                )}
+                                if (prevSong != null) { loadLyrics(prevSong.id); loadMotion(prevSong.id) }
+                            }
+                        }
+                        cfExoErrListener = errListener
+                        cfExo.addListener(errListener)
+                        crossfadeExo = cfExo
+                        val oldPlayer = player
+                        _state.update { it.copy(
+                            currentSong = nextSong, song = nextSong, lyrics = emptyList(), motionUrl = null,
+                            queue = newQueue, queueIndex = actualNextIdx, userQueue = newUserQueue,
+                            progressMs = 0L,
+                        )}
+                        loadLyrics(nextSong.id); loadMotion(nextSong.id)
+                        if (nextSong.artistId == null || nextSong.albumId == null) enrichSongIds(nextSong.id)
+                        val fadeDurationMs = remaining.coerceIn(300L, crossfadeDurationMs)
+                        fadeJob = viewModelScope.launch {
+                            val steps = 50
+                            val stepMs = fadeDurationMs / steps
+                            val startVol = oldPlayer.volume
+                            for (i in 1..steps) {
+                                val frac = i.toFloat() / steps
+                                oldPlayer.volume = (startVol * (1f - frac)).coerceAtLeast(0f)
+                                cfExo.volume = frac.coerceAtMost(1f)
+                                delay(stepMs)
+                            }
+                            if (!crossfadeInProgress || crossfadeExo == null) {
+                                webServer.addLog("CFXO", "cfExo released during fade — aborting swap")
+                                return@launch
+                            }
+                            // If cfExo is still buffering (cache not ready), give it a short grace
+                            // period. The old song loops while we wait, so waiting long is worse
+                            // than bailing — and if the server is down it's never coming.
+                            if (cfExo.playbackState == Player.STATE_BUFFERING) {
+                                val waitMs = if (serverPrefs.serverReachable) 8_000L else 0L
+                                webServer.addLog("CFXO", "cfExo buffering after fade — waiting ${waitMs}ms (reachable=${serverPrefs.serverReachable})")
+                                oldPlayer.volume = 1f
+                                val deadline = System.currentTimeMillis() + waitMs
+                                while (cfExo.playbackState == Player.STATE_BUFFERING
+                                    && System.currentTimeMillis() < deadline
+                                    && crossfadeInProgress) {
+                                    delay(100)
+                                }
+                            }
+                            if (!crossfadeInProgress || crossfadeExo == null) {
+                                webServer.addLog("CFXO", "cfExo released while waiting for ready — aborting")
+                                return@launch
+                            }
+                            if (cfExo.playbackState == Player.STATE_READY) {
+                                // Quick 1s crossfade if we had to wait
+                                val qSteps = 10
+                                repeat(qSteps) { i ->
+                                    val f = (i + 1).toFloat() / qSteps
+                                    oldPlayer.volume = (1f - f).coerceAtLeast(0f)
+                                    cfExo.volume = f.coerceAtMost(1f)
+                                    delay(100)
+                                }
+                                oldPlayer.removeListener(playerListener)
+                                oldPlayer.volume = 0f; oldPlayer.stop(); oldPlayer.release()
+                                cfExo.removeListener(errListener); cfExoErrListener = null
+                                cfExo.addListener(playerListener)
+                                player = cfExo; crossfadeExo = null; crossfadeInProgress = false
+                                promoteCrossfadeBeat()
+                                webServer.addLog("CFXO", "fade complete → cfExo isPlaying=${cfExo.isPlaying}")
+                                mediaSession?.release(); mediaSession = buildMediaSession(cfExo)
+                                _state.update { it.copy(isPlaying = cfExo.isPlaying) }
+                                val sNow = _state.value
+                                val prefetchNext = sNow.userQueue.firstOrNull() ?: sNow.queue.getOrNull(sNow.queueIndex + 1)
+                                if (prefetchNext != null && preloadedForSongId != prefetchNext.id) {
+                                    preloadedForSongId = prefetchNext.id; prefetchSong(prefetchNext)
+                                }
+                            } else {
+                                webServer.addLog("CFXO", "cfExo state=${cfExo.playbackState} — giving up, playing next directly")
+                                crossfadeInProgress = false; crossfadeExo = null; cfExoErrListener = null
+                                try { cfExo.removeListener(errListener); cfExo.stop(); cfExo.release() } catch (_: Exception) {}
+                                oldPlayer.volume = 1f
+                                playQueueItem(_state.value.queueIndex, skipFadeIn = true)
+                            }
                         }
                     }
                 }
@@ -593,6 +1037,50 @@ class PlayerViewModel @Inject constructor(
                 .build()
         ).build()
 
+    fun showNotification(title: String, body: String, id: Int = 42) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channelId = "am_alerts"
+        if (nm.getNotificationChannel(channelId) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(channelId, "Apple Music Alerts", NotificationManager.IMPORTANCE_HIGH)
+                    .also { it.description = "Auth and service alerts" }
+            )
+        }
+        val notif = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(id, notif)
+    }
+
+    private suspend fun checkAppleServiceStatus() {
+        val result = repo.getAppleStatus().getOrNull() ?: return
+        if (!result.ok) {
+            val affected = result.services
+                .filter { it.status != "operational" }
+                .joinToString(", ") { it.name }
+                .ifEmpty { "Apple Music" }
+            webServer.addLog("SVCMON", "Apple service issue detected — $affected")
+            showNotification(
+                title = "Apple Music — Service Disruption",
+                body  = "Upstream issue detected ($affected). Expect degraded performance.",
+                id    = 43,
+            )
+        }
+    }
+
+    private fun showAuthNotification() {
+        val url = webServer.serverUrl().replace(":8080", "").let { "$it:8080" }
+        showNotification(
+            title = "Action Required — Token Expired",
+            body  = "Your Apple Music session has ended. Visit $url to re-authenticate.",
+            id    = 42,
+        )
+    }
+
     override fun onCleared() {
         saveState()
         lyricsJob?.cancel()
@@ -600,6 +1088,8 @@ class PlayerViewModel @Inject constructor(
         fadeJob?.cancel()
         mediaSession?.release()
         mediaSession = null
+        crossfadeExo?.let { cfExoErrListener?.let { l -> it.removeListener(l) }; it.stop(); it.release() }
+        crossfadeExo = null; cfExoErrListener = null
         player.stop()
         player.clearMediaItems()
         player.release()

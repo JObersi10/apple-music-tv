@@ -62,16 +62,18 @@ albumRoutes.get("/:id", async (c) => {
   if (!album) {
     try {
       const sf = getStorefront() || "us"
-      const r = await axios.get(`https://amp-api-edge.music.apple.com/v1/catalog/${sf}/albums/${id}`, { headers: ampHeaders() })
+      const r = await axios.get(`https://amp-api-edge.music.apple.com/v1/catalog/${sf}/albums/${id}`, { headers: ampHeaders(), params: { include: "artists" } })
       album = r.data?.data?.[0]
     } catch (_) {}
   }
   if (!album) return c.json({ error: "Album not found" }, 404)
   const attr = album.attributes ?? {}
+  const artistId = album.relationships?.artists?.data?.[0]?.id ?? null
   return c.json({
     id:             album.id,
     title:          attr.name ?? "Unknown",
     artistName:     attr.artistName ?? "",
+    artistId,
     artworkUrl:     attr.artwork?.url ?? null,
     artworkBgColor: attr.artwork?.bgColor ?? null,
     releaseDate:    attr.releaseDate ?? null,
@@ -91,7 +93,7 @@ albumRoutes.get("/:id/tracks", async (c) => {
   if (isLibraryAlbum(id)) {
     try {
       const res = await axios.get(
-        `https://amp-api-edge.music.apple.com/v1/me/library/albums/${id}/tracks?include=catalog&limit=${Math.min(limit, 100)}`,
+        `https://amp-api-edge.music.apple.com/v1/me/library/albums/${id}/tracks?include=catalog,artists,albums&limit=${Math.min(limit, 100)}`,
         { headers: ampHeaders() }
       )
       const data = res.data?.data ?? []
@@ -101,13 +103,24 @@ albumRoutes.get("/:id/tracks", async (c) => {
     }
   }
 
-  const res = await music.Albums.getRelationship({ id, relationship: "tracks", limit })
-  const raw = res.data ?? []
-  const nonSongs = raw.filter((t: any) => t.type !== "songs")
-  if (nonSongs.length) console.log(`[albums] skipping non-song items: ${nonSongs.map((t: any) => `${t.type}:${t.id}`).join(", ")}`)
-  const tracks = raw.filter((t: any) => t.type === "songs").map(normaliseSong)
-  console.log(`[albums] tracks id=${id} raw=${raw.length} songs=${tracks.length}`)
-  return c.json({ tracks, next: res.next ?? null })
+  // Direct amp-api call — supports include=artists on tracks unlike the MusicKit wrapper
+  const sf = getStorefront() || "us"
+  try {
+    const r = await axios.get(
+      `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/albums/${id}/tracks`,
+      { headers: ampHeaders(), params: { limit: Math.min(limit, 100), include: "artists" } }
+    )
+    const raw = r.data?.data ?? []
+    const tracks = raw.filter((t: any) => t.type === "songs").map((s: any) => ({
+      ...normaliseSong(s),
+      albumId: id,
+      artistId: s.relationships?.artists?.data?.[0]?.id ?? null,
+    }))
+    console.log(`[albums] tracks id=${id} raw=${raw.length} songs=${tracks.length}`)
+    return c.json({ tracks, next: r.data?.next ?? null })
+  } catch (e: any) {
+    return c.json({ error: e.message, tracks: [] }, 500)
+  }
 })
 
 function decodeStationId(id: string): string {

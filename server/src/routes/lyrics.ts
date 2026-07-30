@@ -7,6 +7,7 @@ const lyrics = new Hono();
 lyrics.get("/:songId", async (c) => {
   if (!hasMUT()) return c.json({ error: "Music-User-Token not set" }, 401);
   const songId = c.req.param("songId");
+  const t0 = Date.now();
 
   const headers = {
     Authorization: `Bearer ${getBearerToken()}`,
@@ -19,25 +20,26 @@ lyrics.get("/:songId", async (c) => {
   try {
     const appleLines = await fetchAppleLyrics(songId, headers);
     if (appleLines && appleLines.length > 0) {
-      const wordCount = appleLines.reduce((n, l) => n + l.words.length, 0)
-      console.log(`[lyrics] ${songId} apple ${wordCount > 0 ? `word-by-word (${wordCount} words)` : "line-synced only"}`)
+      const wordCount = appleLines.reduce((n, l) => n + l.words.length, 0);
+      const lineCount = appleLines.length;
+      console.log(`[lyrics] ${songId} apple ${wordCount > 0 ? `word-by-word (${wordCount} words, ${lineCount} lines)` : `line-synced (${lineCount} lines)`} ${Date.now() - t0}ms`);
       return c.json({ lines: appleLines, source: "apple" });
     }
-  } catch (_) {}
+  } catch (e: any) { console.warn(`[lyrics] ${songId} apple failed: ${e.message}`); }
 
-  // 2) Fallback: lrclib.net (line-synced, no word timing, no auth needed) —
-  // the same free community source ecosystem Spicy Lyrics leans on when the
-  // primary provider has nothing.
+  // 2) Fallback: lrclib.net
   try {
     const meta = await fetchSongMeta(songId, headers);
     if (meta) {
       const fallbackLines = await fetchLrclibLyrics(meta);
       if (fallbackLines && fallbackLines.length > 0) {
+        console.log(`[lyrics] ${songId} lrclib (${fallbackLines.length} lines) ${Date.now() - t0}ms`);
         return c.json({ lines: fallbackLines, source: "lrclib" });
       }
     }
-  } catch (_) {}
+  } catch (e: any) { console.warn(`[lyrics] ${songId} lrclib failed: ${e.message}`); }
 
+  console.log(`[lyrics] ${songId} none ${Date.now() - t0}ms`);
   return c.json({ lines: [], source: "none" });
 });
 
@@ -310,33 +312,84 @@ function attr(attrs: string, name: string): string | undefined {
 }
 
 function flattenText(node: TagNode): string {
-  return node.children
-    .map((c) => (typeof c === "string" ? c : flattenText(c)))
-    .join("")
-    .trim();
+  return rawText(node).trim();
+}
+
+/** Flattened text with whitespace intact — needed to spot word boundaries. */
+function rawText(node: TagNode): string {
+  return node.children.map((c) => (typeof c === "string" ? c : rawText(c))).join("");
 }
 
 function isBackgroundSpan(attrs: string): boolean {
   return /ttm:role="x-bg"|(?:^|\s)role="x-bg"/.test(attrs);
 }
 
+const isSpan = (c: TagNode | string): c is TagNode =>
+  typeof c !== "string" && (c.tag === "span" || c.tag.endsWith(":span"));
+
 // Direct child <span> elements of a node, in document order.
 function childSpans(node: TagNode): TagNode[] {
-  return node.children.filter(
-    (c): c is TagNode => typeof c !== "string" && (c.tag === "span" || c.tag.endsWith(":span"))
-  );
+  return node.children.filter(isSpan);
 }
 
-function spanToWord(span: TagNode): LyricWord | null {
+/** Direct child spans plus whether whitespace follows each one (a word boundary).
+ *  Apple separates syllables of one word with adjacent spans and no whitespace;
+ *  real word breaks have a space inside the span or as a sibling text node. */
+function childSpanEntries(node: TagNode): { span: TagNode; endsWord: boolean }[] {
+  const kids = node.children;
+  const out: { span: TagNode; endsWord: boolean }[] = [];
+  for (let i = 0; i < kids.length; i++) {
+    const c = kids[i];
+    if (!isSpan(c)) continue;
+    let endsWord = /\s$/.test(rawText(c));
+    for (let j = i + 1; j < kids.length && !isSpan(kids[j]); j++) {
+      if (/\s/.test(kids[j] as string)) { endsWord = true; break; }
+    }
+    out.push({ span: c, endsWord });
+  }
+  return out;
+}
+
+function spanToWord(span: TagNode, endsWord = true): LyricWord | null {
   const begin = attr(span.attrs, "begin");
-  const text = flattenText(span);
-  if (!begin || !text) return null;
+  const raw = flattenText(span);
+  if (!begin || !raw) return null;
   const end = attr(span.attrs, "end");
   return {
     startMs: parseTime(begin),
     endMs: end ? parseTime(end) : parseTime(begin) + 500,
-    text,
-  };
+    text: raw,
+    _endsWord: endsWord,
+  } as LyricWord & { _endsWord: boolean };
+}
+
+/** Merge consecutive syllable spans into whole words.
+ *  Apple sends word-boundary spans with a trailing space; syllables have none.
+ *  e.g. "happ" + "ening " → "happening" */
+function mergeSyllables(raw: (LyricWord & { _endsWord?: boolean })[]): LyricWord[] {
+  const out: LyricWord[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    let cur = raw[i];
+    while (!(cur as any)._endsWord && i + 1 < raw.length) {
+      i++;
+      const next = raw[i];
+      // Carry next's boundary flag — without it the merged object has no
+      // _endsWord and the loop runs away to the end of the line.
+      cur = {
+        startMs: cur.startMs, endMs: next.endMs,
+        text: cur.text + next.text, _endsWord: next._endsWord,
+      } as any;
+    }
+    out.push({ startMs: cur.startMs, endMs: cur.endMs, text: cur.text.trim() });
+    i++;
+  }
+  // Safety net: if boundary detection failed the whole line collapses into one
+  // "word" — that's worse than no merging, so hand back the original spans.
+  if (out.length === 1 && raw.length > 3) {
+    return raw.map((w) => ({ startMs: w.startMs, endMs: w.endMs, text: w.text.trim() }));
+  }
+  return out;
 }
 
 function parseTTML(ttml: string): LyricLine[] {
@@ -353,39 +406,39 @@ function parseTTML(ttml: string): LyricLine[] {
     const endAttr = attr(p.attrs, "end");
     const endMs = endAttr ? parseTime(endAttr) : startMs + 5000;
 
-    const words: LyricWord[] = [];
+    const rawWords: (LyricWord & { _endsWord?: boolean })[] = [];
     let background: LyricBackground | null = null;
 
-    for (const span of childSpans(p)) {
+    for (const { span, endsWord } of childSpanEntries(p)) {
       if (isBackgroundSpan(span.attrs)) {
-        const bgWords: LyricWord[] = [];
-        for (const inner of childSpans(span)) {
-          const w = spanToWord(inner);
-          if (w) bgWords.push(w);
+        const rawBg: (LyricWord & { _endsWord?: boolean })[] = [];
+        for (const inner of childSpanEntries(span)) {
+          const w = spanToWord(inner.span, inner.endsWord);
+          if (w) rawBg.push(w as any);
         }
-        // Some TTML puts word-level spans directly, others put the text
-        // straight on the x-bg span with no nested spans.
-        if (bgWords.length === 0) {
+        if (rawBg.length === 0) {
           const w = spanToWord(span);
-          if (w) bgWords.push(w);
+          if (w) rawBg.push(w as any);
         }
-        if (bgWords.length > 0) {
+        if (rawBg.length > 0) {
+          const bgWords = mergeSyllables(rawBg);
           const bgBeginAttr = attr(span.attrs, "begin");
           const bgEndAttr = attr(span.attrs, "end");
           background = {
             startMs: bgBeginAttr ? parseTime(bgBeginAttr) : bgWords[0].startMs,
             endMs: bgEndAttr ? parseTime(bgEndAttr) : bgWords[bgWords.length - 1].endMs,
-            text: bgWords.map((w) => w.text.trim()).join(" "),
+            text: bgWords.map((w) => w.text).join(" "),
             words: bgWords,
           };
         }
       } else {
-        const w = spanToWord(span);
-        if (w) words.push(w);
+        const w = spanToWord(span, endsWord);
+        if (w) rawWords.push(w as any);
       }
     }
 
-    const lineText = words.length > 0 ? words.map((w) => w.text.trim()).join(" ") : flattenText(p);
+    const words = mergeSyllables(rawWords);
+    const lineText = words.length > 0 ? words.map((w) => w.text).join(" ") : flattenText(p);
     if (!lineText) continue;
 
     lines.push({ startMs, endMs, text: lineText, words, background });

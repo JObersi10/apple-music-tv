@@ -98,26 +98,30 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                             Text("Artists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 items(results.artists, key = { it.id }) { artist ->
-                                    Surface(
-                                        onClick = { onArtistClick(artist.id) },
-                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                                        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
-                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.width(96.dp),
                                     ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(8.dp)) {
-                                            Box(Modifier.size(80.dp).clip(RoundedCornerShape(50)).background(Color(0xFF3A3A3A))) {
+                                        Surface(
+                                            onClick = { onArtistClick(artist.id) },
+                                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                                            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
+                                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+                                            modifier = Modifier.size(80.dp),
+                                        ) {
+                                            Box(Modifier.fillMaxSize()) {
                                                 if (artist.artworkUrl != null) {
                                                     coil.compose.AsyncImage(
                                                         model = artist.artworkUrl.replace("{w}", "160").replace("{h}", "160").replace("{f}", "jpg"),
                                                         contentDescription = artist.name,
                                                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(50)),
+                                                        modifier = Modifier.fillMaxSize(),
                                                     )
                                                 }
                                             }
-                                            Spacer(Modifier.height(6.dp))
-                                            Text(artist.name, fontSize = 11.sp, color = Color.White, maxLines = 1)
                                         }
+                                        Spacer(Modifier.height(6.dp))
+                                        Text(artist.name, fontSize = 11.sp, color = Color.White, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                                     }
                                 }
                             }

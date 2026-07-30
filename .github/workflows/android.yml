@@ -44,3 +44,20 @@ jobs:
           name: app-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # Publish a rolling "dev" release on every push to main.
+      # Anyone with the repo URL can download the APK — no login required.
+      - name: Publish dev release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          name: "Latest build"
+          body: |
+            Auto-built from `main` — commit ${{ github.sha }}
+
+            **Install:** sideload onto Fire TV via `adb install -r app-debug.apk`
+          prerelease: true
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

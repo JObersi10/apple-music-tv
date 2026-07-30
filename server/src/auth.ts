@@ -43,15 +43,23 @@ export async function scrapeBearerFromWeb(): Promise<string> {
 }
 
 let bearerScrapePromise: Promise<void> | null = null;
+let bearerScrapedAt = 0;
+const BEARER_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 export function ensureBearer(): Promise<void> {
-  if (state.bearerToken) return Promise.resolve();
+  const stale = Date.now() - bearerScrapedAt > BEARER_MAX_AGE_MS;
+  if (state.bearerToken && !stale) return Promise.resolve();
   if (bearerScrapePromise) return bearerScrapePromise;
   bearerScrapePromise = scrapeBearerFromWeb()
-    .then((t) => { if (t) setBearerToken(t); })
+    .then((t) => { if (t) { setBearerToken(t); bearerScrapedAt = Date.now(); } })
     .catch((e) => { console.warn("[auth] Bearer scrape failed:", e); })
     .finally(() => { bearerScrapePromise = null; });
   return bearerScrapePromise;
+}
+
+/** Force an immediate bearer re-scrape (call after 401 from Apple). */
+export function invalidateBearer(): void {
+  bearerScrapedAt = 0;
 }
 
 export const getStatus = () => ({

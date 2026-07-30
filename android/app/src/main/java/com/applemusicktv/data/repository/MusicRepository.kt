@@ -89,6 +89,8 @@ class MusicRepository @Inject constructor(
     suspend fun pingServer(): Boolean =
         runCatching { api.health(); true }.getOrDefault(false)
 
+    suspend fun getAppleStatus() = runCatching { api.appleStatus() }
+
     /** Pre-warm bearer token + storefront for standalone mode. */
     suspend fun prepareStandalone() {
         direct.detectStorefront()
