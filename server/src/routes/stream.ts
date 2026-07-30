@@ -81,8 +81,14 @@ function evictCache() {
  */
 function abortBackgroundJobs(exceptSongId?: string) {
   for (const [id, job] of inFlight_ref) {
-    if (!job.background || id === exceptSongId || !job.child) continue;
-    console.log(`[stream] aborting prefetch ${id} — foreground request needs the bandwidth`);
+    if (id === exceptSongId || !job.child) continue;
+    // Kill stale FOREGROUND jobs too, not just prefetches. Skipping mid-decrypt left
+    // the abandoned song still downloading and competing with the one now playing —
+    // no prefetch involved, so the old background-only sweep never touched it.
+    // ExoPlayer's parallel Range requests share a job by songId, so a different id
+    // always means the user moved on.
+    const kind = job.background ? "prefetch" : "abandoned decrypt";
+    console.log(`[stream] aborting ${kind} ${id} — foreground request needs the bandwidth`);
     try { job.child.kill("SIGKILL"); } catch (_) {}
   }
 }
