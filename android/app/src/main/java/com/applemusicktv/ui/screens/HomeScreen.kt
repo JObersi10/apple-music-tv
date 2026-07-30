@@ -26,9 +26,9 @@ fun HomeScreen(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
+    vm: HomeViewModel = hiltViewModel(),
     modifier: Modifier = Modifier,
 ) {
-    val vm: HomeViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
 
     if (state.isLoading) {

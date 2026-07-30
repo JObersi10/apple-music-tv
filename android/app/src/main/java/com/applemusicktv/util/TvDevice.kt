@@ -2,6 +2,7 @@ package com.applemusicktv.util
 
 import android.content.Context
 import android.os.Build
+import com.applemusicktv.data.OnboardingPreferences
 
 /**
  * Which kind of TV box we're on. This matters for one thing: Fire TV remotes have a
@@ -17,6 +18,15 @@ object TvDevice {
         context.packageManager.hasSystemFeature("amazon.hardware.fire_tv") ||
             Build.MANUFACTURER.equals("Amazon", ignoreCase = true)
 
-    /** True when the remote has no Menu key, so the UI must expose the toggle itself. */
-    fun needsOnScreenMenuToggle(context: Context): Boolean = !isFireTv(context)
+    /**
+     * True when the remote has no Menu key, so the UI must expose the toggle itself.
+     * The onboarding override wins over detection — a repackaged box can lie about
+     * the system feature, and the user can see their own remote.
+     */
+    fun needsOnScreenMenuToggle(context: Context, override: String = OnboardingPreferences.REMOTE_AUTO): Boolean =
+        when (override) {
+            OnboardingPreferences.REMOTE_FIRE -> false
+            OnboardingPreferences.REMOTE_GOOGLE -> true
+            else -> !isFireTv(context)
+        }
 }

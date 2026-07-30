@@ -38,6 +38,22 @@ fun AppShell(modifier: Modifier = Modifier) {
     val navVm: NavigationViewModel = hiltViewModel()
     // Hoist LibraryViewModel so library loads on startup, not when tab is first opened
     val libraryVm: LibraryViewModel = hiltViewModel()
+    // Hoisted so a server re-check from the Dev menu can refetch both screens —
+    // reconnecting is useless if the stale "server down" content stays on screen.
+    val homeVm: com.applemusicktv.ui.viewmodel.HomeViewModel = hiltViewModel()
+
+    // First run: setup owns the whole screen. Nothing behind it is usable until the
+    // server and token are configured, so there is no nav bar and nothing to browse.
+    val onboardingVm: com.applemusicktv.ui.viewmodel.OnboardingViewModel = hiltViewModel()
+    var showOnboarding by remember { mutableStateOf(!playerVm.onboardingCompleted()) }
+    if (showOnboarding) {
+        OnboardingScreen(
+            vm = onboardingVm,
+            onDone = { showOnboarding = false; playerVm.onOnboardingFinished() },
+            modifier = modifier,
+        )
+        return
+    }
 
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
@@ -96,6 +112,7 @@ fun AppShell(modifier: Modifier = Modifier) {
             composable(Screen.Home.route) {
                 HomeScreen(
                     playerVm = playerVm,
+                    vm = homeVm,
                     onAlbumClick = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, artworkUrl ->
                         navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
@@ -135,7 +152,12 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
                 )
             }
-            composable(Screen.DevMenu.route)    { DevMenuScreen(playerVm = playerVm) }
+            composable(Screen.DevMenu.route)    {
+                DevMenuScreen(
+                    playerVm = playerVm,
+                    onDataRefresh = { homeVm.load(); libraryVm.refresh() },
+                )
+            }
             composable(
                 route     = Screen.AlbumDetail.route,
                 arguments = listOf(navArgument("albumId") { type = NavType.StringType }),
@@ -216,10 +238,13 @@ fun AppShell(modifier: Modifier = Modifier) {
         if (showExitDialog) {
             val cancelFocus = remember { FocusRequester() }
             LaunchedEffect(Unit) { cancelFocus.requestFocus() }
-            Box(
-                modifier = Modifier.fillMaxSize().background(Color(0x88000000)),
-                contentAlignment = Alignment.Center,
-            ) {
+            // A plain overlay Box let D-pad focus walk out to the nav bar behind it.
+            // Dialog owns its own window, so focus is trapped where it belongs.
+            androidx.compose.ui.window.Dialog(onDismissRequest = { showExitDialog = false }) {
+                Box(
+                    modifier = Modifier.background(Color(0x00000000)),
+                    contentAlignment = Alignment.Center,
+                ) {
                 Column(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
@@ -264,6 +289,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
                             )
+                        }
                         }
                     }
                 }

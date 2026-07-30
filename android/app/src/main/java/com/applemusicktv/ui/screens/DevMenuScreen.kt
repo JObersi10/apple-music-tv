@@ -26,7 +26,12 @@ import com.applemusicktv.ui.viewmodel.PlayerViewModel
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun DevMenuScreen(playerVm: PlayerViewModel, modifier: Modifier = Modifier) {
+fun DevMenuScreen(
+    playerVm: PlayerViewModel,
+    /** Refetch Listen Now + Library — a reconnect is pointless if stale content stays. */
+    onDataRefresh: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val vm: DevMenuViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     var pcIpDraft by remember(state.pcServerIp) { mutableStateOf(state.pcServerIp) }
@@ -69,8 +74,8 @@ fun DevMenuScreen(playerVm: PlayerViewModel, modifier: Modifier = Modifier) {
             }
 
             Spacer(Modifier.weight(1f))
-            ActionBtn("Re-check Server", Color(0xFF1A2A1A)) { vm.recheckServer(playerVm) }
-            ActionBtn("Refresh Status", Color(0xFF2A2A2A)) { vm.refresh() }
+            ActionBtn("Re-check Server", Color(0xFF1A2A1A)) { vm.recheckServer(playerVm); onDataRefresh() }
+            ActionBtn("Refresh Status", Color(0xFF2A2A2A)) { vm.refresh(); onDataRefresh() }
 
             // PC Server field — bottom of left panel
             Column(

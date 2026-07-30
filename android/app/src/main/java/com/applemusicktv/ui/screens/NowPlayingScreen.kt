@@ -233,7 +233,7 @@ fun NowPlayingScreen(
                     // Google TV and most non-Fire remotes have no Menu key, so the
                     // queue/lyrics toggle needs a control of its own. Fire TV keeps
                     // using Menu and doesn't need the extra button.
-                    if (com.applemusicktv.util.TvDevice.needsOnScreenMenuToggle(LocalContext.current)) {
+                    if (com.applemusicktv.util.TvDevice.needsOnScreenMenuToggle(LocalContext.current, playerVm.remoteOverride())) {
                         TransportButton(TransportIcon.Panel, onClick = navVm::toggleQueuePanel)
                     }
                 }
@@ -1039,21 +1039,26 @@ private fun TransportButton(
                     infiniteRepeatable(tween(900, easing = LinearEasing), AnimRepeatMode.Restart),
                     label = "spinAngle",
                 )
-                Canvas(Modifier.size(btnSize * 0.82f)) {
+                // Rotate a layer rather than re-issuing drawArc with a new startAngle
+                // each frame: the arc geometry is then rasterised once and the spin is
+                // a matrix transform, which the Fire TV GPU does for free.
+                Canvas(
+                    Modifier.size(btnSize * 0.82f).graphicsLayer { rotationZ = angle },
+                ) {
                     val sw = if (large) 3f.dp.toPx() else 2.2f.dp.toPx()
                     val inset = sw / 2f
+                    val arcSize = androidx.compose.ui.geometry.Size(size.width - sw, size.height - sw)
+                    val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
                     drawArc(
                         color = Color.White.copy(alpha = 0.22f),
                         startAngle = 0f, sweepAngle = 360f, useCenter = false,
-                        topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
-                        size = androidx.compose.ui.geometry.Size(size.width - sw, size.height - sw),
+                        topLeft = topLeft, size = arcSize,
                         style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = StrokeCap.Round),
                     )
                     drawArc(
                         color = Color.White,
-                        startAngle = angle, sweepAngle = 90f, useCenter = false,
-                        topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
-                        size = androidx.compose.ui.geometry.Size(size.width - sw, size.height - sw),
+                        startAngle = 0f, sweepAngle = 90f, useCenter = false,
+                        topLeft = topLeft, size = arcSize,
                         style = androidx.compose.ui.graphics.drawscope.Stroke(sw, cap = StrokeCap.Round),
                     )
                 }

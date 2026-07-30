@@ -81,6 +81,7 @@ class PlayerViewModel @Inject constructor(
     private val appleClient: AppleDirectClient,
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
     private val crossfadePrefs: com.applemusicktv.data.CrossfadePreferences,
+    private val onboardingPrefs: com.applemusicktv.data.OnboardingPreferences,
     private val webServer: InAppWebServer,
     val beatAnalyzer: BeatAnalyzer,
 ) : ViewModel() {
@@ -349,10 +350,23 @@ class PlayerViewModel @Inject constructor(
             }
         }
         pollProgress()
-        restoreState()
+        // Don't restore-and-play behind the setup screen — a first-run user would
+        // get audio over onboarding. onOnboardingFinished() picks it up instead.
+        if (onboardingPrefs.completed) restoreState()
         checkServerReachable()
         viewModelScope.launch { checkAppleServiceStatus() }
     }
+
+    fun onboardingCompleted(): Boolean = onboardingPrefs.completed
+
+    /** Remote type chosen in setup — overrides hardware detection for the toggle button. */
+    fun remoteOverride(): String = onboardingPrefs.remoteOverride
+
+    /** Dev menu: replay setup on next launch. */
+    fun resetOnboarding() = onboardingPrefs.reset()
+
+    /** Setup just finished — safe to bring back whatever was playing before. */
+    fun onOnboardingFinished() { recheckServer(); restoreState() }
 
     /** Health-check the configured server; flips to/from standalone accordingly. */
     fun recheckServer() = viewModelScope.launch {
@@ -387,6 +401,10 @@ class PlayerViewModel @Inject constructor(
     private fun saveState() {
         val s = _state.value
         val song = s.currentSong ?: return
+        // Mid-crossfade _state already points at the NEXT song while `player` is still
+        // the outgoing one, so a save here pairs one song's title with another song's
+        // position — which is how a restore lands on the wrong track.
+        if (crossfadeInProgress) return
         val adapter = moshi.adapter(Song::class.java)
         val listType = Types.newParameterizedType(List::class.java, Song::class.java)
         val listAdapter = moshi.adapter<List<Song>>(listType)
@@ -576,6 +594,10 @@ class PlayerViewModel @Inject constructor(
         // once splits the WAN download and the song you're waiting on lands last — a
         // skip used to queue up four concurrent decrypts and take 30s+. Cancelled on
         // the next playQueueItem, so hammering skip only ever warms the song you land on.
+        // Persist the song change right away rather than waiting up to 10s for the
+        // ticker — that window is what let a restore come back on a previous track.
+        lastAutoSaveMs = System.currentTimeMillis()
+        saveState()
         prefetchJob?.cancel()
         if (full && nextSong != null) {
             prefetchJob = viewModelScope.launch {
@@ -726,7 +748,14 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun pause() { player.pause() }
-    fun togglePlayPause() { if (player.isPlaying) player.pause() else player.play() }
+    fun togglePlayPause() {
+        if (player.isPlaying) {
+            player.pause()
+            // The 10s auto-save only ticks while playing, so without this a pause
+            // followed by the process being killed restores a stale position.
+            saveState()
+        } else player.play()
+    }
 
     fun next() {
         val s = _state.value
