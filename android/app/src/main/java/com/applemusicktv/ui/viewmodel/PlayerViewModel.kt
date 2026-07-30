@@ -110,6 +110,8 @@ class PlayerViewModel @Inject constructor(
     private var crossfadeSkipSongId: String? = null
     /** Song whose crossfade-window decision has already been logged (see pollProgress). */
     private var cfWindowLoggedForSongId: String? = null
+    /** Pending N+1 prefetch, cancelled whenever a new song starts loading. */
+    private var prefetchJob: kotlinx.coroutines.Job? = null
 
     // True while the on-device (Widevine) path is driving playback, so the
     // error handler doesn't bounce back to the proxy in a loop.
@@ -570,10 +572,26 @@ class PlayerViewModel @Inject constructor(
         val nextSong = (_state.value.userQueue.firstOrNull()
             ?: q.getOrNull(idx + 1)
             ?: q.firstOrNull().takeIf { _state.value.repeatMode == RepeatMode.All && q.size > 1 })
+        // Wait for THIS song to be playable before warming the next one. Firing both at
+        // once splits the WAN download and the song you're waiting on lands last — a
+        // skip used to queue up four concurrent decrypts and take 30s+. Cancelled on
+        // the next playQueueItem, so hammering skip only ever warms the song you land on.
+        prefetchJob?.cancel()
         if (full && nextSong != null) {
-            preloadedForSongId = nextSong.id
-            webServer.addLog("PRE", "prefetch N+1 song=${nextSong.title}")
-            prefetchSong(nextSong)
+            prefetchJob = viewModelScope.launch {
+                val deadline = System.currentTimeMillis() + 60_000
+                while (player.playbackState != Player.STATE_READY &&
+                       System.currentTimeMillis() < deadline) {
+                    delay(300)
+                }
+                if (player.playbackState != Player.STATE_READY) {
+                    webServer.addLog("PRE", "prefetch N+1 abandoned — ${song.title} never became ready")
+                    return@launch
+                }
+                preloadedForSongId = nextSong.id
+                webServer.addLog("PRE", "prefetch N+1 song=${nextSong.title}")
+                prefetchSong(nextSong)
+            }
         } else {
             webServer.addLog("PRE", "prefetch N+1 skip — full=$full nextSong=${nextSong?.title}")
         }

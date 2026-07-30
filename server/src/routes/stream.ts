@@ -25,7 +25,14 @@ evictCache();
 
 // In-flight decrypt jobs, keyed by songId, so ExoPlayer's several parallel
 // Range connections share one decrypt instead of racing.
-const inFlight_ref = new Map<string, Promise<string>>();
+/** An in-flight decrypt. `child` is kept so a prefetch can be killed when the
+ *  user jumps to a different song and needs the bandwidth now. */
+interface InFlightJob {
+  promise: Promise<string>;
+  child?: import("child_process").ChildProcess;
+  background: boolean;
+}
+const inFlight_ref = new Map<string, InFlightJob>();
 
 function cachePath(songId: string) {
   return path.join(CACHE_DIR, `${songId.replace(/[^a-zA-Z0-9._-]/g, "_")}.mp4`);
@@ -66,8 +73,22 @@ function evictCache() {
   } catch (_) {}
 }
 
+/**
+ * Kill every running prefetch so a song the user is waiting on gets the whole
+ * pipe. Four concurrent decrypts split the WAN download four ways: measured 13-17s
+ * each instead of ~6s, and the foreground track finished in 33s. A killed prefetch
+ * is cheap — Android re-requests N+1 at the next song boundary anyway.
+ */
+function abortBackgroundJobs(exceptSongId?: string) {
+  for (const [id, job] of inFlight_ref) {
+    if (!job.background || id === exceptSongId || !job.child) continue;
+    console.log(`[stream] aborting prefetch ${id} — foreground request needs the bandwidth`);
+    try { job.child.kill("SIGKILL"); } catch (_) {}
+  }
+}
+
 /** Decrypt a song to a seekable cache file (once), returning its path. */
-async function ensureDecrypted(songId: string, mut: string): Promise<string> {
+async function ensureDecrypted(songId: string, mut: string, background = false): Promise<string> {
   const out = cachePath(songId);
   if (fs.existsSync(out) && fs.statSync(out).size > 0) {
     console.log(`[stream] cache hit ${songId} (${(fs.statSync(out).size / 1_048_576).toFixed(1)} MB)`);
@@ -77,9 +98,22 @@ async function ensureDecrypted(songId: string, mut: string): Promise<string> {
   }
 
   const existing = inFlight_ref.get(songId);
-  if (existing) return existing;
+  if (existing) {
+    // A prefetch the user has now caught up to. Promote it so it survives the
+    // abort sweep below rather than killing work that's already half done.
+    if (!background && existing.background) {
+      existing.background = false;
+      console.log(`[stream] promoted prefetch ${songId} to foreground`);
+    }
+    if (!background) abortBackgroundJobs(songId);
+    return existing.promise;
+  }
 
-  const job = (async () => {
+  if (!background) abortBackgroundJobs();
+
+  const entry: InFlightJob = { promise: null as any, background };
+
+  entry.promise = (async () => {
     const t0 = Date.now();
     const tmpOut = out + ".tmp";
     try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
@@ -91,6 +125,7 @@ async function ensureDecrypted(songId: string, mut: string): Promise<string> {
     });
     await new Promise<void>((resolve, reject) => {
       const child = spawn(PYTHON, [DECRYPT_SCRIPT, args]);
+      entry.child = child;
       let stderr = "";
       child.stdout.on("data", (d) => { console.log("[decrypt]", d.toString().trimEnd()); });
       child.stderr.on("data", (d) => { stderr += d.toString(); });
@@ -112,9 +147,9 @@ async function ensureDecrypted(songId: string, mut: string): Promise<string> {
     return out;
   })();
 
-  inFlight_ref.set(songId, job);
+  inFlight_ref.set(songId, entry);
   try {
-    return await job;
+    return await entry.promise;
   } finally {
     inFlight_ref.delete(songId);
   }
@@ -239,7 +274,19 @@ stream.get("/prefetch/:songId", async (c) => {
   const out = cachePath(songId);
   if (fs.existsSync(out) && fs.statSync(out).size > 0) return c.json({ ok: true, cached: true });
   if (inFlight_ref.has(songId)) return c.json({ ok: true, inFlight: true });
-  ensureDecrypted(songId, mut).catch((e) => console.error(`[prefetch] FAILED ${songId}:`, e.message));
+  // One prefetch at a time, and never alongside a song the user is waiting on.
+  // Dropping it is fine: the next song boundary re-requests N+1.
+  for (const job of inFlight_ref.values()) {
+    if (!job.background) {
+      console.log(`[prefetch] deferred ${songId} — a foreground decrypt is running`);
+      return c.json({ ok: true, deferred: "foreground_busy" });
+    }
+  }
+  if ([...inFlight_ref.values()].some((j) => j.background)) {
+    console.log(`[prefetch] deferred ${songId} — another prefetch is already running`);
+    return c.json({ ok: true, deferred: "prefetch_busy" });
+  }
+  ensureDecrypted(songId, mut, true).catch((e) => console.error(`[prefetch] FAILED ${songId}:`, e.message));
   return c.json({ ok: true, started: true });
 });
 

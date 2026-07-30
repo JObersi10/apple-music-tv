@@ -230,6 +230,12 @@ fun NowPlayingScreen(
                         modifier = Modifier.focusRequester(playFocus),
                     )
                     TransportButton(TransportIcon.Next, onClick = playerVm::next)
+                    // Google TV and most non-Fire remotes have no Menu key, so the
+                    // queue/lyrics toggle needs a control of its own. Fire TV keeps
+                    // using Menu and doesn't need the extra button.
+                    if (com.applemusicktv.util.TvDevice.needsOnScreenMenuToggle(LocalContext.current)) {
+                        TransportButton(TransportIcon.Panel, onClick = navVm::toggleQueuePanel)
+                    }
                 }
 
                 // ⋯ options dialog
@@ -997,7 +1003,7 @@ private fun QueuePanel(
     }
 }
 
-private enum class TransportIcon { Play, Pause, Prev, Next }
+private enum class TransportIcon { Play, Pause, Prev, Next, Panel }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -1082,6 +1088,18 @@ private fun TransportButton(
                             close()
                         }
                         drawPath(path, color = color)
+                    }
+                    TransportIcon.Panel -> {
+                        // Three stacked bars — "show the list"
+                        val barH = sw * 1.2f
+                        listOf(0f, (h - barH) * 0.5f, h - barH).forEach { top ->
+                            drawRoundRect(
+                                color,
+                                topLeft = androidx.compose.ui.geometry.Offset(0f, top),
+                                size = androidx.compose.ui.geometry.Size(w, barH),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barH / 2f, barH / 2f),
+                            )
+                        }
                     }
                     TransportIcon.Next -> {
                         val path = androidx.compose.ui.graphics.Path().apply {
