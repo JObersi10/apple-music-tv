@@ -887,17 +887,27 @@ class PlayerViewModel @Inject constructor(
         repo.getSong(songId).getOrNull()?.let { it.artistId to it.albumId } ?: (null to null)
 
     private var lastAutoSaveMs = 0L
+    private var lastProgressPushMs = 0L
 
     private fun pollProgress() = viewModelScope.launch {
         while (true) {
+            val now = System.currentTimeMillis()
             val playing = player.isPlaying
             val playState = player.playbackState
             // During a crossfade the UI already shows the NEXT song, so track that
             // player's position — otherwise the bar sits frozen on the old song.
             val cf = crossfadeExo
             val progressSource = if (crossfadeInProgress && cf != null && cf.playbackState == Player.STATE_READY) cf else player
+            // Re-anchor the UI clock about once a second, not every 200ms. The loop must
+            // stay fast to catch STATE_ENDED and the crossfade window promptly, but the
+            // UI interpolates between anchors per frame (rememberSmoothProgressMs), so
+            // pushing progress 5x/sec just recomposed everything reading PlayerState for
+            // no visible gain.
             if (playing || progressSource !== player) {
-                _state.update { it.copy(progressMs = progressSource.currentPosition) }
+                if (now - lastProgressPushMs >= 900L) {
+                    lastProgressPushMs = now
+                    _state.update { it.copy(progressMs = progressSource.currentPosition) }
+                }
             }
             // Buffering only counts as "loading" while we're mid-crossfade or actually
             // trying to play — a paused player sitting at IDLE isn't waiting on anything.
@@ -906,7 +916,6 @@ class PlayerViewModel @Inject constructor(
             if (loading != _state.value.isLoading) _state.update { it.copy(isLoading = loading) }
             if (playState == Player.STATE_ENDED && !crossfadeInProgress) advanceQueue()
             // Auto-save position every 10s while playing so restore lands at the right spot
-            val now = System.currentTimeMillis()
             if (playing && now - lastAutoSaveMs > 10_000L) { lastAutoSaveMs = now; saveState() }
             val timerEnd = _state.value.sleepTimerEndsAt
             if (timerEnd != null && System.currentTimeMillis() >= timerEnd) {

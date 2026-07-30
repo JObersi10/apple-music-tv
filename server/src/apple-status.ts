@@ -15,7 +15,9 @@ let cached: AppleStatusResult | null = null;
 let cachedAt = 0;
 const CACHE_TTL_MS = 2 * 60 * 1000; // re-check at most every 2 minutes
 
-const MUSIC_KEYWORDS = ["Apple Music", "iTunes Store", "iTunes Match"];
+// Apple Music services only. "iTunes Store" was here too, so a purchase-system
+// outage fired a notification about a feature this app doesn't have.
+const MUSIC_KEYWORDS = ["Apple Music", "iTunes Match"];
 
 export async function checkAppleStatus(): Promise<AppleStatusResult> {
   if (cached && Date.now() - cachedAt < CACHE_TTL_MS) return cached;

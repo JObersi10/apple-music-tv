@@ -76,6 +76,9 @@ fun DevMenuScreen(
             Spacer(Modifier.weight(1f))
             ActionBtn("Re-check Server", Color(0xFF1A2A1A)) { vm.recheckServer(playerVm); onDataRefresh() }
             ActionBtn("Refresh Status", Color(0xFF2A2A2A)) { vm.refresh(); onDataRefresh() }
+            // Replays first-run setup on next launch, so the flow can be retested
+            // without clearing app data (which also wipes the token and pins).
+            ActionBtn("Replay Setup", Color(0xFF2A2A1A)) { playerVm.resetOnboarding() }
 
             // PC Server field — bottom of left panel
             Column(
