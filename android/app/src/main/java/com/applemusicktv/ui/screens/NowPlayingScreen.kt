@@ -714,8 +714,14 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
     ) {
         items(lyrics.size, key = { lyrics[it].startMs }) { idx ->
             val line = lyrics[idx]
-            val isActive = idx == activeIndex
-            val isPast = idx < passedIndex || (idx == passedIndex && activeIndex == -1)
+            // A sustained line ("we're up all night to get lucky") runs past the start of
+            // the next one. Light every line whose own window covers now, not just the
+            // newest — so the held line stays lit above while the new one comes in
+            // underneath, instead of being dimmed to "past" mid-phrase.
+            val isActive = idx == activeIndex ||
+                (progressMs in line.startMs..(line.endMs + LINE_END_GRACE_MS) && idx <= passedIndex)
+            val isPast = !isActive &&
+                (idx < passedIndex || (idx == passedIndex && activeIndex == -1))
             // Only pass progressMs into active line — inactive lines skip per-word work.
             val lineProgress = if (isActive) progressMs else if (isPast) line.endMs else line.startMs - 1L
 
