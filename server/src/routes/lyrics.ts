@@ -198,7 +198,7 @@ function parseLRC(lrc: string): LyricLine[] {
   const out: { startMs: number; text: string }[] = [];
   const tagRe = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
   for (const raw of lrc.split(/\r?\n/)) {
-    const text = raw.replace(tagRe, "").trim();
+    const text = decodeEntities(raw.replace(tagRe, "").trim());
     tagRe.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = tagRe.exec(raw)) !== null) {
@@ -275,13 +275,28 @@ function tokenize(xml: string): Token[] {
   return tokens;
 }
 
+/**
+ * Apple's TTML is XML, so "Rae Sremmurd & Friends" arrives as "&amp;". Decoding at
+ * tree-build time covers every downstream consumer (per-word and flattened text).
+ */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&"); // last: otherwise "&amp;lt;" would become "<"
+}
+
 function buildTree(tokens: Token[]): TagNode {
   const root: TagNode = { tag: "root", attrs: "", children: [] };
   const stack: TagNode[] = [root];
   for (const t of tokens) {
     const top = stack[stack.length - 1];
     if (t.type === "text") {
-      top.children.push(t.text);
+      top.children.push(decodeEntities(t.text));
     } else if (t.type === "open") {
       const node: TagNode = { tag: t.tag, attrs: t.attrs, children: [] };
       top.children.push(node);

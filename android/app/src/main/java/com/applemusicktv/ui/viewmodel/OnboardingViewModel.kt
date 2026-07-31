@@ -13,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -143,7 +144,4 @@ class OnboardingViewModel @Inject constructor(
         onboarding.markCompleted()
     }
 
-    private fun MutableStateFlow<OnboardingState>.update(f: (OnboardingState) -> OnboardingState) {
-        value = f(value)
-    }
 }

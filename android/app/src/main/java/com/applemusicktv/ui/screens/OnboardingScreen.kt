@@ -26,6 +26,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
@@ -166,7 +167,11 @@ private fun StepServer(
                     singleLine = true,
                     textStyle = TextStyle(color = Color.White, fontSize = 17.sp, fontFamily = FontFamily.Monospace),
                     cursorBrush = SolidColor(Color(0xFFFA233B)),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    // Decimal, not Number: an IP needs the dot key.
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Decimal,
+                        imeAction = ImeAction.Done,
+                    ),
                     keyboardActions = KeyboardActions(onDone = {
                         editing = false
                         dismissKeyboard()

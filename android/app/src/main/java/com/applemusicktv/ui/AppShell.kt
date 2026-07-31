@@ -49,10 +49,24 @@ fun AppShell(modifier: Modifier = Modifier) {
     if (showOnboarding) {
         OnboardingScreen(
             vm = onboardingVm,
-            onDone = { showOnboarding = false; playerVm.onOnboardingFinished() },
+            onDone = {
+                showOnboarding = false
+                playerVm.onOnboardingFinished()
+                homeVm.load()
+                libraryVm.refresh()
+            },
             modifier = modifier,
         )
         return
+    }
+
+    // Transient errors surface as a toast: a TV user is across the room and won't
+    // find an inline banner, and silence reads as a crash.
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(Unit) {
+        playerVm.toasts.collect { msg ->
+            android.widget.Toast.makeText(appContext, msg, android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     val currentEntry by navController.currentBackStackEntryAsState()

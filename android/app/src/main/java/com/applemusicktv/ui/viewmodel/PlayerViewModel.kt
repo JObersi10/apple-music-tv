@@ -95,6 +95,14 @@ class PlayerViewModel @Inject constructor(
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state
 
+    /**
+     * One-off user-facing messages. extraBufferCapacity so an emit from the polling
+     * thread never suspends, and replay=0 so a message doesn't re-fire on rotation.
+     */
+    private val _toasts = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 4)
+    val toasts: SharedFlow<String> = _toasts
+    fun toast(msg: String) { _toasts.tryEmit(msg) }
+
     private var lastErrorKey: String? = null
     private var hasPlayedSomething = false
     var nowPlayingVisible = false
@@ -117,6 +125,9 @@ class PlayerViewModel @Inject constructor(
     // True while the on-device (Widevine) path is driving playback, so the
     // error handler doesn't bounce back to the proxy in a loop.
     private var usingStandalone: Boolean = false
+
+    /** Held so onCleared can unregister it — AudioManager outlives this ViewModel. */
+    private var audioDeviceCallback: AudioDeviceCallback? = null
 
 
 
@@ -300,6 +311,9 @@ class PlayerViewModel @Inject constructor(
             val pos = player.currentPosition
             val song = _state.value.currentSong?.title ?: "?"
             webServer.addLog("ERR", "${error.errorCodeName} pos=${pos}ms song=$song cfade=$crossfadeInProgress cause=${error.cause?.message}")
+            // Silence looks like a crash otherwise — say why we skipped.
+            toast(if (serverPrefs.serverReachable) "Couldn't play \"$song\" — skipping"
+                  else "Can't reach the server")
             if (crossfadeInProgress && crossfadeExo != null) {
                 // Old player died mid-fade — snap cfExo to full volume immediately
                 crossfadeExo!!.volume = 1f
@@ -338,10 +352,14 @@ class PlayerViewModel @Inject constructor(
             beatAnalyzer.latencyMs = if (onBt) 200L else 0L
         }
         updateBtLatency()
-        audioManager.registerAudioDeviceCallback(object : AudioDeviceCallback() {
+        // AudioManager is a system service and outlives this ViewModel, so hold the
+        // callback and unregister it in onCleared — otherwise every future BT connect
+        // fires into a dead instance.
+        audioDeviceCallback = object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>) { updateBtLatency() }
             override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>) { updateBtLatency() }
-        }, null)
+        }
+        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
 
         viewModelScope.launch {
             repo.authErrorFlow.collect {
@@ -366,7 +384,16 @@ class PlayerViewModel @Inject constructor(
     fun resetOnboarding() = onboardingPrefs.reset()
 
     /** Setup just finished — safe to bring back whatever was playing before. */
-    fun onOnboardingFinished() { recheckServer(); restoreState() }
+    fun onOnboardingFinished() {
+        // Setup may have just added the token; the proxy needs its own copy before
+        // any library call, and _state still says isFullStream=false.
+        viewModelScope.launch {
+            if (hasMUT()) runCatching { repo.syncMUTToServer(mutPrefs.getMUT()) }
+            recheckServer().join()
+            _state.update { it.copy(isFullStream = hasMUT()) }
+            restoreState()
+        }
+    }
 
     /** Health-check the configured server; flips to/from standalone accordingly. */
     fun recheckServer() = viewModelScope.launch {
@@ -375,10 +402,12 @@ class PlayerViewModel @Inject constructor(
         serverPrefs.serverReachable = up
         Log.i("PlayerVM", if (up) "Server reachable — proxy mode" else "Server DOWN — standalone mode")
         if (!up) {
+            if (!wasDown) toast("Lost connection to the server")
             repo.prepareStandalone()
         } else if (wasDown) {
             // Recovered — reset standalone flag so next play uses proxy.
             usingStandalone = false
+            toast("Server back online")
             Log.i("PlayerVM", "Server recovered — returning to proxy mode")
         }
     }
@@ -903,10 +932,15 @@ class PlayerViewModel @Inject constructor(
             // UI interpolates between anchors per frame (rememberSmoothProgressMs), so
             // pushing progress 5x/sec just recomposed everything reading PlayerState for
             // no visible gain.
-            if (playing || progressSource !== player) {
-                if (now - lastProgressPushMs >= 900L) {
+            val sourcePos = progressSource.currentPosition
+            // A seek while PAUSED moves the player but not the clock, and the throttle
+            // below only runs while playing — so the bar would sit frozen at the old
+            // position until playback resumed. Detect the jump and push it through.
+            val jumped = kotlin.math.abs(sourcePos - _state.value.progressMs) > 1_000L
+            if (playing || progressSource !== player || jumped) {
+                if (jumped || now - lastProgressPushMs >= 900L) {
                     lastProgressPushMs = now
-                    _state.update { it.copy(progressMs = progressSource.currentPosition) }
+                    _state.update { it.copy(progressMs = sourcePos) }
                 }
             }
             // Buffering only counts as "loading" while we're mid-crossfade or actually
@@ -1027,6 +1061,11 @@ class PlayerViewModel @Inject constructor(
                         loadLyrics(nextSong.id); loadMotion(nextSong.id)
                         if (nextSong.artistId == null || nextSong.albumId == null) enrichSongIds(nextSong.id)
                         val fadeDurationMs = remaining.coerceIn(300L, crossfadeDurationMs)
+                        // Cancel the song-start fade-in first. On a track shorter than
+                        // ~2x the crossfade length the two windows overlap, and without
+                        // this both jobs drive the same player's volume — one up, one
+                        // down — and the old job is orphaned when the field is reassigned.
+                        fadeJob?.cancel()
                         fadeJob = viewModelScope.launch {
                             val steps = 50
                             val stepMs = fadeDurationMs / steps
@@ -1154,6 +1193,10 @@ class PlayerViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        audioDeviceCallback?.let {
+            runCatching { context.getSystemService(AudioManager::class.java)?.unregisterAudioDeviceCallback(it) }
+        }
+        audioDeviceCallback = null
         saveState()
         lyricsJob?.cancel()
         motionJob?.cancel()
