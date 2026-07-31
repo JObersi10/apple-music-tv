@@ -658,8 +658,10 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
     val scrollAnchor = passedIndex.coerceAtLeast(0)
     val firstLoad = remember { mutableStateOf(true) }
 
-    // Track user-initiated scrolls so auto-scroll doesn't fight them.
-    // Re-enable auto-scroll 5s after the user stops touching the list.
+    // Track user-initiated scrolls so auto-scroll doesn't fight them. Auto-scroll
+    // resumes the way Apple Music does: not on a timer, but when you bring the
+    // current line back on screen — and then only at the next line change, so it
+    // rejoins the flow instead of yanking mid-line.
     var userScrolled by remember { mutableStateOf(false) }
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
@@ -669,22 +671,23 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
             }
         }
     }
-    LaunchedEffect(listState.isScrollInProgress) {
-        if (!listState.isScrollInProgress && userScrolled) {
-            kotlinx.coroutines.delay(5_000)
-            userScrolled = false
-        }
-    }
 
     LaunchedEffect(scrollAnchor, lyrics.size) {
-        val target = (scrollAnchor - 3).coerceAtLeast(0)
         if (lyrics.isEmpty()) return@LaunchedEffect
+        val target = (scrollAnchor - 3).coerceAtLeast(0)
         if (firstLoad.value) {
             listState.scrollToItem(target)
             firstLoad.value = false
-        } else if (!userScrolled) {
-            scope.launch { listState.animateScrollToItem(target) }
+            return@LaunchedEffect
         }
+        if (userScrolled) {
+            // Still browsing elsewhere — leave the list alone. Once the active line is
+            // visible again this same effect fires on the next line change and takes over.
+            val backInView = listState.layoutInfo.visibleItemsInfo.any { it.index == scrollAnchor }
+            if (!backInView || listState.isScrollInProgress) return@LaunchedEffect
+            userScrolled = false
+        }
+        listState.animateScrollToItem(target)
     }
 
     // When navigating back to this screen, scroll to the active line.
