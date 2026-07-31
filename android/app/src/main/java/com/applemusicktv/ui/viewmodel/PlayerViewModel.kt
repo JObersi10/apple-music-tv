@@ -82,6 +82,7 @@ class PlayerViewModel @Inject constructor(
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
     private val crossfadePrefs: com.applemusicktv.data.CrossfadePreferences,
     private val onboardingPrefs: com.applemusicktv.data.OnboardingPreferences,
+    private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
     private val webServer: InAppWebServer,
     val beatAnalyzer: BeatAnalyzer,
 ) : ViewModel() {
@@ -425,7 +426,12 @@ class PlayerViewModel @Inject constructor(
     // failed its health check. The default PROXY_BASE_URL is still a real
     // server, so "no Dev-menu IP" must NOT by itself force standalone —
     // otherwise normal proxy playback (albums/playlists) breaks.
-    private fun useStandalone() = !serverPrefs.serverReachable
+    /**
+     * On-device Widevine instead of the proxy's decrypt+remux. Either the user turned
+     * it on (it's faster: no 15-20s wait), or the server is gone and it's the only way
+     * to play anything.
+     */
+    private fun useStandalone() = standalonePrefs.isEnabled() || !serverPrefs.serverReachable
 
     private fun saveState() {
         val s = _state.value
@@ -587,13 +593,20 @@ class PlayerViewModel @Inject constructor(
 
         val song = q[idx]
         val full = _state.value.isFullStream
+        val standalone = full && useStandalone()
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
-        webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}")
+        webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}${if (standalone) " [standalone]" else ""}")
         _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
         saveState()
         player.repeatMode = Player.REPEAT_MODE_OFF
-        player.setMediaItem(buildMediaItem(song, uri))
-        player.prepare()
+        if (standalone) {
+            // Widevine setup needs a network round-trip, so it can't be inline.
+            // playStandalone falls back to the proxy URL by itself if it fails.
+            playStandalone(song)
+        } else {
+            player.setMediaItem(buildMediaItem(song, uri))
+            player.prepare()
+        }
         if (skipFadeIn) {
             player.volume = 1f
         } else {
@@ -628,7 +641,7 @@ class PlayerViewModel @Inject constructor(
         lastAutoSaveMs = System.currentTimeMillis()
         saveState()
         prefetchJob?.cancel()
-        if (full && nextSong != null) {
+        if (full && !standalone && nextSong != null) {
             prefetchJob = viewModelScope.launch {
                 val deadline = System.currentTimeMillis() + 60_000
                 while (player.playbackState != Player.STATE_READY &&
@@ -772,8 +785,6 @@ class PlayerViewModel @Inject constructor(
             player.prepare()
             player.play()
         }
-        loadLyrics(song.id)
-        loadMotion(song.id)
     }
 
     fun pause() { player.pause() }

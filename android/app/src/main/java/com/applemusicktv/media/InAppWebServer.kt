@@ -3,6 +3,7 @@ package com.applemusicktv.media
 import android.content.Context
 import android.net.wifi.WifiManager
 import com.applemusicktv.data.CrossfadePreferences
+import com.applemusicktv.data.StandalonePreferences
 import com.applemusicktv.data.LyricsOffsetPreferences
 import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.NetworkLog
@@ -25,6 +26,7 @@ class InAppWebServer @Inject constructor(
     private val repo: MusicRepository,
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
     private val crossfadePrefs: CrossfadePreferences,
+    private val standalonePrefs: StandalonePreferences,
     private val beatAnalyzer: BeatAnalyzer,
 ) {
     private val logs = ArrayDeque<String>(300)
@@ -139,6 +141,7 @@ class InAppWebServer @Inject constructor(
                 method == "POST" && path == "/set-lyrics-offset"   -> { applyLyricsOffset(parseField(body, "offset")); redirect(out, "/") }
                 method == "POST" && path == "/set-beat-latency"    -> { applyBeatLatency(parseField(body, "latency")); redirect(out, "/") }
                 method == "POST" && path == "/set-crossfade"       -> { applyCrossfade(parseField(body, "crossfade")); redirect(out, "/") }
+            method == "POST" && path == "/set-standalone"      -> { applyStandalone(parseField(body, "standalone")); redirect(out, "/") }
                 else -> send(out, 404, "text/plain", "Not found")
             }
             out.flush(); socket.close()
@@ -151,6 +154,12 @@ class InAppWebServer @Inject constructor(
         beatAnalyzer.latencyMs = ms
         beatAnalyzer.resetBeat()
         addLog("OK", "Beat latency set to ${ms}ms — buffer reset")
+    }
+
+    private fun applyStandalone(raw: String) {
+        val on = raw.trim() == "1" || raw.trim().equals("true", ignoreCase = true)
+        standalonePrefs.setEnabled(on)
+        addLog("OK", "Standalone playback ${if (on) "ON" else "OFF"} — applies from next song")
     }
 
     private fun applyCrossfade(raw: String) {
@@ -228,6 +237,7 @@ class InAppWebServer @Inject constructor(
         val preview = if (has) prefs.getMUT().take(32) + "…" else ""
         val currentOffset = lyricsOffsetPrefs.getOffset()
         val currentBeatLatency = beatAnalyzer.latencyMs
+        val standaloneOn = standalonePrefs.isEnabled()
         val currentCrossfade = crossfadePrefs.getDuration()
         val crossfadeSec = "%.1f".format(currentCrossfade / 1000f)
         val logRows = getLogs().reversed().take(80).joinToString("") { log ->
@@ -326,6 +336,16 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 <button class="btn btn-p" type=submit style=margin-top:8px>Apply &amp; Reset</button>
 </form>
 <div style="font-size:10px;color:#555;margin-top:8px">0 = TV speakers. ~200 = typical Bluetooth. Resets beat buffer on apply.</div>
+</div>
+
+<div class=card>
+<h2>Standalone playback</h2>
+<div class=row><div class=label>Status</div><div class=sub2 style="color:${if (standaloneOn) "#6bcb77" else "#aaa"}">${if (standaloneOn) "ON — decrypting on the TV" else "OFF — using the PC server"}</div></div>
+<form method=POST action=/set-standalone>
+<input type=hidden name=standalone value="${if (standaloneOn) "0" else "1"}">
+<button class="btn ${if (standaloneOn) "" else "btn-p"}" type=submit style=margin-top:8px>${if (standaloneOn) "Turn OFF" else "Turn ON"}</button>
+</form>
+<div style="font-size:10px;color:#555;margin-top:8px">Decrypts on the Fire TV with Widevine instead of waiting for the PC to download and re-encode. Usually starts in ~1s instead of 15-20s. The server is still used for browse, library and lyrics. Applies from the next song.</div>
 </div>
 
 <div class=card>
