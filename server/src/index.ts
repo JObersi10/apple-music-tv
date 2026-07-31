@@ -86,5 +86,28 @@ app.onError((err, c) => {
 })
 
 const PORT = Number(process.env.PORT ?? 3000)
+
+/**
+ * LAN addresses this machine is reachable on. The TV needs one of these typed into
+ * first-run setup, and "0.0.0.0" tells you nothing — so print the real ones.
+ */
+function lanAddresses(): string[] {
+  const out: string[] = []
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family !== "IPv4" || a.internal) continue
+      out.push(`${a.address}  (${name})`)
+    }
+  }
+  return out
+}
+
 console.log(`🎵 Proxy running on http://0.0.0.0:${PORT}`)
+const addrs = lanAddresses()
+if (addrs.length === 0) {
+  console.log("   No LAN address found — is this machine on Wi-Fi/Ethernet?")
+} else {
+  console.log("   Enter this on the TV:")
+  for (const a of addrs) console.log(`     http://${a.split("  ")[0]}:${PORT}   ${a.split("  ")[1]}`)
+}
 export default { port: PORT, fetch: app.fetch, idleTimeout: 0 }
