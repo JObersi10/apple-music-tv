@@ -122,6 +122,7 @@ class PlayerViewModel @Inject constructor(
     private var cfWindowLoggedForSongId: String? = null
     /** Title of the song whose standalone attempt already failed — retry proxy once, then give up. */
     private var standaloneFailedSongId: String? = null
+    private var standaloneFailures = 0
     /** Pending N+1 prefetch, cancelled whenever a new song starts loading. */
     private var prefetchJob: kotlinx.coroutines.Job? = null
 
@@ -322,8 +323,17 @@ class PlayerViewModel @Inject constructor(
             if (usingStandalone && !crossfadeInProgress && standaloneFailedSongId != song) {
                 standaloneFailedSongId = song
                 usingStandalone = false
-                webServer.addLog("PLR", "standalone failed for $song — retrying via proxy")
-                toast("On-device playback failed — using the server")
+                standaloneFailures++
+                webServer.addLog("PLR", "standalone failed for $song — retrying via proxy (#$standaloneFailures)")
+                // If it fails repeatedly it's not the track, it's the device or the
+                // scheme — stop paying the failed-attempt cost on every single song.
+                if (standaloneFailures >= 3 && standalonePrefs.isEnabled()) {
+                    standalonePrefs.setEnabled(false)
+                    webServer.addLog("PLR", "standalone disabled after $standaloneFailures failures")
+                    toast("On-device playback isn't working here — switched back to the server")
+                } else {
+                    toast("On-device playback failed — using the server")
+                }
                 val s = _state.value
                 val cur = s.queue.getOrNull(s.queueIndex)
                 if (cur != null) {

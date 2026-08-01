@@ -701,9 +701,28 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
         }
     }
 
+    // A line whose own window is still open while a LATER line has already started
+    // (Get Lucky's "we're up all night…"). Pin it above the list so it holds position
+    // while the rest keeps scrolling and fading underneath.
+    val pinnedIdx = (0 until passedIndex).lastOrNull { i ->
+        progressMs in lyrics[i].startMs..(lyrics[i].endMs + LINE_END_GRACE_MS)
+    }
+
+    Column(Modifier.fillMaxSize()) {
+    if (pinnedIdx != null) {
+        Box(Modifier.padding(end = 16.dp, bottom = 10.dp)) {
+            LyricLineRow(
+                line = lyrics[pinnedIdx],
+                isActive = true,
+                isPast = false,
+                progressMs = progressMs,
+                onSeek = { onSeek(lyrics[pinnedIdx].startMs) },
+            )
+        }
+    }
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize().padding(end = 16.dp).nestedScroll(nestedScrollConnection)
+        modifier = Modifier.weight(1f).padding(end = 16.dp).nestedScroll(nestedScrollConnection)
             .onPreviewKeyEvent { ev: androidx.compose.ui.input.key.KeyEvent ->
                 // Block upward D-pad escape to top nav bar from lyrics
                 ev.key == Key.DirectionUp && ev.type == KeyEventType.KeyDown &&
@@ -713,6 +732,7 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         items(lyrics.size, key = { lyrics[it].startMs }) { idx ->
+            if (idx == pinnedIdx) return@items   // already drawn pinned above
             val line = lyrics[idx]
             // A sustained line ("we're up all night to get lucky") runs past the start of
             // the next one. Light every line whose own window covers now, not just the
@@ -748,6 +768,7 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
                 onSeek = { onSeek(line.startMs) },
             )
         }
+    }
     }
 }
 
