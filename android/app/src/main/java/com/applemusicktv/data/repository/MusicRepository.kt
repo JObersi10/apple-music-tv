@@ -93,19 +93,28 @@ class MusicRepository @Inject constructor(
 
     // ── Home ─────────────────────────────────────────────────────────────
     suspend fun getHome() = if (!useProxy) {
-        direct.recommendations().map { sections ->
-            com.applemusicktv.data.network.HomeResponse(
-                sections = sections.map { (title, albums) ->
-                    com.applemusicktv.data.network.HomeSection(title, albums)
-                }
-            )
+        // /me/recommendations is often empty, and an empty Listen Now looks broken.
+        // Fall back to charts so the tab always has something in it.
+        direct.recommendations().mapCatching { recs ->
+            val sections = recs.ifEmpty { direct.charts().getOrDefault(emptyList()) }
+            sectionsOf(sections)
         }
     } else runCatching { api.getHome() }
 
-    suspend fun getBrowse() = runCatching { api.getBrowse() }
+    private fun sectionsOf(pairs: List<Pair<String, List<com.applemusicktv.data.network.AlbumDto>>>) =
+        com.applemusicktv.data.network.HomeResponse(
+            sections = pairs.map { (title, albums) ->
+                com.applemusicktv.data.network.HomeSection(title, albums)
+            }
+        )
+
+    suspend fun getBrowse() =
+        if (!useProxy) direct.charts().map(::sectionsOf) else runCatching { api.getBrowse() }
     suspend fun getGenres() =
         if (!useProxy) direct.genres() else runCatching { api.getGenres().genres }
-    suspend fun getGenreContent(id: String) = runCatching { api.getGenreContent(id) }
+    suspend fun getGenreContent(id: String) =
+        if (!useProxy) direct.charts(genre = id).map(::sectionsOf)
+        else runCatching { api.getGenreContent(id) }
     suspend fun getRelatedSongs(songId: String) = runCatching { api.getRelatedSongs(songId).songs.map(::songFromDto) }
 
     // ── Lyrics ────────────────────────────────────────────────────────────

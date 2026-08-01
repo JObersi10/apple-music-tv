@@ -214,6 +214,40 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         api.libraryArtists(limit = 100).data.map { it.toArtistDto() }
     }
 
+    /**
+     * Charts, shaped like the proxy's Browse/genre payload. Apple nests these as
+     * results.albums[] -> { name, data[] }, one entry per chart.
+     */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun charts(genre: String? = null): Result<List<Pair<String, List<AlbumDto>>>> = runCatching {
+        val raw = api.charts(storefront, genre = genre)
+        val results = raw["results"] as? Map<*, *> ?: return@runCatching emptyList()
+        val out = mutableListOf<Pair<String, List<AlbumDto>>>()
+        for (kind in listOf("albums", "playlists")) {
+            val charts = results[kind] as? List<*> ?: continue
+            for (chart in charts) {
+                val c = chart as? Map<*, *> ?: continue
+                val title = c["name"] as? String ?: continue
+                val items = (c["data"] as? List<*>)?.mapNotNull { e ->
+                    val n = e as? Map<*, *> ?: return@mapNotNull null
+                    val a = n["attributes"] as? Map<*, *> ?: return@mapNotNull null
+                    AlbumDto(
+                        id = n["id"] as? String ?: return@mapNotNull null,
+                        title = a["name"] as? String ?: "",
+                        artistName = (a["artistName"] ?: a["curatorName"]) as? String ?: "",
+                        artworkUrl = (a["artwork"] as? Map<*, *>)?.get("url") as? String,
+                        type = if (kind == "playlists") "playlists" else "albums",
+                        artworkBgColor = (a["artwork"] as? Map<*, *>)?.get("bgColor") as? String,
+                        releaseDate = a["releaseDate"] as? String,
+                        trackCount = (a["trackCount"] as? Number)?.toInt() ?: 0,
+                    )
+                } ?: emptyList()
+                if (items.isNotEmpty()) out.add(title to items)
+            }
+        }
+        out
+    }
+
     suspend fun genres(): Result<List<GenreDto>> = runCatching {
         api.catalogGenres(storefront).data.map { GenreDto(id = it.id, name = it.attributes?.name ?: "") }
     }

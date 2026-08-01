@@ -303,6 +303,15 @@ interface DirectAppleApi {
         @Query("extend") extend: String = "editorialVideo",
     ): Map<String, Any>
 
+    /** Apple's charts — what the proxy's Browse tab is built from. */
+    @GET("v1/catalog/{sf}/charts")
+    suspend fun charts(
+        @Path("sf") storefront: String,
+        @Query("types") types: String = "albums,playlists",
+        @Query("limit") limit: Int = 20,
+        @Query("genre") genre: String? = null,
+    ): Map<String, Any>
+
     @GET("v1/catalog/{sf}/genres")
     suspend fun catalogGenres(
         @Path("sf") storefront: String,
