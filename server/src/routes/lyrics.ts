@@ -39,6 +39,19 @@ lyrics.get("/:songId", async (c) => {
     }
   } catch (e: any) { console.warn(`[lyrics] ${songId} lrclib failed: ${e.message}`); }
 
+  // 3) Last resort: unsynced plain text. Better than an empty panel — it just
+  //    can't be highlighted or seeked, which the client renders dimmed.
+  try {
+    const meta = await fetchSongMeta(songId, headers);
+    if (meta) {
+      const plain = await fetchLrclibPlain(meta);
+      if (plain && plain.length > 0) {
+        console.log(`[lyrics] ${songId} lrclib plain (${plain.length} lines) ${Date.now() - t0}ms`);
+        return c.json({ lines: plain, source: "lrclib-plain", synced: false });
+      }
+    }
+  } catch (e: any) { console.warn(`[lyrics] ${songId} plain failed: ${e.message}`); }
+
   console.log(`[lyrics] ${songId} none ${Date.now() - t0}ms`);
   return c.json({ lines: [], source: "none" });
 });
@@ -191,6 +204,27 @@ async function fetchLrclibLyrics(meta: SongMeta): Promise<LyricLine[] | null> {
 
   if (!synced) return null;
   return parseLRC(synced);
+}
+
+/**
+ * Unsynced lyrics. startMs of -1 marks a line as untimed so the client knows not to
+ * highlight or seek to it.
+ */
+async function fetchLrclibPlain(meta: SongMeta): Promise<LyricLine[] | null> {
+  const params = new URLSearchParams({ track_name: meta.title, artist_name: meta.artist });
+  if (meta.durationSec > 0) params.set("duration", String(meta.durationSec));
+  const lrcHeaders = { "User-Agent": "AppleMusicTV (github.com/applemusicktv)" };
+  let plain: string | null = null;
+  try {
+    const res = await axios.get(`https://lrclib.net/api/get?${params.toString()}`, { headers: lrcHeaders });
+    if (res.data?.plainLyrics && isGoodLrclibMatch(res.data, meta)) plain = res.data.plainLyrics;
+  } catch (_) {}
+  if (!plain) return null;
+  return plain
+    .split(/\r?\n/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .map((text) => ({ startMs: -1, endMs: -1, text, words: [], background: null }));
 }
 
 /** Parse standard `[mm:ss.xx] text` LRC into line-synced LyricLines. */

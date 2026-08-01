@@ -648,11 +648,9 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
 }
 
 /** How many lines of already-sung context stay above the active line after a scroll. */
-/** A line must outlast the next line by this much to count as sustained. */
-private const val SUSTAIN_MIN_OVERLAP_MS = 1500L
-private const val LYRIC_LEAD_LINES = 3
+private const val LYRIC_LEAD_LINES = 2
 /** Scroll once the active line gets this close to the bottom of the viewport. */
-private const val LYRIC_BOTTOM_MARGIN_PX = 260
+private const val LYRIC_BOTTOM_MARGIN_PX = 40
 
 private const val GAP_THRESHOLD_MS = 4000L
 private const val LINE_END_GRACE_MS = 250L
@@ -731,25 +729,10 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
         }
     }
 
-    // A line whose own window is still open while a LATER line has already started
-    // (Get Lucky's "we're up all night…"). Pin it above the list so it holds position
-    // while the rest keeps scrolling and fading underneath.
-    val pinnedIdx = (0 until passedIndex).lastOrNull { i ->
-        progressMs in lyrics[i].startMs..(lyrics[i].endMs + LINE_END_GRACE_MS)
-    }
-
+    // No pinned/sticky line. It was tried for Get Lucky's held phrase, but
+    // line-synced sources set endMs to the next line's startMs, so nearly every line
+    // matched and one was permanently stuck at the top, fading in and out.
     Column(Modifier.fillMaxSize()) {
-    if (pinnedIdx != null) {
-        Box(Modifier.padding(end = 16.dp, bottom = 10.dp)) {
-            LyricLineRow(
-                line = lyrics[pinnedIdx],
-                isActive = true,
-                isPast = false,
-                progressMs = progressMs,
-                onSeek = { onSeek(lyrics[pinnedIdx].startMs) },
-            )
-        }
-    }
     LazyColumn(
         state = listState,
         modifier = Modifier.weight(1f).padding(end = 16.dp).nestedScroll(nestedScrollConnection)
@@ -761,22 +744,17 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
         contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        items(lyrics.size, key = { lyrics[it].startMs }) { idx ->
-            if (idx == pinnedIdx) return@items   // already drawn pinned above
+        items(lyrics.size, key = { if (lyrics[it].startMs >= 0) lyrics[it].startMs else -it.toLong() - 1 }) { idx ->
             val line = lyrics[idx]
-            // A sustained line ("we're up all night to get lucky") runs past the start of
-            // the next one. Light every line whose own window covers now, not just the
-            // newest — so the held line stays lit above while the new one comes in
-            // underneath, instead of being dimmed to "past" mid-phrase.
-            // Only a line that genuinely runs past the NEXT line's start counts as
-            // sustained (Get Lucky). Line-synced lyrics usually set endMs to the next
-            // startMs, which previously lit half the song at once.
-            val overlapsNext = idx < lyrics.lastIndex &&
-                line.endMs > lyrics[idx + 1].startMs + SUSTAIN_MIN_OVERLAP_MS
-            val isActive = idx == activeIndex ||
-                (overlapsNext && idx < passedIndex && progressMs in line.startMs..line.endMs)
-            val isPast = !isActive &&
-                (idx < passedIndex || (idx == passedIndex && activeIndex == -1))
+            // One line lit at a time. Holding sustained lines lit was tried and removed:
+            // line-synced sources set endMs to the next line's startMs, so "still within
+            // its window" matched almost everything and the list scrolled and faded
+            // wrongly on ordinary songs.
+            // Unsynced (plain-text) lyrics come back with startMs = -1. Show them so
+            // the panel isn't empty, but never highlighted and never seekable.
+            val unsynced = line.startMs < 0
+            val isActive = !unsynced && idx == activeIndex
+            val isPast = !unsynced && (idx < passedIndex || (idx == passedIndex && activeIndex == -1))
             // Only pass progressMs into active line — inactive lines skip per-word work.
             val lineProgress = if (isActive) progressMs else if (isPast) line.endMs else line.startMs - 1L
 
@@ -795,13 +773,21 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
                 )
             }
 
-            LyricLineRow(
-                line = line,
-                isActive = isActive,
-                isPast = isPast,
-                progressMs = lineProgress,
-                onSeek = { onSeek(line.startMs) },
-            )
+            if (unsynced) {
+                Text(
+                    line.text,
+                    style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Medium, color = Color(0x66FFFFFF)),
+                    modifier = Modifier.fillMaxWidth().padding(end = 16.dp),
+                )
+            } else {
+                LyricLineRow(
+                    line = line,
+                    isActive = isActive,
+                    isPast = isPast,
+                    progressMs = lineProgress,
+                    onSeek = { onSeek(line.startMs) },
+                )
+            }
         }
     }
     }
