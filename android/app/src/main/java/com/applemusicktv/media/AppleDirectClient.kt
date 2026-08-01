@@ -15,6 +15,8 @@ data class WebPlaybackResult(
     val adamId:   String,
     val hlsUrl:   String,
     val keyUri:   String,
+    /** Raw media playlist — needed so the EXT-X-KEY line can be rewritten. */
+    val hlsText:  String = "",
 )
 
 @Singleton
@@ -103,8 +105,36 @@ class AppleDirectClient @Inject constructor() {
             val keyUri = Regex("""URI="(data:[^"]+)"""").find(hlsText)?.groupValues?.get(1)
                 ?: error("No key URI in HLS manifest")
 
-            WebPlaybackResult(adamId = adamId, hlsUrl = mediaUrl, keyUri = keyUri)
+            WebPlaybackResult(adamId = adamId, hlsUrl = mediaUrl, keyUri = keyUri, hlsText = hlsText)
         }
+
+    /**
+     * ExoPlayer's HLS parser hard-rejects Apple's `#EXT-X-KEY:METHOD=ISO-23001-7`
+     * ("Couldn't match METHOD=..."), so the manifest never even loads. Drop the key
+     * line — the CENC pssh lives in the fMP4 init segment, and the DrmSessionManager
+     * we attach handles the Widevine license from there. Segment URIs are absolutised
+     * because the rewritten playlist is served from a local file, so relative paths
+     * would otherwise resolve against file://.
+     */
+    fun rewritePlaylistForExo(text: String, playlistUrl: String): String {
+        val base = playlistUrl.substring(0, playlistUrl.lastIndexOf('/') + 1)
+        fun abs(u: String) = if (u.startsWith("http")) u else base + u
+        return buildString {
+            for (raw in text.lines()) {
+                val line = raw.trim()
+                when {
+                    line.startsWith("#EXT-X-KEY") -> {}                      // drop
+                    line.startsWith("#EXT-X-MAP:") -> {
+                        val uri = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
+                        appendLine(if (uri == null) line
+                                   else line.replace(uri, abs(uri)))
+                    }
+                    line.isEmpty() || line.startsWith("#") -> appendLine(line)
+                    else -> appendLine(abs(line))
+                }
+            }
+        }
+    }
 
     private fun resolveMediaPlaylist(url: String, bearer: String, mut: String): Pair<String, String> {
         val headers = mapOf(

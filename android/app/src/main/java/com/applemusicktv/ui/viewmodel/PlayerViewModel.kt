@@ -120,6 +120,8 @@ class PlayerViewModel @Inject constructor(
     private var crossfadeSkipSongId: String? = null
     /** Song whose crossfade-window decision has already been logged (see pollProgress). */
     private var cfWindowLoggedForSongId: String? = null
+    /** Title of the song whose standalone attempt already failed — retry proxy once, then give up. */
+    private var standaloneFailedSongId: String? = null
     /** Pending N+1 prefetch, cancelled whenever a new song starts loading. */
     private var prefetchJob: kotlinx.coroutines.Job? = null
 
@@ -315,6 +317,21 @@ class PlayerViewModel @Inject constructor(
             // Silence looks like a crash otherwise — say why we skipped.
             toast(if (serverPrefs.serverReachable) "Couldn't play \"$song\" — skipping"
                   else "Can't reach the server")
+            // A standalone failure must not advance — it'd fail identically on the next
+            // song and rip through the whole queue. Retry this one through the proxy.
+            if (usingStandalone && !crossfadeInProgress && standaloneFailedSongId != song) {
+                standaloneFailedSongId = song
+                usingStandalone = false
+                webServer.addLog("PLR", "standalone failed for $song — retrying via proxy")
+                toast("On-device playback failed — using the server")
+                val s = _state.value
+                val cur = s.queue.getOrNull(s.queueIndex)
+                if (cur != null) {
+                    player.setMediaItem(buildMediaItem(cur, repo.streamUrl(cur.id)))
+                    player.prepare(); player.volume = 1f; player.play()
+                    return
+                }
+            }
             if (crossfadeInProgress && crossfadeExo != null) {
                 // Old player died mid-fade — snap cfExo to full volume immediately
                 crossfadeExo!!.volume = 1f
@@ -773,6 +790,16 @@ class PlayerViewModel @Inject constructor(
             val mut = mutPrefs.getMUT()
             if (bearer.isEmpty() || mut.isEmpty()) return null
             val wb = appleClient.getWebPlayback(song.id, bearer, mut)
+            // Serve a rewritten copy of the playlist from disk — see
+            // rewritePlaylistForExo for why the EXT-X-KEY line has to go.
+            val playlistUri = try {
+                val f = java.io.File(context.cacheDir, "standalone_${song.id.replace(Regex("[^A-Za-z0-9._-]"), "_")}.m3u8")
+                f.writeText(appleClient.rewritePlaylistForExo(wb.hlsText, wb.hlsUrl))
+                android.net.Uri.fromFile(f).toString()
+            } catch (e: Exception) {
+                Log.w("PlayerVM", "Playlist rewrite failed, using raw URL: ${e.message}")
+                wb.hlsUrl
+            }
             val drmCallback = AppleMusicDrmCallback(wb.adamId, wb.keyUri, bearer, mut)
             val drmManager = DefaultDrmSessionManager.Builder()
                 .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
@@ -780,7 +807,7 @@ class PlayerViewModel @Inject constructor(
                 .build(drmCallback)
             DefaultMediaSourceFactory(context)
                 .setDrmSessionManagerProvider { drmManager }
-                .createMediaSource(buildMediaItem(song, wb.hlsUrl))
+                .createMediaSource(buildMediaItem(song, playlistUri))
         } catch (e: Exception) {
             Log.e("PlayerVM", "Standalone source failed for ${song.id}: ${e.message}")
             null
