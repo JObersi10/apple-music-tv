@@ -8,6 +8,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody as bytesToRequestBody
 import org.json.JSONObject
 import java.util.UUID
 
@@ -21,10 +22,26 @@ class AppleMusicDrmCallback(
 
     private val http = OkHttpClient()
 
+    /**
+     * Device provisioning. This is NOT an Apple call — it goes to Google's Widevine
+     * provisioning server, whose URL the CDM supplies in the request. Returning an
+     * empty array here (the previous stub) makes provideProvisionResponse throw and
+     * playback dies before a single key is ever fetched.
+     */
     override fun executeProvisionRequest(
         uuid: UUID,
         request: ExoMediaDrm.ProvisionRequest,
-    ): ByteArray = ByteArray(0)
+    ): ByteArray {
+        val url = request.defaultUrl + "&signedRequest=" + String(request.data, Charsets.UTF_8)
+        val resp = http.newCall(
+            Request.Builder()
+                .url(url)
+                .post(ByteArray(0).toRequestBody(null, 0, 0))
+                .build()
+        ).execute()
+        if (!resp.isSuccessful) error("provisioning failed http=${resp.code}")
+        return resp.body!!.bytes()
+    }
 
     override fun executeKeyRequest(
         uuid: UUID,
