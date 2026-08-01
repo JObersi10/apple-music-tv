@@ -56,7 +56,7 @@ class OnboardingViewModel @Inject constructor(
 
     private var mutPollJob: Job? = null
 
-    val totalSteps = 5
+    val totalSteps = 4
 
     fun setIpDraft(v: String) = _state.update { it.copy(ipDraft = v, serverCheck = ServerCheck.Idle, serverError = null) }
 

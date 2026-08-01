@@ -33,7 +33,7 @@ class OnboardingPreferences @Inject constructor(@ApplicationContext context: Con
         set(v) = prefs.edit { putString("remote_override", v) }
 
     companion object {
-        const val CURRENT_VERSION = 1
+        const val CURRENT_VERSION = 2
         const val REMOTE_AUTO = "auto"
         const val REMOTE_FIRE = "fire"
         const val REMOTE_GOOGLE = "google"

@@ -35,6 +35,7 @@ import com.applemusicktv.ui.viewmodel.SearchViewModel
 fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, modifier: Modifier = Modifier) {
     val vm: SearchViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
+    val recents by vm.recentSearches.collectAsState()
     val focusRequester = remember { FocusRequester() }
     // Keyboard only opens once the user explicitly selects the search box —
     // otherwise entering the tab auto-focuses the field and pops the IME.
@@ -146,8 +147,47 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             }
             state.query.length < 2 -> {
                 // Genre browsing when not searching
-                if (state.genres.isNotEmpty()) {
+                if (state.genres.isNotEmpty() || recents.isNotEmpty()) {
                     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                        // Recent searches first — retyping on a remote is the slow part.
+                        if (recents.isNotEmpty()) {
+                            item {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Recent", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                                    Spacer(Modifier.width(12.dp))
+                                    Surface(
+                                        onClick = { vm.clearRecents() },
+                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
+                                        colors = ClickableSurfaceDefaults.colors(
+                                            containerColor = Color(0xFF1E1E1E),
+                                            focusedContainerColor = Color(0xFF3A3A3A),
+                                        ),
+                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                                    ) {
+                                        Text("Clear", fontSize = 12.sp, color = Color(0xFFBBBBBB),
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp))
+                                    }
+                                }
+                                Spacer(Modifier.height(10.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    items(recents, key = { it }) { term ->
+                                        Surface(
+                                            onClick = { vm.runRecent(term) },
+                                            onLongClick = { vm.removeRecent(term) },
+                                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
+                                            colors = ClickableSurfaceDefaults.colors(
+                                                containerColor = Color(0xFF2A2A2A),
+                                                focusedContainerColor = Color(0xFF3A3A3A),
+                                            ),
+                                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                                        ) {
+                                            Text(term, fontSize = 13.sp, color = Color.White,
+                                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         item {
                             Text("Browse by Genre", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

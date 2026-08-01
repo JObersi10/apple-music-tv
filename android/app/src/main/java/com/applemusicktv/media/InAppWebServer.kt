@@ -3,6 +3,7 @@ package com.applemusicktv.media
 import android.content.Context
 import android.net.wifi.WifiManager
 import com.applemusicktv.data.CrossfadePreferences
+import com.applemusicktv.data.ServerPreferences
 import com.applemusicktv.data.StandalonePreferences
 import com.applemusicktv.data.LyricsOffsetPreferences
 import com.applemusicktv.data.MutPreferences
@@ -27,6 +28,7 @@ class InAppWebServer @Inject constructor(
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
     private val crossfadePrefs: CrossfadePreferences,
     private val standalonePrefs: StandalonePreferences,
+    private val serverPrefs: ServerPreferences,
     private val beatAnalyzer: BeatAnalyzer,
 ) {
     private val logs = ArrayDeque<String>(300)
@@ -142,6 +144,7 @@ class InAppWebServer @Inject constructor(
                 method == "POST" && path == "/set-beat-latency"    -> { applyBeatLatency(parseField(body, "latency")); redirect(out, "/") }
                 method == "POST" && path == "/set-crossfade"       -> { applyCrossfade(parseField(body, "crossfade")); redirect(out, "/") }
             method == "POST" && path == "/set-standalone"      -> { applyStandalone(parseField(body, "standalone")); redirect(out, "/") }
+            method == "POST" && path == "/set-server-ip"       -> { applyServerIp(parseField(body, "serverip")); redirect(out, "/") }
                 else -> send(out, 404, "text/plain", "Not found")
             }
             out.flush(); socket.close()
@@ -154,6 +157,13 @@ class InAppWebServer @Inject constructor(
         beatAnalyzer.latencyMs = ms
         beatAnalyzer.resetBeat()
         addLog("OK", "Beat latency set to ${ms}ms — buffer reset")
+    }
+
+    private fun applyServerIp(raw: String) {
+        val ip = raw.trim()
+        serverPrefs.setPcServerIp(ip)
+        addLog("OK", if (ip.isEmpty()) "Proxy IP cleared — using the built-in default"
+                     else "Proxy IP set to $ip")
     }
 
     private fun applyStandalone(raw: String) {
@@ -238,6 +248,7 @@ class InAppWebServer @Inject constructor(
         val currentOffset = lyricsOffsetPrefs.getOffset()
         val currentBeatLatency = beatAnalyzer.latencyMs
         val standaloneOn = standalonePrefs.isEnabled()
+        val serverIp = serverPrefs.getPcServerIp()
         val currentCrossfade = crossfadePrefs.getDuration()
         val crossfadeSec = "%.1f".format(currentCrossfade / 1000f)
         val logRows = getLogs().reversed().take(80).joinToString("") { log ->
@@ -336,6 +347,16 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 <button class="btn btn-p" type=submit style=margin-top:8px>Apply &amp; Reset</button>
 </form>
 <div style="font-size:10px;color:#555;margin-top:8px">0 = TV speakers. ~200 = typical Bluetooth. Resets beat buffer on apply.</div>
+</div>
+
+<div class=card>
+<h2>Computer (proxy server)</h2>
+<div class=row><div class=label>Current</div><div class=sub2 style=color:#aaa>${if (serverIp.isEmpty()) "not set" else serverIp}</div></div>
+<form method=POST action=/set-server-ip>
+<input name=serverip type=text inputmode=decimal placeholder="192.168.1.190" value="$serverIp" style="width:100%;box-sizing:border-box;padding:10px;margin-top:8px;border-radius:6px;border:1px solid #333;background:#0d0d0d;color:#fff;font-family:monospace;font-size:15px">
+<button class="btn btn-p" type=submit style=margin-top:8px>Set Computer IP</button>
+</form>
+<div style="font-size:10px;color:#555;margin-top:8px">Port 3000 is assumed. Needed for browse, library, search and lyrics. Leave blank to use the built-in default.</div>
 </div>
 
 <div class=card>

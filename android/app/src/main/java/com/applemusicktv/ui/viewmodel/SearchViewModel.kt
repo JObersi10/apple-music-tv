@@ -24,7 +24,12 @@ data class SearchUiState(
 
 @OptIn(FlowPreview::class)
 @HiltViewModel
-class SearchViewModel @Inject constructor(private val repo: MusicRepository) : ViewModel() {
+class SearchViewModel @Inject constructor(
+    private val repo: MusicRepository,
+    private val history: com.applemusicktv.data.SearchHistoryPreferences,
+) : ViewModel() {
+
+    val recentSearches: StateFlow<List<String>> = history.recent
 
     private val _state    = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state
@@ -43,13 +48,24 @@ class SearchViewModel @Inject constructor(private val repo: MusicRepository) : V
                 .collectLatest { term ->
                     _state.update { it.copy(isLoading = true, error = null) }
                     repo.search(term)
-                        .onSuccess  { r -> _state.update { it.copy(isLoading = false, results = r) } }
+                        .onSuccess  { r ->
+                            // Only remember terms that actually found something —
+                            // half-typed words would otherwise fill the list.
+                            if (r.songs.isNotEmpty() || r.albums.isNotEmpty() || r.artists.isNotEmpty()) {
+                                history.add(term)
+                            }
+                            _state.update { it.copy(isLoading = false, results = r) }
+                        }
                         .onFailure  { e -> _state.update { it.copy(isLoading = false, error = e.message) } }
                 }
         }
     }
 
     fun onQueryChange(q: String) { _state.update { it.copy(query = q, selectedGenreId = null, genreContent = null) }; queryFlow.value = q }
+    fun runRecent(term: String) { onQueryChange(term) }
+    fun removeRecent(term: String) = history.remove(term)
+    fun clearRecents() = history.clear()
+
     fun clearSearch() { _state.value = SearchUiState(genres = _state.value.genres); queryFlow.value = "" }
     fun selectGenre(id: String) {
         _state.update { it.copy(selectedGenreId = id, genreLoading = true, genreContent = null) }

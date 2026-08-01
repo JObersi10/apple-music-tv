@@ -647,6 +647,11 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     }
 }
 
+/** How many lines of already-sung context stay above the active line after a scroll. */
+private const val LYRIC_LEAD_LINES = 3
+/** Scroll once the active line gets this close to the bottom of the viewport. */
+private const val LYRIC_BOTTOM_MARGIN_PX = 260
+
 private const val GAP_THRESHOLD_MS = 4000L
 private const val LINE_END_GRACE_MS = 250L
 private const val GAP_FADEOUT_MS    = 500L
@@ -681,7 +686,7 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
 
     LaunchedEffect(scrollAnchor, lyrics.size) {
         if (lyrics.isEmpty()) return@LaunchedEffect
-        val target = (scrollAnchor - 3).coerceAtLeast(0)
+        val target = (scrollAnchor - LYRIC_LEAD_LINES).coerceAtLeast(0)
         if (firstLoad.value) {
             listState.scrollToItem(target)
             firstLoad.value = false
@@ -693,8 +698,24 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
             val backInView = listState.layoutInfo.visibleItemsInfo.any { it.index == scrollAnchor }
             if (!backInView || listState.isScrollInProgress) return@LaunchedEffect
             userScrolled = false
+            listState.animateScrollToItem(target)
+            return@LaunchedEffect
         }
-        listState.animateScrollToItem(target)
+
+        // Don't re-centre on every line — that's what made fast songs scroll
+        // continuously. Let the active line travel down the screen and only scroll
+        // once it nears the bottom (or has fallen off the top, e.g. after a seek).
+        val info = listState.layoutInfo
+        val visible = info.visibleItemsInfo
+        if (visible.isEmpty()) { listState.animateScrollToItem(target); return@LaunchedEffect }
+        val first = visible.first().index
+        val last = visible.last().index
+        val viewportEnd = info.viewportEndOffset - info.afterContentPadding
+        val activeItem = visible.firstOrNull { it.index == scrollAnchor }
+        val nearBottom = activeItem == null ||
+            activeItem.offset + activeItem.size > viewportEnd - LYRIC_BOTTOM_MARGIN_PX
+        val offScreen = scrollAnchor < first || scrollAnchor > last
+        if (offScreen || nearBottom) listState.animateScrollToItem(target)
     }
 
     // When navigating back to this screen, scroll to the active line.

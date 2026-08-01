@@ -1,14 +1,10 @@
 package com.applemusicktv.ui.screens
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -16,7 +12,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -25,15 +20,12 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
 import com.applemusicktv.data.CrossfadePreferences
 import com.applemusicktv.data.OnboardingPreferences
 import com.applemusicktv.ui.viewmodel.OnboardingViewModel
-import com.applemusicktv.ui.viewmodel.ServerCheck
 import com.applemusicktv.util.QrCode
 import com.applemusicktv.util.TvDevice
 
@@ -50,11 +42,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
     val focusManager = LocalFocusManager.current
     val view = LocalView.current
 
-    /**
-     * Drop the IME and the text field's focus. Compose's SoftwareKeyboardController
-     * alone does not close the Fire TV IME — it stays on screen over the next step —
-     * so go through the platform InputMethodManager as well.
-     */
+    /** No text fields left in setup, but the IME can linger from elsewhere. */
     fun dismissKeyboard() {
         keyboard?.hide()
         runCatching {
@@ -68,7 +56,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
     // move from and the whole flow is unusable. Buttons only — the IP field stays
     // unfocused by default, same rule as the rest of the app.
     val primaryFocus = remember { FocusRequester() }
-    LaunchedEffect(s.step, s.serverCheck) {
+    LaunchedEffect(s.step) {
         // The soft keyboard from the IP field stays on screen across a step change and
         // covers the next step, so tear it down before moving focus.
         dismissKeyboard()
@@ -79,7 +67,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
     // Step 2 advances by itself when the token lands, so the user doesn't have to
     // walk back to the TV after pasting on their phone.
     LaunchedEffect(s.step) {
-        if (s.step == 2) vm.startMutPolling() else vm.stopMutPolling()
+        if (s.step == 1) vm.startMutPolling() else vm.stopMutPolling()
     }
     DisposableEffect(Unit) { onDispose { vm.stopMutPolling() } }
 
@@ -94,10 +82,9 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
             Spacer(Modifier.height(6.dp))
 
             when (s.step) {
-                1 -> StepServer(vm, s, ::dismissKeyboard)
-                2 -> StepAccount(vm, s)
-                3 -> StepRemote(vm, s, TvDevice.isFireTv(context))
-                4 -> StepPreferences(vm, s)
+                1 -> StepAccount(vm, s)
+                2 -> StepRemote(vm, s, TvDevice.isFireTv(context))
+                3 -> StepPreferences(vm, s)
                 else -> StepTips(TvDevice.needsOnScreenMenuToggle(context, s.remoteChoice))
             }
 
@@ -106,126 +93,12 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (s.step > 1) OnbButton("Back", onClick = vm::back)
                 when (s.step) {
-                    1 -> {
-                        // Advancing needs a reachable server — everything downstream
-                        // (browse, library, lyrics, playback) goes through the proxy.
-                        if (s.serverCheck == ServerCheck.Ok) {
-                            OnbButton("Continue", primary = true, modifier = Modifier.focusRequester(primaryFocus), onClick = vm::next)
-                        } else {
-                            OnbButton(
-                                if (s.serverCheck == ServerCheck.Checking) "Checking…" else "Test connection",
-                                primary = true,
-                                modifier = Modifier.focusRequester(primaryFocus),
-                                onClick = vm::checkServer,
-                            )
-                            OnbButton("Skip for now", onClick = vm::next)
-                        }
-                    }
-                    2 -> OnbButton(if (s.hasMut) "Continue" else "Skip — preview only", primary = s.hasMut, modifier = Modifier.focusRequester(primaryFocus), onClick = vm::next)
-                    3, 4 -> OnbButton("Continue", primary = true, modifier = Modifier.focusRequester(primaryFocus), onClick = vm::next)
+                    1 -> OnbButton(if (s.hasMut) "Continue" else "Skip — preview only", primary = s.hasMut, modifier = Modifier.focusRequester(primaryFocus), onClick = vm::next)
+                    2, 3 -> OnbButton("Continue", primary = true, modifier = Modifier.focusRequester(primaryFocus), onClick = vm::next)
                     else -> OnbButton("Start listening", primary = true, modifier = Modifier.focusRequester(primaryFocus)) { dismissKeyboard(); vm.finish(); onDone() }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun StepServer(
-    vm: OnboardingViewModel,
-    s: com.applemusicktv.ui.viewmodel.OnboardingState,
-    dismissKeyboard: () -> Unit,
-) {
-    StepHeader("Connect to your computer", "The proxy server runs on your PC or Mac. Enter its local IP address.")
-
-    // Not a live text field: focusing one on this screen popped the IME open by
-    // itself and it then covered the buttons. Press OK on the address to start
-    // typing, press Done (or Back) to put the keyboard away again.
-    var editing by remember { mutableStateOf(false) }
-    val fieldFocus = remember { FocusRequester() }
-    LaunchedEffect(editing) {
-        if (editing) {
-            kotlinx.coroutines.delay(60)
-            runCatching { fieldFocus.requestFocus() }
-        }
-    }
-
-    // Back while typing should just close the editor, not fall through to the
-    // app-exit dialog.
-    BackHandler(enabled = editing) { editing = false; dismissKeyboard() }
-
-    Box(Modifier.padding(top = 20.dp).fillMaxWidth(0.55f)) {
-        if (editing) {
-            Box(
-                Modifier.fillMaxWidth()
-                    .background(Color(0xFF111111), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-            ) {
-                BasicTextField(
-                    value = s.ipDraft,
-                    onValueChange = vm::setIpDraft,
-                    singleLine = true,
-                    textStyle = TextStyle(color = Color.White, fontSize = 17.sp, fontFamily = FontFamily.Monospace),
-                    cursorBrush = SolidColor(Color(0xFFFA233B)),
-                    // Decimal, not Number: an IP needs the dot key.
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Decimal,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(onDone = {
-                        editing = false
-                        dismissKeyboard()
-                        vm.checkServer()
-                    }),
-                    modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus),
-                    decorationBox = { inner ->
-                        if (s.ipDraft.isEmpty()) {
-                            Text("192.168.1.190", fontSize = 17.sp, color = Color(0xFF444444), fontFamily = FontFamily.Monospace)
-                        }
-                        inner()
-                    },
-                )
-            }
-        } else {
-            val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
-            Surface(
-                onClick = { editing = true },
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = Color(0xFF111111),
-                    focusedContainerColor = Color(0xFF262626),
-                ),
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.01f),
-                border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    s.ipDraft.ifEmpty { "Press OK to enter your computer's IP" },
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                    fontSize = 17.sp,
-                    fontFamily = if (s.ipDraft.isEmpty()) FontFamily.Default else FontFamily.Monospace,
-                    color = if (s.ipDraft.isEmpty()) Color(0xFF777777) else Color.White,
-                )
-            }
-        }
-    }
-
-    Spacer(Modifier.height(10.dp))
-    when (s.serverCheck) {
-        ServerCheck.Ok -> Text("Connected.", fontSize = 14.sp, color = Color(0xFF6BCB77))
-        ServerCheck.Checking -> Text("Testing…", fontSize = 14.sp, color = Color(0xFF999999))
-        ServerCheck.Failed -> Text(s.serverError ?: "Couldn't connect.", fontSize = 14.sp, color = Color(0xFFE05260))
-        ServerCheck.Idle -> Text(
-            "Port 3000 is assumed. Add it explicitly if you changed it.",
-            fontSize = 13.sp, color = Color(0xFF666666),
-        )
-    }
-    if (s.serverCheck != ServerCheck.Ok) {
-        Spacer(Modifier.height(14.dp))
-        Text(
-            "Skipping leaves the app with no data — browse, search, library and lyrics all need the server. Only playback can work without it.",
-            fontSize = 12.sp, color = Color(0xFF555555),
-        )
     }
 }
 
