@@ -140,6 +140,26 @@ kotlinx's atomic `StateFlow.update` with a plain read-modify-write.
 - Dev menu: "Replay Setup".
 - Server prints its LAN IP on startup.
 
+### Standalone playback — WORKING as of 2026-08-01
+
+Instant start (~1s vs 15-20s). No decrypt, no ffmpeg, no cache, no prefetch. Three
+stacked bugs, each hiding the next — full detail in CLAUDE.md:
+1. `METHOD=ISO-23001-7` unparseable by ExoPlayer → rewrite the key line.
+2. No `pssh` in the init segment → synthesize a Widevine one from Apple's KID.
+   (Confirmed by probing: scheme `cenc`, `tenc` v0, IV size 8, zero pssh boxes.)
+3. `executeProvisionRequest` was a `ByteArray(0)` stub → real provisioning against
+   Google's server. This was the last one, and the reason nothing worked.
+
+Diagnosing #2 needed a box-level dump of the init segment; `PROBE_INIT_SEGMENT` in
+PlayerViewModel turns it back on (logcat tag `AMProbe`). Off by default — it costs a
+full segment download per play.
+
+**Open question:** standalone is strictly faster than the proxy for playback. Worth
+considering as the default, with the proxy as fallback rather than the other way round.
+Not changed — that's a product call.
+
+**Untested:** crossfade and gapless while standalone is on.
+
 ### Known, not done
 - `usingStandalone` is a write-only field. Dead.
 - Toast collector has no `repeatOnLifecycle` — fires while backgrounded. Harmless.
