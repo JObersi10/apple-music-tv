@@ -360,13 +360,13 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 </div>
 
 <div class=card>
-<h2>Standalone playback</h2>
-<div class=row><div class=label>Status</div><div class=sub2 style="color:${if (standaloneOn) "#6bcb77" else "#aaa"}">${if (standaloneOn) "ON — decrypting on the TV" else "OFF — using the PC server"}</div></div>
+<h2>Standalone mode (no PC)</h2>
+<div class=row><div class=label>Status</div><div class=sub2 style="color:${if (standaloneOn) "#6bcb77" else "#aaa"}">${if (standaloneOn) "ON — everything on the TV" else "OFF — using the PC server"}</div></div>
 <form method=POST action=/set-standalone>
 <input type=hidden name=standalone value="${if (standaloneOn) "0" else "1"}">
 <button class="btn ${if (standaloneOn) "" else "btn-p"}" type=submit style=margin-top:8px>${if (standaloneOn) "Turn OFF" else "Turn ON"}</button>
 </form>
-<div style="font-size:10px;color:#555;margin-top:8px">Decrypts on the Fire TV with Widevine instead of waiting for the PC to download and re-encode. Usually starts in ~1s instead of 15-20s. The server is still used for browse, library and lyrics. Applies from the next song.</div>
+<div style="font-size:10px;color:#555;margin-top:8px">Talks to Apple directly for browse, library, search, artwork, lyrics AND playback — the PC is not needed at all. Songs start in ~1s instead of 15-20s. Trade-off: some tracks have segment gaps the PC remux repairs, so audio can chop. Applies from the next song.</div>
 </div>
 
 <div class=card>

@@ -27,8 +27,15 @@ class MusicRepository @Inject constructor(
     private val serverPrefs: ServerPreferences,
     private val direct: DirectMusicDataSource,
     private val directLyrics: DirectLyricsSource,
+    private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
 ) {
-    private val useProxy get() = serverPrefs.serverReachable
+    /**
+     * Standalone means *everything* on device — browse, library, search, artwork and
+     * lyrics all talk to Apple directly, not just playback. The proxy is used when it's
+     * reachable and standalone is off; the server-down case falls through to the same
+     * direct path, which is why it doubles as the offline fallback.
+     */
+    private val useProxy get() = serverPrefs.serverReachable && !standalonePrefs.isEnabled()
 
     private val _authErrorFlow = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
     val authErrorFlow: SharedFlow<Unit> = _authErrorFlow
@@ -53,13 +60,36 @@ class MusicRepository @Inject constructor(
 
     suspend fun getStationTracks(id: String) = apiCall { api.getStationTracks(id).songs.map(::songFromDto) }
     suspend fun getStationStream(id: String) = apiCall { api.getStationStream(id) }
-    suspend fun getAlbum(id: String)         = apiCall { albumFromDto(api.getAlbum(id)) }
-    suspend fun getAlbumTracks(id: String)   = apiCall { api.getAlbumTracks(id).tracks.map(::songFromDto) }
-    suspend fun getRelatedAlbums(id: String) = apiCall { api.getRelatedAlbums(id).albums.map(::albumFromDto) }
-    suspend fun getSong(id: String)          = apiCall { songFromDto(api.getSong(id)) }
-    suspend fun getArtist(id: String)        = apiCall { artistFromDto(api.getArtist(id)) }
-    suspend fun getArtistFull(id: String)    = apiCall { api.getArtistFull(id) }
-    suspend fun getArtistAlbums(id: String)  = apiCall { api.getArtistAlbums(id).albums.map(::albumFromDto) }
+    suspend fun getAlbum(id: String) =
+        if (!useProxy) direct.album(id).map(::albumFromDto)
+        else apiCall { albumFromDto(api.getAlbum(id)) }
+
+    suspend fun getAlbumTracks(id: String) =
+        if (!useProxy) direct.albumTracks(id).map { it.map(::songFromDto) }
+        else apiCall { api.getAlbumTracks(id).tracks.map(::songFromDto) }
+
+    // Apple has no "related albums" endpoint — the proxy derives the shelf from the
+    // album's artist relationship, which AlbumDto doesn't carry. Standalone returns
+    // nothing rather than guessing; the shelf just doesn't render.
+    suspend fun getRelatedAlbums(id: String) =
+        if (!useProxy) Result.success(emptyList<com.applemusicktv.data.model.Album>())
+        else apiCall { api.getRelatedAlbums(id).albums.map(::albumFromDto) }
+
+    suspend fun getSong(id: String) =
+        if (!useProxy) direct.song(id).map(::songFromDto)
+        else apiCall { songFromDto(api.getSong(id)) }
+
+    suspend fun getArtist(id: String) =
+        if (!useProxy) direct.artist(id).map(::artistFromDto)
+        else apiCall { artistFromDto(api.getArtist(id)) }
+
+    suspend fun getArtistFull(id: String) =
+        if (!useProxy) direct.artistFull(id)
+        else apiCall { api.getArtistFull(id) }
+
+    suspend fun getArtistAlbums(id: String) =
+        if (!useProxy) direct.artistAlbums(id).map { it.map(::albumFromDto) }
+        else apiCall { api.getArtistAlbums(id).albums.map(::albumFromDto) }
 
     // ── Home ─────────────────────────────────────────────────────────────
     suspend fun getHome() = if (!useProxy) {
@@ -73,7 +103,8 @@ class MusicRepository @Inject constructor(
     } else runCatching { api.getHome() }
 
     suspend fun getBrowse() = runCatching { api.getBrowse() }
-    suspend fun getGenres() = runCatching { api.getGenres().genres }
+    suspend fun getGenres() =
+        if (!useProxy) direct.genres() else runCatching { api.getGenres().genres }
     suspend fun getGenreContent(id: String) = runCatching { api.getGenreContent(id) }
     suspend fun getRelatedSongs(songId: String) = runCatching { api.getRelatedSongs(songId).songs.map(::songFromDto) }
 
@@ -83,7 +114,8 @@ class MusicRepository @Inject constructor(
             directLyrics.getLyrics(songId, direct.storefront, title, artist, durationSec)
         } else runCatching { api.getLyrics(songId).lines }
 
-    suspend fun getMotion(songId: String) = runCatching { api.getMotion(songId).video }
+    suspend fun getMotion(songId: String) =
+        if (!useProxy) direct.motion(songId) else runCatching { api.getMotion(songId).video }
 
     /** Probe whether the configured proxy server is reachable. */
     suspend fun pingServer(): Boolean =
@@ -123,7 +155,8 @@ class MusicRepository @Inject constructor(
         else apiCall { api.getPlaylistTracks(id).songs.map(::songFromDto) }
 
     suspend fun getLibraryArtists(limit: Int = 25) =
-        apiCall { api.getLibraryArtists(limit).artists.map(::artistFromDto) }
+        if (!useProxy) direct.libraryArtists().map { it.map(::artistFromDto) }
+        else apiCall { api.getLibraryArtists(limit).artists.map(::artistFromDto) }
 
     // ── Auth ──────────────────────────────────────────────────────────────
     suspend fun getAuthStatus() = api.getAuthStatus()

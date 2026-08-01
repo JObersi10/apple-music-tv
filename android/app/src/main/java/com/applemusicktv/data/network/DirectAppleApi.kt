@@ -219,4 +219,96 @@ interface DirectAppleApi {
 
     @GET("v1/me/storefront")
     suspend fun storefront(): AppleList<AppleItem<Map<String, Any>>>
+
+    // ── Detail endpoints (standalone port of the proxy's album/artist routes) ──
+
+    @GET("v1/catalog/{sf}/albums/{id}")
+    suspend fun catalogAlbum(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+    ): AppleList<AppleItem<AppleAlbumAttrs>>
+
+    @GET("v1/catalog/{sf}/albums/{id}/tracks")
+    suspend fun catalogAlbumTracks(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("limit") limit: Int = 100,
+    ): AppleList<AppleItem<AppleSongAttrs>>
+
+    /** Library albums need the library endpoint; `include=catalog` gives us the id. */
+    @GET("v1/me/library/albums/{id}")
+    suspend fun libraryAlbum(
+        @Path("id") id: String,
+        @Query("include") include: String = "catalog",
+    ): AppleList<AppleItem<AppleAlbumAttrs>>
+
+    @GET("v1/me/library/albums/{id}/tracks")
+    suspend fun libraryAlbumTracks(
+        @Path("id") id: String,
+        @Query("include") include: String = "catalog",
+        @Query("limit") limit: Int = 100,
+    ): AppleList<AppleItem<AppleSongAttrs>>
+
+    @GET("v1/catalog/{sf}/songs/{id}")
+    suspend fun catalogSong(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+    ): AppleList<AppleItem<AppleSongAttrs>>
+
+    @GET("v1/me/library/songs/{id}")
+    suspend fun librarySong(
+        @Path("id") id: String,
+        @Query("include") include: String = "catalog",
+    ): AppleList<AppleItem<AppleSongAttrs>>
+
+    @GET("v1/catalog/{sf}/artists/{id}")
+    suspend fun catalogArtist(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+    ): AppleList<AppleItem<AppleArtistAttrs>>
+
+    @GET("v1/me/library/artists/{id}")
+    suspend fun libraryArtist(
+        @Path("id") id: String,
+        @Query("include") include: String = "catalog",
+    ): AppleList<AppleItem<AppleArtistAttrs>>
+
+    @GET("v1/me/library/artists")
+    suspend fun libraryArtists(
+        @Query("limit") limit: Int = 100,
+    ): AppleList<AppleItem<AppleArtistAttrs>>
+
+    /** Raw JSON — the artist page renders straight off Apple's `views` payload. */
+    @GET("v1/catalog/{sf}/artists/{id}")
+    suspend fun catalogArtistFull(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("views") views: String =
+            "top-songs,latest-release,full-albums,featured-albums,similar-artists",
+        @Query("extend") extend: String = "editorialArtwork,artistBio",
+    ): Map<String, Any>
+
+    @GET("v1/catalog/{sf}/artists/{id}/albums")
+    suspend fun catalogArtistAlbums(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("limit") limit: Int = 50,
+    ): AppleList<AppleItem<AppleAlbumAttrs>>
+
+    /** Motion artwork lives on the album, so a song has to be resolved to one first. */
+    @GET("v1/catalog/{sf}/albums/{id}")
+    suspend fun catalogAlbumWithMotion(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("extend") extend: String = "editorialVideo",
+    ): Map<String, Any>
+
+    @GET("v1/catalog/{sf}/genres")
+    suspend fun catalogGenres(
+        @Path("sf") storefront: String,
+        @Query("limit") limit: Int = 40,
+    ): AppleList<AppleItem<AppleGenreAttrs>>
 }
+
+@JsonClass(generateAdapter = true)
+data class AppleGenreAttrs(val name: String = "")
