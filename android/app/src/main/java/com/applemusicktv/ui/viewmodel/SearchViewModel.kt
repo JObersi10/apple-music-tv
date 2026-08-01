@@ -61,7 +61,20 @@ class SearchViewModel @Inject constructor(
         }
     }
 
-    fun onQueryChange(q: String) { _state.update { it.copy(query = q, selectedGenreId = null, genreContent = null) }; queryFlow.value = q }
+    fun onQueryChange(q: String) {
+        // Below the 2-char search threshold, drop the old results too — otherwise
+        // clearing the box left the previous song list on screen.
+        val tooShort = q.length < 2
+        _state.update {
+            it.copy(
+                query = q, selectedGenreId = null, genreContent = null,
+                results = if (tooShort) null else it.results,
+                isLoading = if (tooShort) false else it.isLoading,
+                error = if (tooShort) null else it.error,
+            )
+        }
+        queryFlow.value = q
+    }
     fun runRecent(term: String) { onQueryChange(term) }
     fun removeRecent(term: String) = history.remove(term)
     fun clearRecents() = history.clear()

@@ -127,6 +127,10 @@ class PlayerViewModel @Inject constructor(
     private var cfWindowLoggedForSongId: String? = null
     /** Title of the song whose standalone attempt already failed — retry proxy once, then give up. */
     private var standaloneFailedSongId: String? = null
+    /** Songs Apple 404s on (pulled from the catalogue). Skipped without a retry. */
+    private val unavailableSongIds = mutableSetOf<String>()
+    /** Avoids re-logging the audio format on every READY (seeks re-enter it). */
+    private var lastFormatLoggedFor: String? = null
     private var standaloneFailures = 0
     /** Pending N+1 prefetch, cancelled whenever a new song starts loading. */
     private var prefetchJob: kotlinx.coroutines.Job? = null
@@ -265,6 +269,20 @@ class PlayerViewModel @Inject constructor(
             val dur = player.duration
             val song = _state.value.currentSong?.title ?: "?"
             webServer.addLog("EXO", "state=$name pos=${pos}ms dur=${dur}ms song=$song cfade=$crossfadeInProgress")
+            // One-line audio diagnostic per track: what actually got decoded, and by
+            // which path. Guessing at codec/rate from the server side isn't possible.
+            if (state == Player.STATE_READY && lastFormatLoggedFor != song) {
+                lastFormatLoggedFor = song
+                val f = player.audioFormat
+                webServer.addLog(
+                    "FMT",
+                    "codec=${f?.sampleMimeType ?: "?"} " +
+                        "bitrate=${f?.bitrate ?: -1} rate=${f?.sampleRate ?: -1}Hz " +
+                        "ch=${f?.channelCount ?: -1} enc=${f?.pcmEncoding ?: -1} " +
+                        "path=${if (usingStandalone) "standalone" else "proxy"} " +
+                        "buffered=${player.bufferedPercentage}%",
+                )
+            }
             // Old player ended naturally during crossfade — snap cfExo in immediately
             if (state == Player.STATE_ENDED && crossfadeInProgress) {
                 webServer.addLog("CFXO", "STATE_ENDED mid-fade cfExo=${crossfadeExo != null} cfExoState=${crossfadeExo?.playbackState} fadeJob=${fadeJob?.isActive}")
@@ -323,6 +341,18 @@ class PlayerViewModel @Inject constructor(
             // Silence looks like a crash otherwise — say why we skipped.
             toast(if (serverPrefs.serverReachable) "Couldn't play \"$song\" — skipping"
                   else "Can't reach the server")
+            val gone = error.errorCode ==
+                androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS &&
+                (error.cause?.message?.contains("404") == true)
+            if (gone) {
+                val cur = _state.value.queue.getOrNull(_state.value.queueIndex)
+                if (cur != null) unavailableSongIds.add(cur.id)
+                webServer.addLog("ERR", "unavailable (404) song=$song — skipping, won't retry")
+                toast("\"$song\" isn't available any more")
+                advanceQueue()
+                return
+            }
+
             // A standalone failure must not advance — it'd fail identically on the next
             // song and rip through the whole queue. Retry this one through the proxy.
             if (usingStandalone && !crossfadeInProgress && standaloneFailedSongId != song) {
@@ -629,6 +659,11 @@ class PlayerViewModel @Inject constructor(
         crossfadeInProgress = false
 
         val song = q[idx]
+        if (song.id in unavailableSongIds) {
+            webServer.addLog("PLR", "skipping known-unavailable ${song.title}")
+            if (idx + 1 < q.size) playQueueItem(idx + 1, skipFadeIn) 
+            return
+        }
         val full = _state.value.isFullStream
         val standalone = full && useStandalone()
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))

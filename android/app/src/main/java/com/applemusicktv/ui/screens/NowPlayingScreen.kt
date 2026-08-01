@@ -166,11 +166,12 @@ fun NowPlayingScreen(
                     if (song.artworkUrl != null) {
                         androidx.compose.animation.Crossfade(
                             targetState = song.artworkUrl(600),
-                            animationSpec = tween(450),
+                            animationSpec = tween(1000),
                             label = "cover",
                         ) { url ->
                             AsyncImage(
-                                model = url,
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(url).crossfade(1000).build(),
                                 contentDescription = song.title,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
