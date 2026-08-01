@@ -1,6 +1,6 @@
 # Handoff — Apple Music TV
 
-Last updated: 2026-07-29
+Last updated: 2026-08-01
 
 ## State of the app
 
@@ -107,6 +107,50 @@ the feed for days.
 
 ### Confirmed working by the user
 Onboarding flow, keyboard behaviour, step 2 token detection, Google TV toggle button, gapless, Repeat One, Repeat All wrap, restore, audio quality, beat pulse colours, crossfade, progress bar, lyrics.
+
+### Session 2026-08-01 — standalone playback, lyrics polish
+
+**Standalone playback toggle** (:8080 card). On-device Widevine instead of the proxy's
+download + mp4decrypt + ffmpeg. This is a *speed* feature: ~1s start vs 15-20s cold.
+Server still used for browse/library/lyrics. `playStandalone()` had been dead code since
+it was written; it's now reachable and reworked into a suspend `buildStandaloneSource()`.
+
+**Two ecc:kotlin-reviewer passes**, four real bugs found and fixed:
+1. A seek while paused never reached the UI (my own regression from throttling progress
+   pushes to ~1/sec — the gate only ran while playing).
+2. The crossfade fade-out overwrote `fadeJob` without cancelling the song-start fade-in;
+   on a track shorter than ~2x the crossfade length both ramped the same player.
+3. Standalone raced its own setup — `playQueueItem` fell through to `play()` + fade before
+   the Widevine source existed, so the previous track kept playing and faded back in.
+4. The crossfade always loaded `repo.streamUrl`, and `buildCrossfadeExo()` has no DRM, so
+   in standalone mode every transition errored into a hard cut.
+Also: `AudioDeviceCallback` was never unregistered; `OnboardingViewModel` shadowed
+kotlinx's atomic `StateFlow.update` with a plain read-modify-write.
+
+**Other**
+- Lyrics `&amp;` — TTML is XML; entities now decoded server-side.
+- Lyrics auto-scroll rejoins at the next line change once the active line is visible again,
+  instead of snapping back on a 5s timer.
+- Sustained lines (Get Lucky) stay lit while the next line comes in.
+- Onboarding: number-pad keyboard for the IP; finishing setup syncs the MUT and refetches
+  Home + Library.
+- Errors are Toasts.
+- Progress pushed to state ~1x/sec instead of 5x (the UI interpolates per frame anyway).
+- `iTunes Store` dropped from Apple status keywords — purchase outages aren't our problem.
+- Dev menu: "Replay Setup".
+- Server prints its LAN IP on startup.
+
+### Known, not done
+- `usingStandalone` is a write-only field. Dead.
+- Toast collector has no `repeatOnLifecycle` — fires while backgrounded. Harmless.
+- Gapless is a clean cut, not sample-accurate; ExoPlayer still re-prepares.
+- Search history/suggestions and lazy album warming: still not started.
+
+### To check next session
+- **Standalone**: toggle ON, play a cold song (~1s?), check `[standalone]` in the log,
+  then test a crossfade and toggling back OFF mid-session.
+- Get Lucky sustained lines; lyrics scroll rejoin.
+- Onboarding number pad; setup-finish refresh.
 
 ### To check next session
 1. **Scan the QR with a phone.** Never actually tried. Encoder decodes from a clean PNG; camera-off-a-TV is untested.
