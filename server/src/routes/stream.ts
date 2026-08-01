@@ -73,6 +73,31 @@ function evictCache() {
   } catch (_) {}
 }
 
+
+/**
+ * A library song can point at an asset Apple has since pulled (failureType 3077,
+ * "no longer available") even though the same recording is still in the catalogue
+ * under a different id. Resolve the library row's catalog equivalent so we can
+ * retry there instead of declaring the track dead.
+ */
+async function resolveCatalogId(libraryId: string, mut: string): Promise<string | null> {
+  try {
+    const res = await axios.get(
+      `https://amp-api-edge.music.apple.com/v1/me/library/songs/${libraryId}?include=catalog`,
+      {
+        headers: {
+          Authorization: `Bearer ${getBearerToken()}`,
+          "Music-User-Token": mut,
+          Origin: "https://music.apple.com",
+        },
+      }
+    );
+    return res.data?.data?.[0]?.relationships?.catalog?.data?.[0]?.id ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /**
  * Kill every running prefetch so a song the user is waiting on gets the whole
  * pipe. Four concurrent decrypts split the WAN download four ways: measured 13-17s
@@ -156,6 +181,18 @@ async function ensureDecrypted(songId: string, mut: string, background = false):
   inFlight_ref.set(songId, entry);
   try {
     return await entry.promise;
+  } catch (e: any) {
+    // Pulled library asset — the catalogue copy usually still works.
+    const unavailable = String(e?.message ?? "").includes("3077");
+    if (unavailable && songId.startsWith("i.")) {
+      const catalogId = await resolveCatalogId(songId, mut);
+      if (catalogId && catalogId !== songId) {
+        console.log(`[stream] ${songId} unavailable — retrying as catalog ${catalogId}`);
+        inFlight_ref.delete(songId);
+        return ensureDecrypted(catalogId, mut, background);
+      }
+    }
+    throw e;
   } finally {
     inFlight_ref.delete(songId);
   }
