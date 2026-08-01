@@ -9,7 +9,10 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -52,6 +55,19 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
         if (editing) runCatching { focusRequester.requestFocus() }
     }
 
+    val ctx = LocalContext.current
+    val view = LocalView.current
+    /** Compose's hide() is a no-op on Fire TV; go through the platform IMM as well. */
+    fun closeEditor() {
+        editing = false
+        runCatching {
+            ctx.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                ?.hideSoftInputFromWindow(view.windowToken, 0)
+        }
+    }
+    // Back closes the editor instead of leaving the tab with the IME still up.
+    androidx.activity.compose.BackHandler(enabled = editing) { closeEditor() }
+
     Column(modifier = modifier.fillMaxSize().padding(48.dp)) {
         Text("Search", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
         Spacer(Modifier.height(10.dp))
@@ -67,7 +83,18 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     value = state.query, onValueChange = vm::onQueryChange,
                     textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
                     cursorBrush = SolidColor(Color(0xFFFA233B)), singleLine = true,
-                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSearch = { closeEditor() },
+                        onDone = { closeEditor() },
+                    ),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                        // Nothing ever set editing back to false, so the field stayed
+                        // mounted and kept reclaiming focus — hence the IME reopening
+                        // every time you moved away.
+                        .onFocusChanged { if (!it.isFocused && editing) editing = false },
                     decorationBox = { inner ->
                         if (state.query.isEmpty()) Text("Artists, albums, songs…", color = Color(0xFF555555), fontSize = 15.sp)
                         inner()

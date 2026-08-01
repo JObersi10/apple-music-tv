@@ -111,8 +111,21 @@ fun AppShell(modifier: Modifier = Modifier) {
     // Exit confirmation on back from root
     var showExitDialog by remember { mutableStateOf(false) }
     BackHandler(enabled = showExitDialog) { showExitDialog = false }
-    BackHandler(enabled = !showExitDialog && (currentRoute == Screen.Home.route || currentRoute == Screen.Browse.route)) {
+    BackHandler(enabled = !showExitDialog && currentRoute == Screen.Home.route) {
         showExitDialog = true
+    }
+    // Every other top-level tab returns to Listen Now first — only Listen Now itself
+    // offers to exit. Detail screens keep the normal pop behaviour.
+    val topLevelTabs = setOf(
+        Screen.Browse.route, Screen.Library.route, Screen.Search.route,
+        Screen.NowPlaying.route, Screen.DevMenu.route,
+    )
+    BackHandler(enabled = !showExitDialog && currentRoute in topLevelTabs) {
+        selectedTab = TopNavTab.ListenNow
+        navController.navigate(Screen.Home.route) {
+            popUpTo(Screen.Home.route) { inclusive = true }
+            launchSingleTop = true
+        }
     }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
