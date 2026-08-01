@@ -158,7 +158,9 @@ full segment download per play.
 considering as the default, with the proxy as fallback rather than the other way round.
 Not changed — that's a product call.
 
-**Untested:** crossfade and gapless while standalone is on.
+**Confirmed working:** playback, crossfade, and the ON-DEVICE badge. Standalone is now
+the **default** path with the proxy as automatic fallback; `restoreState` uses it too.
+Still unverified: gapless (same-album handoff) while standalone is on.
 
 ### Known, not done
 - `usingStandalone` is a write-only field. Dead.
