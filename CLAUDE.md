@@ -180,3 +180,17 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 
 ## State persistence
 - `saveState()` runs on the 10s ticker (while playing), **on pause**, and **immediately on every song change**. It **returns early during a crossfade**: `_state.currentSong` is already the *next* song while `player` is still the outgoing one, so a save there pairs one song's title with another's position — that was the cause of restores landing on an old track.
+
+## Standalone data path (no-PC mode)
+- `StandalonePreferences` gates **everything**, not just playback: `MusicRepository.useProxy = serverReachable && !standalone`. The server-down case falls through the same direct path, which is why it doubles as the offline fallback.
+- `DirectMusicDataSource` — search, library (songs/albums/playlists/artists), playlist + album tracks, album/song/artist detail, artist full (mapped into `ArtistFullDto` so screens can't tell the paths apart), genres, motion artwork. Library ids (`l.`/`r.`/`i.`/`p.`) resolve through their `catalog` relationship where one exists.
+- `DirectBrowseSource` — a section-for-section port of `home.ts` and `browse.ts`. Titles, order and filtering are deliberately identical to the proxy's; don't "simplify" it into a generic charts list, that was tried and the tabs looked wrong.
+- **Not ported**: related albums (Apple has no endpoint, and `AlbumDto` carries no artist id to derive it from — the shelf just doesn't render) and Apple system status.
+- **Sound Check is not applied on either path.** Apple normalises loudness per track; we play files at their mastered level, so quiet masters (FEEL) are quiet. The proxy's 256k re-encode is *also* quieter than standalone's ~400k original, which makes the two paths differ in level as well. Unverified lead: `webPlayback` may carry a per-asset gain.
+
+## Search screen
+- The search box is a button until pressed (`editing`). Two bugs to not re-introduce: nothing setting `editing` back to false leaves the field mounted and it keeps reclaiming focus (IME reopens forever); and `onFocusChanged` fires with `isFocused=false` on mount *before* the `FocusRequester` runs, so closing on that alone shuts the editor instantly. `hasFocused` guards the second.
+- Songs were fetched into `SearchResults` long before the UI rendered them — the section simply didn't exist.
+
+## Back behaviour
+- Back from Library/Search/Now Playing/Browse/Dev → Listen Now. Only Listen Now offers the exit dialog.

@@ -177,6 +177,40 @@ Still unverified: gapless (same-album handoff) while standalone is on.
 - **apple-design skill** installed at `~/.claude/skills/apple-design/`. First use:
   size-specific type tracking on Now Playing.
 
+### Session 2026-08-01 (final) — full standalone
+
+Ported every remaining proxy-only endpoint. Standalone now runs the whole app with
+the server off: browse, library, search, artwork, lyrics and playback. See CLAUDE.md
+for the architecture; `DirectBrowseSource` mirrors home.ts/browse.ts section for
+section on purpose.
+
+Also: Back returns to Listen Now; search gained a songs section, two-column compact
+rows, recent-search chips and a long-press menu; prev restarts past 10s; cover
+cross-fades; `[FMT]` diagnostic per track.
+
+### UNRESOLVED — start here
+
+1. **Standalone audio chop.** Love Me Again, Without Me, Bonetrousle, otherside.
+   Apple's fMP4 segments have boundary gaps; the proxy repairs them with
+   `aresample=async=1` during remux, ExoPlayer plays them raw. These tracks do NOT
+   rebuffer, so the `STUTTER_LIMIT` fallback never fires — it only catches real
+   underruns. This is the single biggest reason standalone isn't the default.
+   Raising buffers (min 50s / max 180s / 32MB) helped underruns, not this.
+2. **No loudness normalisation.** FEEL plays much quieter than Love Me Again. Apple
+   applies Sound Check per track; we don't. Concrete next step: log the raw
+   `webPlayback` JSON and check for a per-asset gain field. If it exists this is a
+   one-line `player.volume` multiplier. If not, real ReplayGain needs analysis we
+   can't do before playback. A running-RMS compressor was considered and rejected —
+   it pumps.
+3. **Standalone can't be split from the data path.** One toggle switches both, so
+   testing the data port means accepting the chop. A second preference would fix it.
+4. **Search results in standalone** — confirm artist/album subtitles are populated;
+   the direct search mapping may not fill `albumName`.
+5. **Related albums** shelf is empty in standalone (documented, not a bug).
+6. **`usingStandalone`** is still a write-only field. Dead code.
+7. **Gapless is a clean cut**, not sample-accurate — ExoPlayer re-prepares between
+   tracks. True gapless needs a pre-rolled second player swapped at the boundary.
+
 ### Known, not done
 - `usingStandalone` is a write-only field. Dead.
 - Toast collector has no `repeatOnLifecycle` — fires while backgrounded. Harmless.

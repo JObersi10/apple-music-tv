@@ -49,10 +49,12 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
     // Same guard the other screens use: the OK release that ends a long-press would
     // otherwise land on the first menu item the moment it takes focus.
     var clickBlocked by remember { mutableStateOf(false) }
+    /** Set once the text field has really taken focus — see onFocusChanged below. */
+    var hasFocused by remember { mutableStateOf(false) }
     LaunchedEffect(editing) {
         // Only grab focus when the user opened the field. Re-running this after every
         // query change is what kept popping the keyboard back up while typing.
-        if (editing) runCatching { focusRequester.requestFocus() }
+        if (editing) runCatching { focusRequester.requestFocus() } else hasFocused = false
     }
 
     val ctx = LocalContext.current
@@ -91,10 +93,13 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         onDone = { closeEditor() },
                     ),
                     modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
-                        // Nothing ever set editing back to false, so the field stayed
-                        // mounted and kept reclaiming focus — hence the IME reopening
-                        // every time you moved away.
-                        .onFocusChanged { if (!it.isFocused && editing) editing = false },
+                        // Only close once it has actually held focus: onFocusChanged
+                        // fires with isFocused=false on mount, before the
+                        // FocusRequester runs, which closed the editor instantly.
+                        .onFocusChanged {
+                            if (it.isFocused) hasFocused = true
+                            else if (hasFocused && editing) editing = false
+                        },
                     decorationBox = { inner ->
                         if (state.query.isEmpty()) Text("Artists, albums, songs…", color = Color(0xFF555555), fontSize = 15.sp)
                         inner()
@@ -223,7 +228,12 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                             Spacer(Modifier.width(10.dp))
                                             Column(Modifier.weight(1f)) {
                                                 Text(song.title, fontSize = 13.sp, color = Color.White, maxLines = 1)
-                                                Text(song.artistName, fontSize = 11.sp, color = Color(0xFF999999), maxLines = 1)
+                                                Text(
+                                                    listOf(song.artistName, song.albumName)
+                                                        .filter { it.isNotBlank() }
+                                                        .joinToString(" — "),
+                                                    fontSize = 11.sp, color = Color(0xFF999999), maxLines = 1,
+                                                )
                                             }
                                             Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFF777777))
                                         }
