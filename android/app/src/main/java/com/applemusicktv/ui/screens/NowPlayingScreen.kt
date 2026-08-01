@@ -138,19 +138,6 @@ fun NowPlayingScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Which decrypt path this track is on. Otherwise the only way to tell is
-            // to read the server log.
-            if (state.standaloneActive) {
-                Text(
-                    "ON-DEVICE",
-                    style = TextStyle(
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xCC6BCB77),
-                        shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f),
-                    ),
-                )
-            }
             if (sleepLabel != null) {
                 Text(sleepLabel, style = TextStyle(fontSize = 15.sp, color = Color(0xCCFFFFFF), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f)))
             }
@@ -175,13 +162,20 @@ fun NowPlayingScreen(
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
+                    // Cross-fade the cover instead of hard-swapping it on song change.
                     if (song.artworkUrl != null) {
-                        AsyncImage(
-                            model = song.artworkUrl(600),
-                            contentDescription = song.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        androidx.compose.animation.Crossfade(
+                            targetState = song.artworkUrl(600),
+                            animationSpec = tween(450),
+                            label = "cover",
+                        ) { url ->
+                            AsyncImage(
+                                model = url,
+                                contentDescription = song.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                     if (state.motionUrl != null) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())

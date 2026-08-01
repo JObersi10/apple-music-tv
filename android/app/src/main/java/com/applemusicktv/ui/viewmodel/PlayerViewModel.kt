@@ -880,6 +880,9 @@ class PlayerViewModel @Inject constructor(
         crossfadeExo?.let { cfExoErrListener?.let { l -> it.removeListener(l) }; it.stop(); it.release() }
         crossfadeExo = null; cfExoErrListener = null
         preloadedForSongId = null
+        // Past 10s, Prev restarts the current song (standard player behaviour);
+        // only a quick double-press walks back to the previous track.
+        if (pos > 10_000L) { player.seekTo(0L); _state.update { it.copy(progressMs = 0L) }; return }
         val prevIdx = s.queueIndex - 1
         if (prevIdx >= 0) playQueueItem(prevIdx, skipFadeIn = true) else player.seekTo(0L)
     }
