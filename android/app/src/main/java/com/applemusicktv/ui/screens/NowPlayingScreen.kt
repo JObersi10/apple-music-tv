@@ -191,6 +191,7 @@ fun NowPlayingScreen(
                 Box(Modifier.fillMaxWidth()) {
                     MarqueeText(
                         song.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        letterSpacing = (-0.5).sp,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 38.dp),
                     )
                     Surface(
@@ -892,10 +893,11 @@ private fun LyricLineRow(
                 } else null
 
                 val mainStyle = when {
-                    isActive -> TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold, lineHeight = 34.sp,
+                    isActive -> TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold, lineHeight = 32.sp,
+                        letterSpacing = (-0.4).sp,
                         color = if (mainText == null) Color.White else Color.Unspecified)
-                    isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 27.sp)
-                    else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 27.sp)
+                    isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 27.sp, letterSpacing = (-0.2).sp)
+                    else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 27.sp, letterSpacing = (-0.2).sp)
                 }
                 Text(text = mainText ?: AnnotatedString(line.text), style = mainStyle)
 
@@ -1193,7 +1195,15 @@ private fun NpMenuItem(label: String, modifier: Modifier = Modifier, onClick: ()
 }
 
 @Composable
-private fun MarqueeText(text: String, modifier: Modifier = Modifier, fontSize: androidx.compose.ui.unit.TextUnit = 16.sp, fontWeight: FontWeight = FontWeight.Normal, color: Color = Color.White) {
+private fun MarqueeText(
+    text: String,
+    modifier: Modifier = Modifier,
+    fontSize: androidx.compose.ui.unit.TextUnit = 16.sp,
+    fontWeight: FontWeight = FontWeight.Normal,
+    color: Color = Color.White,
+    /** Tracking is size-specific: large text reads too loose at 0, so tighten it. */
+    letterSpacing: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
+) {
     val scrollState = rememberScrollState()
     var overflows by remember(text) { mutableStateOf(false) }
     var measured  by remember(text) { mutableStateOf(false) }
@@ -1217,6 +1227,7 @@ private fun MarqueeText(text: String, modifier: Modifier = Modifier, fontSize: a
         Text(
             text = text,
             style = TextStyle(fontSize = fontSize, fontWeight = fontWeight, color = color,
+                letterSpacing = letterSpacing,
                 shadow = Shadow(color = Color.Black.copy(alpha = 0.85f), offset = androidx.compose.ui.geometry.Offset(0f, 2f), blurRadius = 10f)),
             maxLines = 1, softWrap = false,
             textAlign = if (overflows) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center,

@@ -47,6 +47,9 @@ import javax.inject.Inject
 
 enum class RepeatMode { Off, One, All }
 
+/** Rebuffers on one song before standalone is abandoned for it. */
+private const val STUTTER_LIMIT = 3
+
 /** Dump schm/tenc/pssh of the standalone init segment. Costs a full segment download. */
 private const val PROBE_INIT_SEGMENT = false
 
@@ -131,6 +134,11 @@ class PlayerViewModel @Inject constructor(
     private val unavailableSongIds = mutableSetOf<String>()
     /** Avoids re-logging the audio format on every READY (seeks re-enter it). */
     private var lastFormatLoggedFor: String? = null
+    /** Rebuffers seen on the current song, and which song they belong to. */
+    private var stutterSongId: String? = null
+    private var stutterCount = 0
+    /** Songs whose standalone encode stutters — permanently routed via the proxy. */
+    private val proxyOnlySongIds = mutableSetOf<String>()
     private var standaloneFailures = 0
     /** Pending N+1 prefetch, cancelled whenever a new song starts loading. */
     private var prefetchJob: kotlinx.coroutines.Job? = null
@@ -276,6 +284,26 @@ class PlayerViewModel @Inject constructor(
             webServer.addLog("EXO", "state=$name pos=${pos}ms dur=${dur}ms song=$song cfade=$crossfadeInProgress")
             // One-line audio diagnostic per track: what actually got decoded, and by
             // which path. Guessing at codec/rate from the server side isn't possible.
+            // Some encodes stream badly on the standalone path — the proxy's remux
+            // repairs segment gaps that ExoPlayer just plays through. Rather than
+            // guessing which tracks those are, watch for repeated rebuffering and
+            // move that song to the proxy for good.
+            val curSong = _state.value.queue.getOrNull(_state.value.queueIndex)
+            if (state == Player.STATE_BUFFERING && usingStandalone && player.playWhenReady) {
+                if (stutterSongId != curSong?.id) { stutterSongId = curSong?.id; stutterCount = 0 }
+                stutterCount++
+                if (stutterCount >= STUTTER_LIMIT && curSong != null &&
+                    curSong.id !in proxyOnlySongIds && player.currentPosition > 3_000
+                ) {
+                    proxyOnlySongIds.add(curSong.id)
+                    usingStandalone = false
+                    val at = player.currentPosition
+                    webServer.addLog("PLR", "standalone stuttering on ${curSong.title} " +
+                        "($stutterCount rebuffers) — switching to proxy at ${at}ms")
+                    player.setMediaItem(buildMediaItem(curSong, repo.streamUrl(curSong.id)), at)
+                    player.prepare(); player.play()
+                }
+            }
             if (state == Player.STATE_READY && lastFormatLoggedFor != song) {
                 lastFormatLoggedFor = song
                 val f = player.audioFormat
@@ -670,7 +698,7 @@ class PlayerViewModel @Inject constructor(
             return
         }
         val full = _state.value.isFullStream
-        val standalone = full && useStandalone()
+        val standalone = full && useStandalone() && song.id !in proxyOnlySongIds
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}${if (standalone) " [standalone]" else ""}")
         _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
