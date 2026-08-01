@@ -810,6 +810,7 @@ class PlayerViewModel @Inject constructor(
                 Log.w("PlayerVM", "Playlist rewrite failed, using raw URL: ${e.message}")
                 wb.hlsUrl
             }
+            appleClient.probeInitSegment(wb.hlsText, wb.hlsUrl, bearer, mut)
             val drmCallback = AppleMusicDrmCallback(wb.adamId, wb.keyUri, bearer, mut)
             val drmManager = DefaultDrmSessionManager.Builder()
                 .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)

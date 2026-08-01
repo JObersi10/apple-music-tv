@@ -1,5 +1,6 @@
 package com.applemusicktv.media
 
+import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -123,16 +124,134 @@ class AppleDirectClient @Inject constructor() {
             for (raw in text.lines()) {
                 val line = raw.trim()
                 when {
-                    line.startsWith("#EXT-X-KEY") -> {}                      // drop
+                    line.startsWith("#EXT-X-KEY") -> rewriteKeyLine(line)?.let { appendLine(it) }
                     line.startsWith("#EXT-X-MAP:") -> {
                         val uri = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
-                        appendLine(if (uri == null) line
-                                   else line.replace(uri, abs(uri)))
+                        appendLine(if (uri == null) line else line.replace(uri, abs(uri)))
                     }
                     line.isEmpty() || line.startsWith("#") -> appendLine(line)
                     else -> appendLine(abs(line))
                 }
             }
+        }
+    }
+
+    /**
+     * Apple signals CENC as `METHOD=ISO-23001-7`, which ExoPlayer's HLS parser rejects
+     * outright, and the init segment carries **no pssh box** — so simply dropping the
+     * line left the CDM with no init data and playback died in
+     * queueSecureInputBuffer. Re-emit it as SAMPLE-AES-CTR with a Widevine KEYFORMAT,
+     * carrying a pssh we build from Apple's KID.
+     */
+    private fun rewriteKeyLine(line: String): String? {
+        if (!line.contains("ISO-23001-7")) return line          // already something Exo knows
+        val data = Regex("""URI="data:[^,]*,([^"]+)"""").find(line)?.groupValues?.get(1) ?: return null
+        val kid = try { Base64.decode(data, Base64.DEFAULT) } catch (_: Exception) { null } ?: return null
+        if (kid.size != 16) { Log.w("AppleDirectClient", "unexpected KID size ${kid.size}"); return null }
+        val pssh = Base64.encodeToString(widevinePssh(kid), Base64.NO_WRAP)
+        return "#EXT-X-KEY:METHOD=SAMPLE-AES-CTR,URI=\"data:text/plain;base64,$pssh\"," +
+            "KEYFORMAT=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\",KEYFORMATVERSIONS=\"1\""
+    }
+
+    /** Minimal Widevine pssh box wrapping a single key id. */
+    private fun widevinePssh(kid: ByteArray): ByteArray {
+        // Widevine protobuf: field 1 (algorithm) = AESCTR, field 2 (key_id) = kid.
+        val payload = byteArrayOf(0x08, 0x01, 0x12, 0x10) + kid
+        val systemId = byteArrayOf(
+            0xED.toByte(), 0xEF.toByte(), 0x8B.toByte(), 0xA9.toByte(), 0x79, 0xD6.toByte(),
+            0x4A, 0xCE.toByte(), 0xA3.toByte(), 0xC8.toByte(), 0x27, 0xDC.toByte(),
+            0xD5.toByte(), 0x1D, 0x21, 0xED.toByte(),
+        )
+        val size = 4 + 4 + 4 + 16 + 4 + payload.size
+        val out = java.nio.ByteBuffer.allocate(size)
+        out.putInt(size)
+        out.put("pssh".toByteArray(Charsets.US_ASCII))
+        out.putInt(0)                 // version 0, flags 0
+        out.put(systemId)
+        out.putInt(payload.size)
+        out.put(payload)
+        return out.array()
+    }
+
+    /**
+     * Download the #EXT-X-MAP init segment and log its encryption boxes. ExoPlayer
+     * fails at queueSecureInputBuffer with a bare IllegalArgumentException, which tells
+     * us nothing about *why* — this prints the actual scheme (cenc vs cbcs), the
+     * pattern block counts, IV size and which DRM systems have a pssh, so the fix
+     * stops being guesswork.
+     */
+    fun probeInitSegment(hlsText: String, playlistUrl: String, bearer: String, mut: String) {
+        try {
+            val base = playlistUrl.substring(0, playlistUrl.lastIndexOf('/') + 1)
+            val mapUri = Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(hlsText)?.groupValues?.get(1)
+            if (mapUri == null) { Log.w("AMProbe", "no EXT-X-MAP in playlist"); return }
+            val url = if (mapUri.startsWith("http")) mapUri else base + mapUri
+            val req = Request.Builder().url(url)
+                .addHeader("Authorization", "Bearer $bearer")
+                .addHeader("Cookie", "media-user-token=$mut")
+                .build()
+            val bytes = http.newCall(req).execute().body!!.bytes()
+            Log.i("AMProbe", "init segment ${bytes.size} bytes")
+            walkBoxes(bytes, 0, bytes.size, 0)
+        } catch (e: Exception) {
+            Log.w("AMProbe", "probe failed: ${e.message}")
+        }
+    }
+
+    private fun be32(b: ByteArray, i: Int) =
+        ((b[i].toInt() and 0xFF) shl 24) or ((b[i + 1].toInt() and 0xFF) shl 16) or
+        ((b[i + 2].toInt() and 0xFF) shl 8) or (b[i + 3].toInt() and 0xFF)
+
+    private fun walkBoxes(b: ByteArray, start: Int, end: Int, depth: Int) {
+        var i = start
+        while (i + 8 <= end) {
+            var size = be32(b, i).toLong()
+            val type = String(b, i + 4, 4, Charsets.US_ASCII)
+            var header = 8
+            if (size == 1L) { header = 16; size = 0; for (k in 0 until 8) size = (size shl 8) or (b[i + 8 + k].toLong() and 0xFF) }
+            if (size == 0L) size = (end - i).toLong()
+            if (size < header || i + size > end) return
+            val bodyStart = i + header
+            val bodyEnd = (i + size).toInt()
+
+            when (type) {
+                // Containers worth descending into.
+                "moov", "trak", "mdia", "minf", "stbl", "sinf", "schi" ->
+                    walkBoxes(b, bodyStart, bodyEnd, depth + 1)
+                "stsd" -> walkBoxes(b, bodyStart + 8, bodyEnd, depth + 1)
+                // Protected audio sample entry: 8 bytes of entry header + 20 bytes of
+                // AudioSampleEntry before the child boxes (sinf lives in there).
+                "enca" -> walkBoxes(b, bodyStart + 28, bodyEnd, depth + 1)
+                "schm" -> {
+                    val scheme = String(b, bodyStart + 4, 4, Charsets.US_ASCII)
+                    val ver = be32(b, bodyStart + 8)
+                    Log.i("AMProbe", "schm scheme=$scheme version=0x${ver.toString(16)}")
+                }
+                "tenc" -> {
+                    val version = b[bodyStart].toInt() and 0xFF
+                    val patternByte = b[bodyStart + 6].toInt() and 0xFF
+                    val isProtected = b[bodyStart + 6 + 1].toInt() and 0xFF
+                    val ivSize = b[bodyStart + 6 + 2].toInt() and 0xFF
+                    val kid = (0 until 16).joinToString("") { k ->
+                        "%02x".format(b[bodyStart + 6 + 3 + k].toInt() and 0xFF)
+                    }
+                    Log.i("AMProbe", "tenc v$version cryptBlk=${patternByte shr 4} skipBlk=${patternByte and 0x0F} " +
+                        "isProtected=$isProtected ivSize=$ivSize kid=$kid")
+                }
+                "pssh" -> {
+                    val sys = (0 until 16).joinToString("") { k ->
+                        "%02x".format(b[bodyStart + 4 + k].toInt() and 0xFF)
+                    }
+                    val name = when (sys) {
+                        "edef8ba979d64acea3c827dcd51d21ed" -> "Widevine"
+                        "9a04f07998404286ab92e65be0885f95" -> "PlayReady"
+                        "94ce86fb07ff4f43adb893d2fa968ca2" -> "FairPlay"
+                        else -> "unknown"
+                    }
+                    Log.i("AMProbe", "pssh system=$name ($sys) size=$size")
+                }
+            }
+            i += size.toInt()
         }
     }
 
