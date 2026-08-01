@@ -162,6 +162,21 @@ Not changed — that's a product call.
 the **default** path with the proxy as automatic fallback; `restoreState` uses it too.
 Still unverified: gapless (same-album handoff) while standalone is on.
 
+### Session 2026-08-01 (later)
+
+- **Standalone default**, proxy is the fallback. Crossfade + restore use it.
+- **Search**: songs section (was fetched but never rendered), two compact columns,
+  smaller album grid, slimmer search bar, recent-search chips, clears properly.
+- **Lyrics**: removed the pinned/sustained line — it was the cause of lines sticking
+  to the top and fading, because lrclib sets endMs to the next line's startMs so
+  nearly every line qualified. Scroll only fires when the line leaves frame.
+  Progress quantised to 50ms (was recomposing the whole panel 60x/sec — that was the
+  "Without Me is laggy" bug). Unsynced lyrics now show, dimmed and unseekable.
+- **prev** restarts the song past 10s. Cover cross-fades over 1s.
+- **`[FMT]` diagnostic** per track; it's what found the buffer/stutter issue.
+- **apple-design skill** installed at `~/.claude/skills/apple-design/`. First use:
+  size-specific type tracking on Now Playing.
+
 ### Known, not done
 - `usingStandalone` is a write-only field. Dead.
 - Toast collector has no `repeatOnLifecycle` — fires while backgrounded. Harmless.
