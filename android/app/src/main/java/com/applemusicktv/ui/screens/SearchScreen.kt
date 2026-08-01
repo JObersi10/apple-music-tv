@@ -47,23 +47,23 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
     }
 
     Column(modifier = modifier.fillMaxSize().padding(48.dp)) {
-        Text("Search", fontSize = 28.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-        Spacer(Modifier.height(20.dp))
+        Text("Search", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+        Spacer(Modifier.height(10.dp))
 
         if (editing) {
             Box(
-                modifier = Modifier.fillMaxWidth(0.6f).height(52.dp)
+                modifier = Modifier.fillMaxWidth(0.5f).height(40.dp)
                     .background(Color(0xFF1C1C1E), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 18.dp),
+                    .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 BasicTextField(
                     value = state.query, onValueChange = vm::onQueryChange,
-                    textStyle = TextStyle(color = Color.White, fontSize = 18.sp),
+                    textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
                     cursorBrush = SolidColor(Color(0xFFFA233B)), singleLine = true,
                     modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                     decorationBox = { inner ->
-                        if (state.query.isEmpty()) Text("Artists, albums, songs…", color = Color(0xFF555555), fontSize = 18.sp)
+                        if (state.query.isEmpty()) Text("Artists, albums, songs…", color = Color(0xFF555555), fontSize = 15.sp)
                         inner()
                     }
                 )
@@ -75,19 +75,19 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                 colors = ClickableSurfaceDefaults.colors(
                     containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF2A2A2C),
                 ),
-                modifier = Modifier.fillMaxWidth(0.6f).height(52.dp),
+                modifier = Modifier.fillMaxWidth(0.5f).height(40.dp),
             ) {
-                Box(Modifier.fillMaxSize().padding(horizontal = 18.dp), contentAlignment = Alignment.CenterStart) {
+                Box(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
                     Text(
                         state.query.ifEmpty { "Search — press to type…" },
                         color = if (state.query.isEmpty()) Color(0xFF777777) else Color.White,
-                        fontSize = 18.sp,
+                        fontSize = 15.sp,
                     )
                 }
             }
         }
 
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(16.dp))
 
         when {
             state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -130,39 +130,49 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                             }
                         }
                     }
-                    // Songs were fetched and mapped all along but never rendered.
+                    // Two columns of compact rows — a TV is wide, one column wasted it.
                     if (results.songs.isNotEmpty()) {
                         item {
-                            Text("Songs", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                            Text("Songs", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 8.dp))
                         }
-                        itemsIndexed(results.songs, key = { _, s -> s.id }) { idx, song ->
-                            Surface(
-                                onClick = { playerVm.playAlbum(results.songs, idx) },
-                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                                colors = ClickableSurfaceDefaults.colors(
-                                    containerColor = Color.Transparent,
-                                    focusedContainerColor = Color(0xFF2A2A2A),
-                                ),
-                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.01f),
+                        val rows = results.songs.chunked(2)
+                        itemsIndexed(rows, key = { _, r -> r.first().id }) { rowIdx, row ->
+                            Row(
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    AsyncImage(
-                                        model = song.artworkUrl(120),
-                                        contentDescription = song.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(4.dp)),
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(song.title, fontSize = 15.sp, color = Color.White, maxLines = 1)
-                                        Text(song.artistName, fontSize = 12.sp, color = Color(0xFF999999), maxLines = 1)
+                                row.forEachIndexed { colIdx, song ->
+                                    val flatIdx = rowIdx * 2 + colIdx
+                                    Surface(
+                                        onClick = { playerVm.playAlbum(results.songs, flatIdx) },
+                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                                        colors = ClickableSurfaceDefaults.colors(
+                                            containerColor = Color.Transparent,
+                                            focusedContainerColor = Color(0xFF2A2A2A),
+                                        ),
+                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.01f),
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            AsyncImage(
+                                                model = song.artworkUrl(100),
+                                                contentDescription = song.title,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(4.dp)),
+                                            )
+                                            Spacer(Modifier.width(10.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(song.title, fontSize = 13.sp, color = Color.White, maxLines = 1)
+                                                Text(song.artistName, fontSize = 11.sp, color = Color(0xFF999999), maxLines = 1)
+                                            }
+                                            Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFF777777))
+                                        }
                                     }
-                                    Text(song.durationFormatted, fontSize = 12.sp, color = Color(0xFF777777))
                                 }
+                                if (row.size == 1) Spacer(Modifier.weight(1f))
                             }
                         }
                     }
@@ -170,13 +180,13 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         item {
                             Text("Albums", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
                             LazyVerticalGrid(
-                                columns = GridCells.Fixed(5),
+                                columns = GridCells.Fixed(7),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(20.dp),
-                                modifier = Modifier.height(400.dp),
+                                modifier = Modifier.height(300.dp),
                             ) {
                                 items(results.albums, key = { it.id }) { album ->
-                                    AlbumCard(album = album, size = 160, onClick = { onAlbumClick(album.id) })
+                                    AlbumCard(album = album, size = 110, onClick = { onAlbumClick(album.id) })
                                 }
                             }
                         }

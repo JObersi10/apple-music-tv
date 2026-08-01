@@ -363,7 +363,11 @@ fun NowPlayingScreen(
                     } else if (state.lyrics.isNotEmpty()) {
                         LyricsPanel(
                             lyrics = state.lyrics,
-                            progressMs = adjustedProgressMs,
+                            // Quantised to 50ms. adjustedProgressMs changes every frame,
+                            // and feeding that straight in recomposed the whole panel —
+                            // index scan over every line plus all item lambdas — 60x a
+                            // second. 20x is indistinguishable for the word lerp.
+                            progressMs = adjustedProgressMs / 50 * 50,
                             onSeek = { ms -> playerVm.player.seekTo(ms) },
                         )
                     } else {
