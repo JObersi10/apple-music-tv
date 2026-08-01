@@ -648,6 +648,8 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
 }
 
 /** How many lines of already-sung context stay above the active line after a scroll. */
+/** A line must outlast the next line by this much to count as sustained. */
+private const val SUSTAIN_MIN_OVERLAP_MS = 1500L
 private const val LYRIC_LEAD_LINES = 3
 /** Scroll once the active line gets this close to the bottom of the viewport. */
 private const val LYRIC_BOTTOM_MARGIN_PX = 260
@@ -766,8 +768,13 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
             // the next one. Light every line whose own window covers now, not just the
             // newest — so the held line stays lit above while the new one comes in
             // underneath, instead of being dimmed to "past" mid-phrase.
+            // Only a line that genuinely runs past the NEXT line's start counts as
+            // sustained (Get Lucky). Line-synced lyrics usually set endMs to the next
+            // startMs, which previously lit half the song at once.
+            val overlapsNext = idx < lyrics.lastIndex &&
+                line.endMs > lyrics[idx + 1].startMs + SUSTAIN_MIN_OVERLAP_MS
             val isActive = idx == activeIndex ||
-                (progressMs in line.startMs..(line.endMs + LINE_END_GRACE_MS) && idx <= passedIndex)
+                (overlapsNext && idx < passedIndex && progressMs in line.startMs..line.endMs)
             val isPast = !isActive &&
                 (idx < passedIndex || (idx == passedIndex && activeIndex == -1))
             // Only pass progressMs into active line — inactive lines skip per-word work.

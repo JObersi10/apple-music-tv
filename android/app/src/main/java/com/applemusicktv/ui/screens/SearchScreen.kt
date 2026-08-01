@@ -17,6 +17,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.lazy.itemsIndexed
+import coil.compose.AsyncImage
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.foundation.lazy.LazyColumn
@@ -91,7 +93,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFFFA233B))
             }
-            state.results != null && (state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty()) -> {
+            state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty()) -> {
                 val results = state.results!!
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                     if (results.artists.isNotEmpty()) {
@@ -124,6 +126,42 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                         Spacer(Modifier.height(6.dp))
                                         Text(artist.name, fontSize = 11.sp, color = Color.White, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                                     }
+                                }
+                            }
+                        }
+                    }
+                    // Songs were fetched and mapped all along but never rendered.
+                    if (results.songs.isNotEmpty()) {
+                        item {
+                            Text("Songs", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                        }
+                        itemsIndexed(results.songs, key = { _, s -> s.id }) { idx, song ->
+                            Surface(
+                                onClick = { playerVm.playAlbum(results.songs, idx) },
+                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                                colors = ClickableSurfaceDefaults.colors(
+                                    containerColor = Color.Transparent,
+                                    focusedContainerColor = Color(0xFF2A2A2A),
+                                ),
+                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.01f),
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    AsyncImage(
+                                        model = song.artworkUrl(120),
+                                        contentDescription = song.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(4.dp)),
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(song.title, fontSize = 15.sp, color = Color.White, maxLines = 1)
+                                        Text(song.artistName, fontSize = 12.sp, color = Color(0xFF999999), maxLines = 1)
+                                    }
+                                    Text(song.durationFormatted, fontSize = 12.sp, color = Color(0xFF777777))
                                 }
                             }
                         }
