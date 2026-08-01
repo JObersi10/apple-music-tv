@@ -312,6 +312,35 @@ interface DirectAppleApi {
         @Query("genre") genre: String? = null,
     ): Map<String, Any>
 
+    @GET("v1/me/recent/played")
+    suspend fun recentPlayed(
+        @Query("limit") limit: Int = 20,
+        @Query("types") types: String = "albums,playlists",
+    ): Map<String, Any>
+
+    @GET("v1/catalog/{sf}/groupings")
+    suspend fun groupings(
+        @Path("sf") storefront: String,
+        @Query("ids") ids: String = "music-browse",
+        @Query("include") include: String = "contents",
+        @Query("limit") limit: Int = 8,
+    ): Map<String, Any>
+
+    /** Raw search — the typed one only maps songs/albums/artists. */
+    @GET("v1/catalog/{sf}/search")
+    suspend fun searchRaw(
+        @Path("sf") storefront: String,
+        @Query("term") term: String,
+        @Query("types") types: String,
+        @Query("limit") limit: Int = 10,
+    ): Map<String, Any>
+
+    @GET("v1/me/recommendations")
+    suspend fun recommendationsRaw(
+        @Query("limit") limit: Int = 20,
+        @Query("include[personal-recommendation]") include: String = "contents",
+    ): Map<String, Any>
+
     @GET("v1/catalog/{sf}/genres")
     suspend fun catalogGenres(
         @Path("sf") storefront: String,

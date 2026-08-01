@@ -27,6 +27,7 @@ class MusicRepository @Inject constructor(
     private val serverPrefs: ServerPreferences,
     private val direct: DirectMusicDataSource,
     private val directLyrics: DirectLyricsSource,
+    private val directBrowse: com.applemusicktv.data.datasource.DirectBrowseSource,
     private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
 ) {
     /**
@@ -92,14 +93,9 @@ class MusicRepository @Inject constructor(
         else apiCall { api.getArtistAlbums(id).albums.map(::albumFromDto) }
 
     // ── Home ─────────────────────────────────────────────────────────────
-    suspend fun getHome() = if (!useProxy) {
-        // /me/recommendations is often empty, and an empty Listen Now looks broken.
-        // Fall back to charts so the tab always has something in it.
-        direct.recommendations().mapCatching { recs ->
-            val sections = recs.ifEmpty { direct.charts().getOrDefault(emptyList()) }
-            sectionsOf(sections)
-        }
-    } else runCatching { api.getHome() }
+    suspend fun getHome() =
+        if (!useProxy) runCatching { sectionsOf(directBrowse.home(mutPrefs.hasMUT())) }
+        else runCatching { api.getHome() }
 
     private fun sectionsOf(pairs: List<Pair<String, List<com.applemusicktv.data.network.AlbumDto>>>) =
         com.applemusicktv.data.network.HomeResponse(
@@ -109,11 +105,13 @@ class MusicRepository @Inject constructor(
         )
 
     suspend fun getBrowse() =
-        if (!useProxy) direct.charts().map(::sectionsOf) else runCatching { api.getBrowse() }
+        if (!useProxy) runCatching { sectionsOf(directBrowse.browse()) }
+        else runCatching { api.getBrowse() }
     suspend fun getGenres() =
-        if (!useProxy) direct.genres() else runCatching { api.getGenres().genres }
+        if (!useProxy) direct.genres().map { g -> g.filter { it.name.isNotEmpty() && it.id != "34" } }
+        else runCatching { api.getGenres().genres }
     suspend fun getGenreContent(id: String) =
-        if (!useProxy) direct.charts(genre = id).map(::sectionsOf)
+        if (!useProxy) runCatching { sectionsOf(directBrowse.genreContent(id)) }
         else runCatching { api.getGenreContent(id) }
     suspend fun getRelatedSongs(songId: String) = runCatching { api.getRelatedSongs(songId).songs.map(::songFromDto) }
 
