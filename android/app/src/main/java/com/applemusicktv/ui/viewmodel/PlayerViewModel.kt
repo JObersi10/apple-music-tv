@@ -599,29 +599,36 @@ class PlayerViewModel @Inject constructor(
         _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
         saveState()
         player.repeatMode = Player.REPEAT_MODE_OFF
-        if (standalone) {
-            // Widevine setup needs a network round-trip, so it can't be inline.
-            // playStandalone falls back to the proxy URL by itself if it fails.
-            playStandalone(song)
-        } else {
-            player.setMediaItem(buildMediaItem(song, uri))
-            player.prepare()
-        }
-        if (skipFadeIn) {
-            player.volume = 1f
-        } else {
-            player.volume = 0f
-        }
-        player.play()
-        if (!skipFadeIn) {
-            fadeJob = viewModelScope.launch {
-                val steps = 40
-                val stepMs = crossfadeDurationMs / steps
-                for (i in 1..steps) {
-                    player.volume = (i.toFloat() / steps).coerceAtMost(1f)
-                    delay(stepMs)
+        // Volume/play/fade must run AFTER the media source is set, or we start and
+        // fade in whatever was loaded before.
+        fun startPlayback() {
+            player.volume = if (skipFadeIn) 1f else 0f
+            player.play()
+            if (!skipFadeIn) {
+                fadeJob = viewModelScope.launch {
+                    val steps = 40
+                    val stepMs = crossfadeDurationMs / steps
+                    for (i in 1..steps) {
+                        player.volume = (i.toFloat() / steps).coerceAtMost(1f)
+                        delay(stepMs)
+                    }
                 }
             }
+        }
+        if (standalone) {
+            usingStandalone = true
+            viewModelScope.launch {
+                val src = buildStandaloneSource(song)
+                if (src != null) player.setMediaSource(src)
+                else player.setMediaItem(buildMediaItem(song, uri))
+                player.prepare()
+                startPlayback()
+            }
+        } else {
+            usingStandalone = false
+            player.setMediaItem(buildMediaItem(song, uri))
+            player.prepare()
+            startPlayback()
         }
         preloadedForSongId = null
         if (full) loadLyrics(song.id)
@@ -752,38 +759,31 @@ class PlayerViewModel @Inject constructor(
         player.play()
     }
 
+    /**
+     * Widevine media source for on-device playback. Suspends on a network round-trip
+     * (bearer + webPlayback), so callers must await it before touching play() —
+     * fire-and-forget here meant the PREVIOUS track kept playing and faded back in
+     * while the UI already showed the new one. Returns null if standalone can't run;
+     * the caller falls back to the proxy URL.
+     */
     @OptIn(UnstableApi::class)
-    private fun playStandalone(song: Song) = viewModelScope.launch {
-        usingStandalone = true
-        var usedWidevine = false
-        try {
+    private suspend fun buildStandaloneSource(song: Song): androidx.media3.exoplayer.source.MediaSource? {
+        return try {
             val bearer = appleClient.getBearer()
-            val mut    = mutPrefs.getMUT()
-            if (bearer.isNotEmpty() && mut.isNotEmpty()) {
-                val wb = appleClient.getWebPlayback(song.id, bearer, mut)
-                val drmCallback = AppleMusicDrmCallback(wb.adamId, wb.keyUri, bearer, mut)
-                val drmManager = DefaultDrmSessionManager.Builder()
-                    .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                    .setMultiSession(false)
-                    .build(drmCallback)
-                val mediaSource = DefaultMediaSourceFactory(context)
-                    .setDrmSessionManagerProvider { drmManager }
-                    .createMediaSource(buildMediaItem(song, wb.hlsUrl))
-                player.setMediaSource(mediaSource)
-                player.prepare()
-                player.play()
-                usedWidevine = true
-            }
+            val mut = mutPrefs.getMUT()
+            if (bearer.isEmpty() || mut.isEmpty()) return null
+            val wb = appleClient.getWebPlayback(song.id, bearer, mut)
+            val drmCallback = AppleMusicDrmCallback(wb.adamId, wb.keyUri, bearer, mut)
+            val drmManager = DefaultDrmSessionManager.Builder()
+                .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                .setMultiSession(false)
+                .build(drmCallback)
+            DefaultMediaSourceFactory(context)
+                .setDrmSessionManagerProvider { drmManager }
+                .createMediaSource(buildMediaItem(song, wb.hlsUrl))
         } catch (e: Exception) {
-            Log.e("PlayerVM", "Standalone Widevine failed: ${e.message}")
-        }
-
-        if (!usedWidevine) {
-            Log.d("PlayerVM", "Falling back to proxy stream for ${song.id}")
-            val uri = repo.streamUrl(song.id)
-            player.setMediaItem(buildMediaItem(song, uri))
-            player.prepare()
-            player.play()
+            Log.e("PlayerVM", "Standalone source failed for ${song.id}: ${e.message}")
+            null
         }
     }
 
@@ -1028,11 +1028,27 @@ class PlayerViewModel @Inject constructor(
                     }
                     if (nextSong != null && s.isFullStream && !gapless && nextSong.id != crossfadeSkipSongId) {
                         crossfadeInProgress = true
+                        // buildCrossfadeExo has no DRM of its own, so in standalone mode
+                        // the fade partner must get a Widevine source too — otherwise it
+                        // fetches a proxy URL that may not even be reachable, errors out,
+                        // and every transition silently degrades to a hard cut.
+                        val cfStandalone = useStandalone()
                         val cfExo = buildCrossfadeExo().also { e ->
                             e.volume = 0f
-                            e.setMediaItem(buildMediaItem(nextSong, repo.streamUrl(nextSong.id)))
-                            e.prepare()
-                            e.play()
+                            if (!cfStandalone) {
+                                e.setMediaItem(buildMediaItem(nextSong, repo.streamUrl(nextSong.id)))
+                                e.prepare()
+                                e.play()
+                            }
+                        }
+                        if (cfStandalone) {
+                            viewModelScope.launch {
+                                val src = buildStandaloneSource(nextSong)
+                                if (src != null) cfExo.setMediaSource(src)
+                                else cfExo.setMediaItem(buildMediaItem(nextSong, repo.streamUrl(nextSong.id)))
+                                cfExo.prepare()
+                                cfExo.play()
+                            }
                         }
                         val preFadeQueue = s.queue; val preFadeIdx = s.queueIndex; val preFadeUserQueue = s.userQueue
                         val newUserQueue = if (s.userQueue.isNotEmpty()) s.userQueue.drop(1) else s.userQueue
