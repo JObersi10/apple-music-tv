@@ -72,6 +72,8 @@ data class PlayerState(
     val crossfadeEnabled: Boolean         = true,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
     val isLoading:        Boolean         = false,
+    /** True while the current track is playing via on-device Widevine. */
+    val standaloneActive: Boolean         = false,
 )
 
 @HiltViewModel
@@ -500,8 +502,13 @@ class PlayerViewModel @Inject constructor(
             val crossfade = prefs.getBoolean("crossfade_enabled", true)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, progressMs = posMs) }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
-            webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}")
-            player.setMediaItem(buildMediaItem(song, uri), posMs)
+            val standalone = full && useStandalone()
+            webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
+            usingStandalone = standalone
+            val src = if (standalone) buildStandaloneSource(song) else null
+            _state.update { it.copy(standaloneActive = src != null) }
+            if (src != null) player.setMediaSource(src, posMs)
+            else player.setMediaItem(buildMediaItem(song, uri), posMs)
             player.prepare()
 
             // N+1 prefetch normally happens in playQueueItem, which restore
@@ -510,7 +517,7 @@ class PlayerViewModel @Inject constructor(
             // Wait for the restored song to be READY first: its own decrypt is
             // cold too, and racing two decrypts delays the audio we need *now*.
             val nextSong = queue.getOrNull(idx + 1)
-            if (full && nextSong != null) {
+            if (full && !standalone && nextSong != null) {
                 preloadedForSongId = null
                 val deadline = System.currentTimeMillis() + 60_000
                 while (player.playbackState != Player.STATE_READY &&
@@ -653,10 +660,12 @@ class PlayerViewModel @Inject constructor(
                 else player.setMediaItem(buildMediaItem(song, uri))
                 player.prepare()
                 if (src != null) standaloneFailures = 0
+                _state.update { it.copy(standaloneActive = src != null) }
                 startPlayback()
             }
         } else {
             usingStandalone = false
+            _state.update { it.copy(standaloneActive = false) }
             player.setMediaItem(buildMediaItem(song, uri))
             player.prepare()
             startPlayback()

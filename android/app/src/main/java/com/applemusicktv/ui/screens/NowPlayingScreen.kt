@@ -138,6 +138,19 @@ fun NowPlayingScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Which decrypt path this track is on. Otherwise the only way to tell is
+            // to read the server log.
+            if (state.standaloneActive) {
+                Text(
+                    "ON-DEVICE",
+                    style = TextStyle(
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xCC6BCB77),
+                        shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f),
+                    ),
+                )
+            }
             if (sleepLabel != null) {
                 Text(sleepLabel, style = TextStyle(fontSize = 15.sp, color = Color(0xCCFFFFFF), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f)))
             }
