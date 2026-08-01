@@ -164,7 +164,7 @@ Still unverified: gapless (same-album handoff) while standalone is on.
 
 ### Session 2026-08-01 (later)
 
-- **Standalone default**, proxy is the fallback. Crossfade + restore use it.
+- **Standalone: reverted to default OFF** (see CLAUDE.md). Fast, but audibly choppy on many tracks and the rebuffer-based fallback does not catch them. Crossfade + restore use it.
 - **Search**: songs section (was fetched but never rendered), two compact columns,
   smaller album grid, slimmer search bar, recent-search chips, clears properly.
 - **Lyrics**: removed the pinned/sustained line — it was the cause of lines sticking

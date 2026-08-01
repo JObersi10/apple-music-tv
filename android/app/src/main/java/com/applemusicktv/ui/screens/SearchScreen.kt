@@ -42,7 +42,13 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
     // Keyboard only opens once the user explicitly selects the search box —
     // otherwise entering the tab auto-focuses the field and pops the IME.
     var editing by remember { mutableStateOf(false) }
+    var menuSong by remember { mutableStateOf<com.applemusicktv.data.model.Song?>(null) }
+    // Same guard the other screens use: the OK release that ends a long-press would
+    // otherwise land on the first menu item the moment it takes focus.
+    var clickBlocked by remember { mutableStateOf(false) }
     LaunchedEffect(editing) {
+        // Only grab focus when the user opened the field. Re-running this after every
+        // query change is what kept popping the keyboard back up while typing.
         if (editing) runCatching { focusRequester.requestFocus() }
     }
 
@@ -83,6 +89,29 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         color = if (state.query.isEmpty()) Color(0xFF777777) else Color.White,
                         fontSize = 15.sp,
                     )
+                }
+            }
+        }
+
+        val ms = menuSong
+        if (ms != null) {
+            val firstFocus = remember { FocusRequester() }
+            LaunchedEffect(ms) {
+                kotlinx.coroutines.delay(800)
+                clickBlocked = false
+                runCatching { firstFocus.requestFocus() }
+            }
+            androidx.compose.ui.window.Dialog(onDismissRequest = { menuSong = null }) {
+                Column(
+                    Modifier.width(320.dp).clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF1C1C1E)).padding(vertical = 4.dp),
+                ) {
+                    Text(ms.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium,
+                        maxLines = 1, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                    SearchContextItem("▶", "Play Next", { if (!clickBlocked) { playerVm.playNext(ms); menuSong = null } }, Modifier.focusRequester(firstFocus))
+                    SearchContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(ms); menuSong = null } })
+                    if (ms.artistId != null) SearchContextItem("♪", "Go to Artist", { if (!clickBlocked) { onArtistClick(ms.artistId); menuSong = null } })
+                    if (ms.albumId != null) SearchContextItem("◉", "Go to Album", { if (!clickBlocked) { onAlbumClick(ms.albumId); menuSong = null } })
                 }
             }
         }
@@ -145,6 +174,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                     val flatIdx = rowIdx * 2 + colIdx
                                     Surface(
                                         onClick = { playerVm.playAlbum(results.songs, flatIdx) },
+                                        onLongClick = { menuSong = song; clickBlocked = true },
                                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                                         colors = ClickableSurfaceDefaults.colors(
                                             containerColor = Color.Transparent,
@@ -283,6 +313,26 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SearchContextItem(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(icon, fontSize = 16.sp, color = Color(0xFF888888), modifier = Modifier.width(22.dp))
+            Text(label, fontSize = 15.sp, color = Color.White)
         }
     }
 }

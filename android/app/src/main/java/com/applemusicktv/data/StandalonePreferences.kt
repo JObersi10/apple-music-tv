@@ -17,14 +17,18 @@ import javax.inject.Singleton
  * decrypts HLS segments as it goes and starts in about a second. The server stays
  * connected for browse/library/lyrics and diagnostics.
  *
- * Default ON: it is strictly faster than the proxy for playback, and the proxy
- * path remains the automatic fallback whenever a Widevine source can't be built.
+ * Default OFF. It starts ~15x faster, but a lot of encodes (Love Me Again, Without
+ * Me, Bonetrousle, otherside) have fMP4 segment gaps that the proxy's
+ * `aresample=async=1` remux repairs and ExoPlayer simply plays through as audible
+ * chop. Note those tracks do NOT rebuffer, so the stutter-detection fallback never
+ * trips on them — it only catches genuine underruns. Until the gaps can be repaired
+ * on-device, correct audio wins over a faster start.
  */
 @Singleton
 class StandalonePreferences @Inject constructor(@ApplicationContext context: Context) {
     private val prefs = context.getSharedPreferences("standalone_prefs", Context.MODE_PRIVATE)
 
-    private val _enabled = MutableStateFlow(prefs.getBoolean("enabled", true))
+    private val _enabled = MutableStateFlow(prefs.getBoolean("enabled", false))
     /** StateFlow so the :8080 toggle applies without an app restart. */
     val enabled: StateFlow<Boolean> = _enabled
 
