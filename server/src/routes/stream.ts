@@ -34,6 +34,13 @@ interface InFlightJob {
 }
 const inFlight_ref = new Map<string, InFlightJob>();
 
+/**
+ * Songs Apple has withdrawn (failureType 3077). ExoPlayer retries a failed source a
+ * few times, and each retry was a fresh webPlayback + license round-trip for an
+ * answer we already had. Remembered for the process lifetime.
+ */
+const unavailableIds = new Set<string>();
+
 function cachePath(songId: string) {
   return path.join(CACHE_DIR, `${songId.replace(/[^a-zA-Z0-9._-]/g, "_")}.mp4`);
 }
@@ -120,6 +127,9 @@ function abortBackgroundJobs(exceptSongId?: string) {
 
 /** Decrypt a song to a seekable cache file (once), returning its path. */
 async function ensureDecrypted(songId: string, mut: string, background = false): Promise<string> {
+  if (unavailableIds.has(songId)) {
+    throw new Error(`decrypt skipped: ${songId} previously reported UNAVAILABLE:3077`);
+  }
   const out = cachePath(songId);
   if (fs.existsSync(out) && fs.statSync(out).size > 0) {
     console.log(`[stream] cache hit ${songId} (${(fs.statSync(out).size / 1_048_576).toFixed(1)} MB)`);
@@ -184,6 +194,7 @@ async function ensureDecrypted(songId: string, mut: string, background = false):
   } catch (e: any) {
     // Pulled library asset — the catalogue copy usually still works.
     const unavailable = String(e?.message ?? "").includes("3077");
+    if (unavailable) unavailableIds.add(songId);
     if (unavailable && songId.startsWith("i.")) {
       const catalogId = await resolveCatalogId(songId, mut);
       if (catalogId && catalogId !== songId) {

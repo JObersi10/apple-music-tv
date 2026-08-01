@@ -163,12 +163,17 @@ class PlayerViewModel @Inject constructor(
 
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                15_000,  // min buffer before playback starts
-                60_000,  // max buffer (pre-cache 60s ahead)
-                1_500,   // buffer to start after initial load
-                3_000,   // buffer to restart after rebuffer
+                50_000,  // min buffer — standalone streams live from Apple's CDN, and
+                         // a WAN dip underruns long before a 15s floor notices
+                180_000, // max buffer: hoard as much of the track as we can
+                2_500,   // buffer to start after initial load
+                5_000,   // buffer to restart after rebuffer
             )
             .setPrioritizeTimeOverSizeThresholds(true)
+            // Byte cap, not just seconds. The default is sized for video and starves a
+            // 320kbps audio stream well before the duration targets are reached, which
+            // is what left otherside sitting at 35% buffered and skipping.
+            .setTargetBufferBytes(32 * 1024 * 1024)
             .build()
 
         ExoPlayer.Builder(context)
