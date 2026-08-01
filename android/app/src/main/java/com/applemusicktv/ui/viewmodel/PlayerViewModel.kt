@@ -47,6 +47,9 @@ import javax.inject.Inject
 
 enum class RepeatMode { Off, One, All }
 
+/** Dump schm/tenc/pssh of the standalone init segment. Costs a full segment download. */
+private const val PROBE_INIT_SEGMENT = false
+
 data class PlayerState(
     val currentSong:      Song?           = null,
     val song:             Song?           = null,
@@ -649,6 +652,7 @@ class PlayerViewModel @Inject constructor(
                 if (src != null) player.setMediaSource(src)
                 else player.setMediaItem(buildMediaItem(song, uri))
                 player.prepare()
+                if (src != null) standaloneFailures = 0
                 startPlayback()
             }
         } else {
@@ -810,7 +814,10 @@ class PlayerViewModel @Inject constructor(
                 Log.w("PlayerVM", "Playlist rewrite failed, using raw URL: ${e.message}")
                 wb.hlsUrl
             }
-            appleClient.probeInitSegment(wb.hlsText, wb.hlsUrl, bearer, mut)
+            // Diagnostic only — it downloads the whole init segment (~2MB). Flip on
+            // by hand when standalone breaks again; see AMProbe in logcat.
+            @Suppress("ConstantConditionIf")
+            if (PROBE_INIT_SEGMENT) appleClient.probeInitSegment(wb.hlsText, wb.hlsUrl, bearer, mut)
             val drmCallback = AppleMusicDrmCallback(wb.adamId, wb.keyUri, bearer, mut)
             val drmManager = DefaultDrmSessionManager.Builder()
                 .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
