@@ -180,8 +180,30 @@ be re-entered via the phone web server.
 
 ## Building the APK via GitHub Actions
 
-Every push to `main` (and every PR) builds a debug APK. Download it from the
-**Actions** run's artifacts. See [`.github/workflows/android.yml`](.github/workflows/android.yml).
+The **Android APK** workflow ([`.github/workflows/android.yml`](.github/workflows/android.yml))
+runs on every push to `main`, every PR to `main`, and on manual dispatch. Each run:
+
+1. Sets up JDK 17 + the Android SDK.
+2. Writes a default `local.properties` (`proxyBaseUrl=http://10.0.2.2:3000/`) so the
+   build compiles without your local config.
+3. Runs unit tests (`./gradlew :app:test`).
+4. Builds the debug APK (`./gradlew assembleDebug`).
+5. Uploads it as the **`app-debug`** artifact on the run.
+6. On pushes to `main`, publishes/updates the rolling **`dev`** pre-release with the APK.
+
+**Getting the APK:**
+- Latest `main` build — repo **Releases → "Latest build"** → `app-debug.apk`
+  (no login required), or
+- A specific run — that run's **Actions → Artifacts → `app-debug`**.
+
+Sideload it: `adb install -r app-debug.apk`.
+
+### Committing / pushing
+
+`main` is the working branch; a push there triggers the workflow and refreshes the `dev`
+release. Native Widevine libs live in `android/app/src/main/jniLibs/` and the FFmpeg
+Media3 decoder in `android/app/libs/` — both are committed (the build needs them). Secrets
+(`auth-state.json`, `*.keystore`) are git-ignored and must never be committed.
 
 ---
 
