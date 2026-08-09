@@ -1,11 +1,22 @@
 # Apple Music TV
 
-A native **Android TV / Fire TV** Apple Music client, plus a lightweight proxy
-server that wraps Apple's private Music APIs (using a scraped web bearer token —
-no Apple Developer account required).
+A native **Android TV / Fire TV** Apple Music client. It runs **fully standalone**
+— catalog, library, lyrics, artwork **and audio decryption all happen on-device**,
+no computer required. An optional **PC proxy server** is still supported as an
+alternate audio path (useful for debugging or offloading decryption).
 
 > **Personal / educational project.** You need your own Apple Music subscription
 > and Music-User-Token. Streams are decrypted locally for playback only.
+
+## Modes
+
+| Mode | What runs | When to use |
+|------|-----------|-------------|
+| **Standalone** (default) | A pure-Kotlin software **Widevine CDM** + CENC decryptor on the Fire TV decrypts each song in-app. No PC. | Normal use — nothing else to run. |
+| **Proxy** (optional) | The PC server fetches + decrypts audio and serves seekable MP4 over your LAN. | Debugging, or devices where in-app decrypt struggles. |
+
+Toggle in **⚙ Settings → Playback → Standalone**, or point the app at a PC in
+**Settings → Open Dev Menu → PC Server**.
 
 ---
 
@@ -14,12 +25,14 @@ no Apple Developer account required).
 | Part | Stack |
 |------|-------|
 | **Android app** | Jetpack Compose for TV, Media3 ExoPlayer, Hilt, Retrofit + Moshi, Coil |
-| **Proxy server** | Bun + Hono, wrapping `amp-api-edge.music.apple.com` + `play.itunes.apple.com` |
-| **Decryption** | `gamdl` + `pywidevine` (Widevine license) + `mp4decrypt` + `ffmpeg` remux |
+| **On-device decrypt** (standalone) | Pure-Kotlin software **Widevine L3 CDM** + `cenc` AES-CTR fMP4 decryptor, feeding clear AAC straight to ExoPlayer |
+| **Proxy server** (optional) | Bun + Hono, wrapping `amp-api-edge.music.apple.com` + `play.itunes.apple.com` |
+| **Proxy decryption** | `gamdl` + `pywidevine` (Widevine license) + `mp4decrypt` + `ffmpeg` remux |
 
-The app talks to the proxy for catalog/library data, lyrics, artwork, and audio.
-The proxy fetches CENC audio from Apple, decrypts it, remuxes it to a seekable
-progressive MP4, and serves it with HTTP Range support so ExoPlayer can scrub.
+**Standalone:** the app talks directly to `amp-api-edge.music.apple.com`, obtains a
+Widevine license, derives the content key on-device, decrypts the CENC audio, and
+plays it — no PC involved. **Proxy (optional):** the server does the fetch/decrypt/
+remux instead and serves a seekable MP4 over HTTP Range.
 
 ---
 
@@ -30,13 +43,40 @@ progressive MP4, and serves it with HTTP Range support so ExoPlayer can scrub.
 - **Word-by-word synced lyrics** (Apple TTML, with `lrclib.net` fallback)
 - Animated (motion) album artwork where Apple provides it
 - Artist pages: top songs, latest release, albums, featured, similar artists
-- Long-press context menu (Play Next / Add to Queue)
+- Long-press context menu (Play Next / Add to Queue / Go to Artist / Go to Album)
+- Word-synced lyrics with **prefetch** (next song's lyrics warm before it starts), a
+  soft karaoke wipe, and edge-faded scrolling
+- **Full-Screen Lyrics** mode (··· menu) — enlarged words, corner transport controls
+  that fade on idle, lands on the current line, auto-returns to the play button
+- **Ambient screensaver** — after an idle timeout (set in Settings, off…2h) the screen
+  cross-dissolves to a dimmed drifting background + a small now-playing chip
+- **Background play** — audio keeps playing when you leave the app (toggle in Settings);
+  when paused, the screen is released so Fire TV's own screensaver/sleep can take over
+- **Picture-in-Picture** (··· menu) — shrinks to a corner card with darkened album art +
+  title (may not be supported on all Fire TV hardware)
+- **"Next: …" toast** ~15 s before the track switches
+- Search also returns **playlists** (Apple editorial ranked first)
+- **24-hour cache expiry** for lyrics and artwork so stale data gets re-fetched
+- **Artist Stations** — a generated, shuffle mix from an artist + similar artists
+- **Internet Radio** tab — geo-detected local stations (radio-browser.info), add any
+  country by name (with spell-correction), plus "now playing" song ID from ICY stream
+  metadata (pulls Apple artwork + lyrics for the current track)
+- **⚙ Settings** screen — Crossfade, Standalone toggle, Screensaver timeout, Background
+  play, Lyrics offset, Beat latency, live network log, and Reset App (replaces the old
+  dev menu; dev tools tucked inside)
 - Library sort (field + asc/desc) with on-device caching
 - Remote/controller media keys via a Media3 `MediaSession`
+
+> **Not standalone:** live Apple Music radio (`ra.*`, Apple Music 1) is FairPlay-
+> protected live HLS and can't be played on-device; personalized `ra.*` mixes need a
+> radio-tuner endpoint not yet wired. Internet radio above is DRM-free and works.
 
 ---
 
 ## Prerequisites
+
+**Server — OPTIONAL** (standalone mode needs none of this; only set it up if you
+want the proxy audio path):
 
 **Server (macOS/Linux):**
 - [Bun](https://bun.sh)

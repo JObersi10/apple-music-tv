@@ -56,4 +56,21 @@ class ArtistDetailViewModel @Inject constructor(
             }
             .onFailure { _state.value = ArtistDetailUiState(isLoading = false, error = it.message) }
     }
+
+    /**
+     * Artist station: a generated, endless-feeling queue built from this artist's
+     * top songs interleaved with a few similar artists' top songs, then shuffled.
+     * Plays through the normal engine (no live-radio stream needed).
+     */
+    fun playStation(onReady: (List<Song>) -> Unit) = viewModelScope.launch {
+        val s = _state.value
+        val pool = s.topSongs.toMutableList()
+        s.similarArtists.take(3).forEach { sim ->
+            repo.getArtistFull(sim.id).onSuccess { d ->
+                pool += d.topSongs.map(repo::songFromDto)
+            }
+        }
+        val station = pool.distinctBy { it.id }.shuffled().take(40)
+        if (station.isNotEmpty()) onReady(station)
+    }
 }

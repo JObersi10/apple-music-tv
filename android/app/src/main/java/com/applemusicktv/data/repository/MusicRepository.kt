@@ -15,9 +15,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 data class SearchResults(
-    val songs:   List<Song>   = emptyList(),
-    val albums:  List<Album>  = emptyList(),
-    val artists: List<Artist> = emptyList(),
+    val songs:     List<Song>   = emptyList(),
+    val albums:    List<Album>  = emptyList(),
+    val artists:   List<Artist> = emptyList(),
+    val playlists: List<Album>  = emptyList(),
 )
 
 @Singleton
@@ -50,12 +51,18 @@ class MusicRepository @Inject constructor(
     suspend fun search(term: String, limit: Int = 20): Result<SearchResults> {
         if (!useProxy) {
             return direct.search(term, limit).map { r ->
-                SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto))
+                SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto), playlists = r.playlists.map(::playlistToAlbum))
             }
         }
         return runCatching {
             val res = api.search(term, limit)
-            SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto))
+            // The proxy backend often doesn't surface catalog playlists — fall back to a
+            // direct Apple catalog search for them so the Playlists row still populates.
+            val playlists = res.playlists.map(::playlistToAlbum).ifEmpty {
+                runCatching { direct.search(term, limit).getOrNull()?.playlists?.map(::playlistToAlbum) }
+                    .getOrNull().orEmpty()
+            }
+            SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists)
         }
     }
 
@@ -113,7 +120,13 @@ class MusicRepository @Inject constructor(
     suspend fun getGenreContent(id: String) =
         if (!useProxy) runCatching { sectionsOf(directBrowse.genreContent(id)) }
         else runCatching { api.getGenreContent(id) }
-    suspend fun getRelatedSongs(songId: String) = runCatching { api.getRelatedSongs(songId).songs.map(::songFromDto) }
+    suspend fun getRelatedSongs(songId: String) =
+        if (!useProxy) direct.relatedSongs(songId).map { it.map(::songFromDto) }
+        else runCatching { api.getRelatedSongs(songId).songs.map(::songFromDto) }
+
+    suspend fun getGenreStation(genreId: String) =
+        if (!useProxy) direct.genreStationSongs(genreId).map { it.map(::songFromDto) }
+        else runCatching { emptyList<Song>() }
 
     // ── Lyrics ────────────────────────────────────────────────────────────
     suspend fun getLyrics(songId: String, title: String = "", artist: String = "", durationSec: Long = 0) =
@@ -121,8 +134,22 @@ class MusicRepository @Inject constructor(
             directLyrics.getLyrics(songId, direct.storefront, title, artist, durationSec)
         } else runCatching { api.getLyrics(songId).lines }
 
+    /** Warm the lyrics cache for an upcoming song so it shows instantly on switch. */
+    suspend fun prefetchLyrics(songId: String, title: String, artist: String, durationSec: Long) {
+        if (useProxy) return
+        runCatching { directLyrics.getLyrics(songId, direct.storefront, title, artist, durationSec) }
+    }
+
     suspend fun getMotion(songId: String) =
         if (!useProxy) direct.motion(songId) else runCatching { api.getMotion(songId).video }
+
+    /** Probe a personalized ra.* station's raw payload (standalone only). */
+    suspend fun probeStation(id: String): Result<String> =
+        if (!useProxy) direct.probeStation(id) else Result.success("")
+
+    /** Animated cover for an editorial playlist; null in proxy mode / user playlists. */
+    suspend fun getPlaylistMotion(playlistId: String): Result<String?> =
+        if (!useProxy) direct.playlistMotion(playlistId) else Result.success(null)
 
     /** Probe whether the configured proxy server is reachable. */
     suspend fun pingServer(): Boolean =
@@ -207,6 +234,15 @@ class MusicRepository @Inject constructor(
         recordLabel    = dto.recordLabel,
         copyright      = dto.copyright,
         editorialNotes = dto.editorialNotes,
+    )
+
+    /** Search playlists render as album-style cards; the "pl.*" id routes to the playlist screen. */
+    private fun playlistToAlbum(dto: PlaylistDto) = Album(
+        id             = dto.id,
+        title          = dto.name,
+        artistName     = dto.curatorName,
+        artworkUrl     = dto.artworkUrl,
+        artworkBgColor = dto.artworkBgColor,
     )
 
     fun artistFromDto(dto: ArtistDto) = Artist(

@@ -97,7 +97,7 @@ private fun ContentRow(
                     size = 130,
                     onClick = {
                         when {
-                            isStation  -> { /* Apple Music Radio live streams not accessible via public API */ }
+                            isStation  -> playerVm.probeStation(album.id)
                             isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
                             else       -> onAlbumClick(album.id)
                         }

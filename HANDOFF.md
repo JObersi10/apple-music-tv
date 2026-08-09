@@ -1,6 +1,43 @@
 # Handoff — Apple Music TV
 
-Last updated: 2026-08-01
+Last updated: 2026-08-09
+
+## Session 2026-08-09 — Now Playing polish + background play / PiP
+
+UI/UX:
+- Cross-dissolve transitions between player ⇄ full-screen lyrics ⇄ ambient screensaver
+  (`Crossfade` over an `npMode` in `NowPlayingScreen`).
+- Screensaver reverted to *replacing* the player (an overlay attempt let the player show
+  through the 0.68 scrim); the shared `DynamicBackground` stays behind, so the swap is clean.
+- Full-screen lyrics: auto-return to the play button after 5 s; the timer now arms on
+  focus-in (not just scroll) so it actually fires; extra right margin so wide lines don't clip.
+- Active lyric line no longer scales 1.08× (left-anchored) — that pushed wide lines past the
+  right edge; emphasis now comes from font size only. Top/bottom of the lyric list soft-faded.
+- Title marquee fades at both edges while scrolling (left edge solid at rest).
+- Pause dots between lines inset to align with the lyric text. "Next: …" toast lowered
+  toward the corner. Screensaver removed from the ··· menu (still in Settings).
+
+Correctness:
+- **Double-skip fixed** — the 200 ms poll loop kept firing `advanceQueue()` on `STATE_ENDED`
+  while the next standalone source built. New `awaitingSongStart` flag also pins the UI clock
+  at 0:00 on skip (was showing the previous song's position/duration) and guards the advance.
+- Word-by-word: lyrics parser now recurses to leaf `<span>`s (nested word timing was
+  collapsing to one whole-line "word"); syllable-lyrics tried on all endpoints before line.
+- Search playlists: proxy path falls back to a direct Apple catalog search when it returns none.
+- Beat detector widened (100→180 Hz, 2-pole) + sensitivity 1.5→1.1 so higher-keyed / dense
+  electro kicks register.
+
+Features:
+- **Background play** (Settings toggle, default on): `MainActivity.onStop` no longer pauses
+  when enabled or in PiP; the existing `AppleMusicPlaybackService` keeps audio alive. When
+  paused, `keepScreenOn` is dropped so Fire TV's own screensaver/sleep runs.
+- **Picture-in-Picture** (··· menu): `MainActivity.enterPip()` + `onPictureInPictureModeChanged`
+  → `PlayerState.isInPip`; `AppShell` swaps to a minimal `PipView` (darkened art + title, no
+  beat). Manifest: `supportsPictureInPicture`, `resizeableActivity`, PiP configChanges. **May
+  be unsupported on some Fire TV hardware** — `enterPip` is a guarded no-op there.
+- **24 h cache expiry**: lyrics cache entries carry a timestamp (evicted >24 h);
+  `AppleMusicApp` clears Coil memory+disk cache once per 24 h.
+- Onboarding "How to use it" step updated with the new features.
 
 ## State of the app
 
@@ -188,20 +225,81 @@ Also: Back returns to Listen Now; search gained a songs section, two-column comp
 rows, recent-search chips and a long-press menu; prev restarts past 10s; cover
 cross-fades; `[FMT]` diagnostic per track.
 
+### Session 2026-08-01 (evening) — chop root-caused, NOT what we thought
+
+The chop was fully diagnosed (see the long entry below and the memory note
+`standalone-chop-is-fdk-decoder.md`). It is NOT fMP4 boundary gaps. Chain of proof:
+- Captured decoded PCM: dropouts are runs of *exactly 2048 zero samples*, ~6–16% of
+  playback, cutting real audio mid-waveform.
+- logcat: `C2SoftAacDec: aacDecoder_DecodeFrame decoderErr = 0x4004 ... substituting
+  silence`. Android's FDK decoder rejects those frames.
+- NOT CPU (disabling beat DSP + motion video only marginally helped; content-specific).
+- NOT SBR/codec: forced 28:ctrp256 (AAC-LC, no SBR) — still 392× 0x4004. Both ctrp
+  flavors fail → **on-device Widevine CENC decryption is corrupting ~16% of frames**
+  before decode. Proxy is clean because it decrypts server-side (like gamdl).
+
+Dead ends tried & confirmed (do not repeat): ffmpeg decoder extension (built for
+armeabi-v7a, isAvailable=true, but DRM routes encrypted audio to MediaCodec only →
+FORMAT_UNSUPPORTED_DRM); alternate AAC decoder (only c2.android.aac.decoder exposed);
+PCM packet-loss concealment (GapConcealProcessor — can't recover 16% missing audio,
+stutters; left gated OFF). All diagnostics LEFT IN the tree at user request.
+
+**DECISION: pursue Path 1 — replicate gamdl on-device.** Run our own Widevine CDM to
+get the content key, decrypt segments in-app (Bento4/CENC-style), feed CLEAR AAC to the
+already-bundled ffmpeg decoder (which then IS usable, since frames are no longer
+encrypted). gamdl reference: github.com/glomatico/gamdl — see its interface/song.py,
+downloader/song.py, ammuxer.py, and MEDIA_CODEC_FLAVOR_MAP (28:ctrp256=AAC-LC,
+32:ctrp64=HE-AAC). Hard part = obtaining/using an L3 CDM (.wvd) on-device.
+
+FIXED this session: lyrics-on-restore (restoreState now calls loadLyrics/loadMotion);
+web-server Copy button (execCommand fallback for non-secure HTTP context). Loudness:
+confirmed NO gain field in webPlayback JSON (AMWP log) — raw masters, nothing to apply.
+
+### PATH 1 STATE (2026-08-04) — decrypt works; open UI/data bugs
+
+In-app decrypt WORKS (clean AAC, seek via synthesized sidx, prefetch warms decrypt
+cache, dedupe + generation guard stop fast-skip pileup, no server toasts in standalone,
+no per-song fade-in). Menu clip fixed in BOTH album + playlist (heightIn 340 + verticalScroll)
+— that was why "Go to Artist/Album" never showed (clipped off-screen).
+
+STILL OPEN (need fresh logcat after a play — couldn't repro cheaply):
+- Motion (animated cover) not showing. getMotion route exists (proxy MotionResponse +
+  DirectMusicDataSource editorialVideo). Check AMWP/motion logs + whether motionUrl is null.
+- Artist name not highlightable in Now Playing = song.artistId null. enrichSongIds calls
+  repo.getSong; verify DirectMusicDataSource.getSong fills artistId for playlist songs.
+- 505 lyrics don't render though lrclib returns synced=true — display guard
+  (currentSong.id vs songId mismatch?) in loadLyrics/LyricsPanel. Data is fine.
+
+### PATH 1 IN PROGRESS (2026-08-03) — on-device decrypt mostly working
+
+On-device software Widevine CDM PROVEN (key matches server; see memory
+`standalone-chop-is-fdk-decoder.md`). New files: `media/widevine/WidevineCdm.kt`,
+`WvdBlob.kt` (embedded gamdl WVD), `CencDecryptor.kt`. Flags in PlayerViewModel:
+`DECRYPT_IN_APP=true` (routes standalone through in-app decrypt), `PROBE_CDM_KEY=false`.
+Ground-truth tool: `server/ref_key.py <songId>`.
+
+- Apple audio = ONE fMP4 file, segmented only by #EXT-X-BYTERANGE (not separate segs).
+  `buildDecryptedStandaloneSource` fetches the whole file once, `CencDecryptor.decryptWhole`
+  rewrites moov (enca→mp4a, strip sinf/pssh) + AES-CTR every moof/mdat, writes clear_<id>.mp4,
+  plays it with NO DRM. Decrypt runs ~1-5s, sizes sane (out ≈ in − ~560B).
+- BUG FIXED (not yet built): ExoPlayer NPE in FragmentedMp4Extractor.parseTraf — left senc/
+  saiz/saio in moof after clearing samples. Added `rewriteMoof`/`rewriteTraf` to strip them +
+  patch trun.data_offset (−removed bytes). NEEDS BUILD+TEST.
+- Also fixed (not built): exit dialog didn't dismiss on Exit — now sets showExitDialog=false +
+  finish() fallback if moveTaskToBack fails (AppShell.kt:306).
+- Blocked on: SABRENT drive was unmounted (JAVA_HOME/SDK live there) — remount to build.
+- NEXT after build works: it downloads WHOLE file up front (~1-5s to first audio). Optimize to
+  stream/range later. Watch for any songs still failing (was "some songs" before the moof fix).
+
 ### UNRESOLVED — start here
 
-1. **Standalone audio chop.** Love Me Again, Without Me, Bonetrousle, otherside.
-   Apple's fMP4 segments have boundary gaps; the proxy repairs them with
-   `aresample=async=1` during remux, ExoPlayer plays them raw. These tracks do NOT
-   rebuffer, so the `STUTTER_LIMIT` fallback never fires — it only catches real
-   underruns. This is the single biggest reason standalone isn't the default.
-   Raising buffers (min 50s / max 180s / 32MB) helped underruns, not this.
-2. **No loudness normalisation.** FEEL plays much quieter than Love Me Again. Apple
-   applies Sound Check per track; we don't. Concrete next step: log the raw
-   `webPlayback` JSON and check for a per-asset gain field. If it exists this is a
-   one-line `player.volume` multiplier. If not, real ReplayGain needs analysis we
-   can't do before playback. A running-RMS compressor was considered and rejected —
-   it pumps.
+1. **Standalone audio chop → Path 1 (on-device decrypt).** Root cause is on-device CENC
+   decrypt corrupting frames (see session note above + memory). Next session builds the
+   gamdl-style in-app decrypt. ffmpeg decoder already bundled and ready to consume clear AAC.
+2. **No loudness normalisation.** CONFIRMED: webPlayback JSON has NO per-asset gain
+   field (checked via AMWP diagnostic — no gain/loudness/sound/volume/normal keys).
+   Raw master differences. Only real fix = read the `iTunNORM` atom from each init
+   segment (heavy) or a running-RMS compressor (rejected — pumps).
 3. **Standalone can't be split from the data path.** One toggle switches both, so
    testing the data port means accepting the chop. A second preference would fix it.
 4. **Search results in standalone** — confirm artist/album subtitles are populated;

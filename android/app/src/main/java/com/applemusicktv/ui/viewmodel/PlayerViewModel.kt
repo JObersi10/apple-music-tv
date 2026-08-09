@@ -16,6 +16,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Metadata
+import androidx.media3.extractor.metadata.icy.IcyInfo
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -34,6 +36,8 @@ import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.data.repository.MusicRepository
 import com.applemusicktv.media.AppleDirectClient
 import com.applemusicktv.media.AppleMusicDrmCallback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import com.applemusicktv.media.BeatAnalyzer
 import com.applemusicktv.media.BeatAwareRenderersFactory
 import com.squareup.moshi.Moshi
@@ -42,6 +46,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -52,6 +57,18 @@ private const val STUTTER_LIMIT = 3
 
 /** Dump schm/tenc/pssh of the standalone init segment. Costs a full segment download. */
 private const val PROBE_INIT_SEGMENT = false
+
+/** Path 1 milestone: run our own software Widevine CDM and log the raw content key
+ *  (AMKEY). Compare against server/get_key.py for the same track to prove the on-device
+ *  CDM derives the correct key before building the in-app decrypt. */
+private const val PROBE_CDM_KEY = false
+
+/** Path 1: decrypt segments in-app with our own CDM and play CLEAR AAC (no MediaDrm),
+ *  which is what kills the 0x4004 chop. Falls back to the MediaDrm path on failure. */
+private const val DECRYPT_IN_APP = true
+
+/** DIAGNOSTIC: capture decoded PCM of the first track to inspect the chop offline. */
+private const val CAPTURE_PCM = false
 
 data class PlayerState(
     val currentSong:      Song?           = null,
@@ -73,10 +90,16 @@ data class PlayerState(
     val beatIntensity:    Float           = 1.0f,
     val userQueue:        List<Song>      = emptyList(),
     val crossfadeEnabled: Boolean         = true,
+    /** Idle minutes before the ambient screensaver; 0 = off. */
+    val screensaverTimeoutMin: Int        = 10,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
     val isLoading:        Boolean         = false,
     /** True while the current track is playing via on-device Widevine. */
     val standaloneActive: Boolean         = false,
+    /** Keep audio playing when the app goes to the background / home is pressed. */
+    val backgroundPlayEnabled: Boolean    = true,
+    /** True while the activity is in Picture-in-Picture (renders the minimal PiP view). */
+    val isInPip:          Boolean         = false,
 )
 
 @HiltViewModel
@@ -142,6 +165,9 @@ class PlayerViewModel @Inject constructor(
     private var standaloneFailures = 0
     /** Pending N+1 prefetch, cancelled whenever a new song starts loading. */
     private var prefetchJob: kotlinx.coroutines.Job? = null
+    /** Bumped on every playQueueItem — a slow async standalone build checks it before
+     *  starting playback so rapidly-skipped songs don't each play for a moment. */
+    private var playGen = 0
 
     // True while the on-device (Widevine) path is driving playback, so the
     // error handler doesn't bounce back to the proxy in a loop.
@@ -151,6 +177,24 @@ class PlayerViewModel @Inject constructor(
     private var audioDeviceCallback: AudioDeviceCallback? = null
 
 
+
+    /**
+     * The stock c2.android.aac.decoder glitches on some HE-AAC (SBR) encodes at
+     * segment boundaries (Love Me Again, Bonetrousle). The device also ships the
+     * older OMX.google.aac.decoder — a different implementation — so prefer it for
+     * AAC and see if it handles the boundaries cleanly. Both are software, so both
+     * work on the Widevine (L3) secure path.
+     */
+    @OptIn(UnstableApi::class)
+    private val aacPreferOmxSelector =
+        androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mimeType, secure, tunneling ->
+            val infos = androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+                .getDecoderInfos(mimeType, secure, tunneling)
+            if (mimeType == androidx.media3.common.MimeTypes.AUDIO_AAC) {
+                webServer.addLog("CODEC", "aac decoders (secure=$secure): ${infos.joinToString { it.name }}")
+                infos.sortedByDescending { it.name.startsWith("OMX.google.aac") }
+            } else infos
+        }
 
     @OptIn(UnstableApi::class)
     private fun buildExoPlayer(): ExoPlayer = run {
@@ -190,9 +234,10 @@ class PlayerViewModel @Inject constructor(
             .setRenderersFactory(
                 BeatAwareRenderersFactory(context, beatAnalyzer.newProcessor().also { p ->
                     mainProc = p; beatAnalyzer.activate(p)
-                })
+                }, com.applemusicktv.media.GapConcealProcessor())
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                     .setEnableDecoderFallback(true)
+                    .setMediaCodecSelector(aacPreferOmxSelector)
             )
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -230,9 +275,10 @@ class PlayerViewModel @Inject constructor(
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory, extractorsFactory))
             .setLoadControl(loadControl)
             .setRenderersFactory(
-                BeatAwareRenderersFactory(context, beatAnalyzer.newProcessor().also { cfProc = it })
+                BeatAwareRenderersFactory(context, beatAnalyzer.newProcessor().also { cfProc = it }, com.applemusicktv.media.GapConcealProcessor())
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                     .setEnableDecoderFallback(true)
+                    .setMediaCodecSelector(aacPreferOmxSelector)
             )
             .setAudioAttributes(AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), false)
@@ -292,7 +338,10 @@ class PlayerViewModel @Inject constructor(
             if (state == Player.STATE_BUFFERING && usingStandalone && player.playWhenReady) {
                 if (stutterSongId != curSong?.id) { stutterSongId = curSong?.id; stutterCount = 0 }
                 stutterCount++
-                if (stutterCount >= STUTTER_LIMIT && curSong != null &&
+                // Only worth falling back to the proxy if the proxy is actually
+                // reachable. With in-app decrypt the file plays fine and a brief
+                // seek-induced rebuffer must NOT bounce us to a dead server.
+                if (stutterCount >= STUTTER_LIMIT && curSong != null && serverPrefs.serverReachable &&
                     curSong.id !in proxyOnlySongIds && player.currentPosition > 3_000
                 ) {
                     proxyOnlySongIds.add(curSong.id)
@@ -439,7 +488,21 @@ class PlayerViewModel @Inject constructor(
         _state.update { it.copy(lyricsOffsetMs = lyricsOffsetPrefs.getOffset()) }
         player.addListener(playerListener)
         mediaSession = buildMediaSession(player)
-        player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
+        // Confirm the bundled FFmpeg audio decoder loaded — when true, ExoPlayer
+        // prefers it over MediaCodec (EXTENSION_RENDERER_MODE_PREFER) and HE-AAC
+        // decodes like the proxy, killing the standalone chop.
+        webServer.addLog("FFMPEG", "FfmpegLibrary.isAvailable=${androidx.media3.decoder.ffmpeg.FfmpegLibrary.isAvailable()}")
+        // DIAGNOSTIC: capture ~25s of decoded PCM (44100Hz stereo s16le) from the
+        // active player to inspect the standalone chop offline. Remove after repair.
+        if (CAPTURE_PCM) try {
+            val f = java.io.File(context.cacheDir, "pcmcap.raw")
+            beatAnalyzer.startCapture(f.outputStream().buffered(), 44_100 * 2 * 2 * 25)
+            webServer.addLog("CAP", "capturing PCM to ${f.absolutePath}")
+        } catch (e: Exception) { webServer.addLog("CAP", "capture start failed: ${e.message}") }
+        // EventLogger formats a string on every playback event for the life of the
+        // player — pure debug overhead on an underpowered Fire TV. Gate it behind the
+        // same probe flag the init-segment dump uses.
+        if (PROBE_INIT_SEGMENT) player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
 
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         fun updateBtLatency() {
@@ -497,13 +560,16 @@ class PlayerViewModel @Inject constructor(
         val wasDown = !serverPrefs.serverReachable
         serverPrefs.serverReachable = up
         Log.i("PlayerVM", if (up) "Server reachable — proxy mode" else "Server DOWN — standalone mode")
+        // When the user has chosen standalone, the server is irrelevant — don't nag
+        // about losing/finding a connection we aren't using.
+        val announce = !standalonePrefs.isEnabled()
         if (!up) {
-            if (!wasDown) toast("Lost connection to the server")
+            if (!wasDown && announce) toast("Lost connection to the server")
             repo.prepareStandalone()
         } else if (wasDown) {
             // Recovered — reset standalone flag so next play uses proxy.
             usingStandalone = false
-            toast("Server back online")
+            if (announce) toast("Server back online")
             Log.i("PlayerVM", "Server recovered — returning to proxy mode")
         }
     }
@@ -546,8 +612,21 @@ class PlayerViewModel @Inject constructor(
             putBoolean("full_stream", s.isFullStream)
             putFloat("beat_intensity", s.beatIntensity)
             putBoolean("crossfade_enabled", s.crossfadeEnabled)
+            putBoolean("background_play", s.backgroundPlayEnabled)
         }
     }
+
+    /** True when the app should keep playing after it leaves the foreground. */
+    val backgroundPlayEnabled: Boolean get() = _state.value.backgroundPlayEnabled
+
+    fun toggleBackgroundPlay() {
+        val next = !_state.value.backgroundPlayEnabled
+        _state.update { it.copy(backgroundPlayEnabled = next) }
+        prefs.edit { putBoolean("background_play", next) }
+    }
+
+    /** Called by the activity when it enters/leaves Picture-in-Picture. */
+    fun setPipMode(on: Boolean) { _state.update { it.copy(isInPip = on) } }
 
     private fun restoreState() = viewModelScope.launch {
         val songJson = prefs.getString("song", null) ?: return@launch
@@ -563,7 +642,9 @@ class PlayerViewModel @Inject constructor(
             val full  = hasMUT()
             val beat      = prefs.getFloat("beat_intensity", 1.0f)
             val crossfade = prefs.getBoolean("crossfade_enabled", true)
-            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, progressMs = posMs) }
+            val screensaverMin = prefs.getInt("screensaver_min", 10)
+            val bgPlay = prefs.getBoolean("background_play", true)
+            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, progressMs = posMs) }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
             val standalone = full && useStandalone()
             webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
@@ -573,6 +654,11 @@ class PlayerViewModel @Inject constructor(
             if (src != null) player.setMediaSource(src, posMs)
             else player.setMediaItem(buildMediaItem(song, uri), posMs)
             player.prepare()
+
+            // Restore bypasses playQueueItem, which is where lyrics/motion normally
+            // load — so without this a restored track comes back with no lyrics.
+            if (full) loadLyrics(song.id)
+            loadMotion(song.id)
 
             // N+1 prefetch normally happens in playQueueItem, which restore
             // bypasses — so without this the song after a restored one is always
@@ -679,6 +765,24 @@ class PlayerViewModel @Inject constructor(
         prefs.edit { putBoolean("crossfade_enabled", next) }
     }
 
+    private val screensaverSteps = listOf(0, 1, 2, 5, 10, 20, 30, 60, 120)
+
+    /** Cycle the screensaver idle timeout: Off → 1 → 2 → 5 → 10 → 20 → 30 → Off. */
+    fun cycleScreensaverTimeout() = stepScreensaverTimeout(1)
+
+    /** Step the screensaver idle timeout through [screensaverSteps] (dir = +1 / -1). */
+    fun stepScreensaverTimeout(dir: Int) {
+        val cur = screensaverSteps.indexOf(_state.value.screensaverTimeoutMin).coerceAtLeast(0)
+        val next = screensaverSteps[(cur + dir).coerceIn(0, screensaverSteps.lastIndex)]
+        _state.update { it.copy(screensaverTimeoutMin = next) }
+        prefs.edit { putInt("screensaver_min", next) }
+    }
+
+    // Set on every track change; holds the UI clock at 0:00 until the NEW item is actually
+    // playing, so the poll loop can't push the outgoing song's elapsed/duration through the
+    // window while the standalone source is still building.
+    @Volatile private var awaitingSongStart: String? = null
+
     private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false) {
         val q = _state.value.queue
         if (q.isEmpty() || idx !in q.indices) {
@@ -701,29 +805,30 @@ class PlayerViewModel @Inject constructor(
         val standalone = full && useStandalone() && song.id !in proxyOnlySongIds
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}${if (standalone) " [standalone]" else ""}")
+        awaitingSongStart = song.id
         _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
         saveState()
         player.repeatMode = Player.REPEAT_MODE_OFF
+        // Silence the outgoing track immediately on selection — building a standalone
+        // source (webPlayback + decrypt) takes a beat, and the old song shouldn't keep
+        // playing under it. The loading ring covers the gap.
+        player.pause()
         // Volume/play/fade must run AFTER the media source is set, or we start and
         // fade in whatever was loaded before.
         fun startPlayback() {
-            player.volume = if (skipFadeIn) 1f else 0f
+            // No fade-in when starting a track — play it at full volume straight away.
+            // (The end-of-song crossfade is separate; this only killed the per-song ramp.)
+            player.volume = 1f
             player.play()
-            if (!skipFadeIn) {
-                fadeJob = viewModelScope.launch {
-                    val steps = 40
-                    val stepMs = crossfadeDurationMs / steps
-                    for (i in 1..steps) {
-                        player.volume = (i.toFloat() / steps).coerceAtMost(1f)
-                        delay(stepMs)
-                    }
-                }
-            }
         }
+        val myGen = ++playGen
         if (standalone) {
             usingStandalone = true
             viewModelScope.launch {
                 val src = buildStandaloneSource(song)
+                // Superseded by a newer selection while we were decrypting — drop it so
+                // the skipped-over song never briefly plays.
+                if (myGen != playGen) return@launch
                 if (src != null) player.setMediaSource(src)
                 else player.setMediaItem(buildMediaItem(song, uri))
                 player.prepare()
@@ -756,7 +861,10 @@ class PlayerViewModel @Inject constructor(
         lastAutoSaveMs = System.currentTimeMillis()
         saveState()
         prefetchJob?.cancel()
-        if (full && !standalone && nextSong != null) {
+        // Prefetch N+1 in BOTH modes. Standalone was excluded before, which is why the
+        // crossfade partner was always cold and crossfade/skip felt broken — now
+        // prefetchSong warms the in-app decrypt cache for the next song.
+        if (full && nextSong != null) {
             prefetchJob = viewModelScope.launch {
                 val deadline = System.currentTimeMillis() + 60_000
                 while (player.playbackState != Player.STATE_READY &&
@@ -820,9 +928,37 @@ class PlayerViewModel @Inject constructor(
         if (tracks.isNotEmpty()) playAlbum(tracks, startIndex = tracks.indices.random(), shuffle = true)
     }
 
+    /** Temp: dump a personalized ra.* station's payload to logcat (tag StationProbe). */
+    fun probeStation(id: String) = viewModelScope.launch { repo.probeStation(id) }
+
     fun playStation(stationId: String) = viewModelScope.launch {
         val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
         if (songs.isNotEmpty()) playAlbum(songs)
+    }
+
+    /** Genre station — shuffled top songs for the genre, played standalone. */
+    fun playGenreStation(genreId: String) = viewModelScope.launch {
+        val songs = repo.getGenreStation(genreId).getOrDefault(emptyList())
+        if (songs.isNotEmpty()) playAlbum(songs, shuffle = true)
+    }
+
+    /** Plain internet-radio stream player. Radio UI is currently hidden — kept only so
+     *  RadioScreen still compiles. No ICY song-identification. */
+    @OptIn(UnstableApi::class)
+    fun playInternetRadio(name: String, streamUrl: String, subtitle: String = "Internet Radio") {
+        usingStandalone = false
+        lastErrorKey = null
+        prefetchJob?.cancel()
+        val fakeSong = com.applemusicktv.data.model.Song(
+            id = "radio:$streamUrl", title = name, artistName = subtitle,
+            albumName = "", durationMs = 0L, artworkUrl = null, artworkBgColor = null,
+            previewUrl = null, hasLyrics = false,
+        )
+        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null) }
+        player.setMediaItem(buildMediaItem(fakeSong, streamUrl))
+        player.prepare()
+        player.volume = 1f
+        player.play()
     }
 
     @OptIn(UnstableApi::class)
@@ -876,6 +1012,12 @@ class PlayerViewModel @Inject constructor(
      */
     @OptIn(UnstableApi::class)
     private suspend fun buildStandaloneSource(song: Song): androidx.media3.exoplayer.source.MediaSource? {
+        @Suppress("ConstantConditionIf")
+        if (DECRYPT_IN_APP) {
+            val clear = buildDecryptedStandaloneSource(song)
+            if (clear != null) return clear
+            Log.w("AMCENC", "in-app decrypt failed, falling back to MediaDrm path")
+        }
         return try {
             val bearer = appleClient.getBearer()
             val mut = mutPrefs.getMUT()
@@ -895,6 +1037,8 @@ class PlayerViewModel @Inject constructor(
             // by hand when standalone breaks again; see AMProbe in logcat.
             @Suppress("ConstantConditionIf")
             if (PROBE_INIT_SEGMENT) appleClient.probeInitSegment(wb.hlsText, wb.hlsUrl, bearer, mut)
+            @Suppress("ConstantConditionIf")
+            if (PROBE_CDM_KEY && wb.keyUri != null) probeCdmKey(wb.adamId, wb.keyUri, bearer, mut)
             val drmCallback = AppleMusicDrmCallback(wb.adamId, wb.keyUri, bearer, mut)
             val drmManager = DefaultDrmSessionManager.Builder()
                 .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
@@ -907,6 +1051,104 @@ class PlayerViewModel @Inject constructor(
             Log.e("PlayerVM", "Standalone source failed for ${song.id}: ${e.message}")
             null
         }
+    }
+
+    /** Path 1 milestone probe: derive the raw content key on-device with our own
+     *  software Widevine CDM and log it (AMKEY). Non-fatal; wrapped in runCatching. */
+    private val cdmHttp by lazy { okhttp3.OkHttpClient() }
+
+    /** Run our software Widevine CDM to get the raw content key (hex) for a track. */
+    private fun deriveContentKey(adamId: String, keyUri: String, bearer: String, mut: String): String? =
+        com.applemusicktv.media.widevine.WidevineCdm().getContentKey(keyUri) { challengeB64 ->
+            val body = org.json.JSONObject().apply {
+                put("challenge", challengeB64)
+                put("key-system", "com.widevine.alpha")
+                put("uri", keyUri)
+                put("adamId", adamId)
+                put("isLibrary", false)
+                put("user-initiated", true)
+            }.toString()
+            val resp = cdmHttp.newCall(
+                okhttp3.Request.Builder()
+                    .url("https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWebPlaybackLicense")
+                    .post(body.toRequestBody("application/json".toMediaType()))
+                    .addHeader("Authorization", "Bearer $bearer")
+                    .addHeader("Cookie", "media-user-token=$mut")
+                    .addHeader("Origin", "https://music.apple.com")
+                    .build()
+            ).execute()
+            val licenseB64 = org.json.JSONObject(resp.body!!.string()).getString("license")
+            android.util.Base64.decode(licenseB64, android.util.Base64.DEFAULT)
+        }
+
+    private fun probeCdmKey(adamId: String, keyUri: String, bearer: String, mut: String) {
+        runCatching {
+            val t0 = System.currentTimeMillis()
+            val key = deriveContentKey(adamId, keyUri, bearer, mut)
+            Log.i("AMKEY", "adamId=$adamId key=$key (${System.currentTimeMillis() - t0}ms)")
+            webServer.addLog("AMKEY", "adamId=$adamId key=$key (${System.currentTimeMillis() - t0}ms)")
+        }.onFailure { Log.e("AMKEY", "probe error: ${it.message}", it) }
+    }
+
+    /**
+     * Path 1 real path: derive key → download init + segments → decrypt in-app to a
+     * CLEAR fMP4 on disk → play it with NO DRM, so the AAC decoder gets intact frames.
+     * Returns null on any failure so the caller can fall back to the MediaDrm path.
+     */
+    private suspend fun buildDecryptedStandaloneSource(song: Song): androidx.media3.exoplayer.source.MediaSource? {
+        val out = decryptToFile(song) ?: return null
+        return DefaultMediaSourceFactory(context)
+            .createMediaSource(buildMediaItem(song, android.net.Uri.fromFile(out).toString()))
+    }
+
+    private val decryptInFlight = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<java.io.File?>>()
+
+    /** Derive key → fetch whole fMP4 → decrypt in-app → clear file on disk. Reuses an
+     *  already-decrypted file (that's what lets prefetch warm crossfade/skip targets),
+     *  and dedupes concurrent requests for the same song (fast-skip fires many). */
+    private suspend fun decryptToFile(song: Song): java.io.File? {
+        val out = java.io.File(context.cacheDir, "clear_${song.id.replace(Regex("[^A-Za-z0-9._-]"), "_")}.mp4")
+        if (out.exists() && out.length() > 0) return out
+        val existing = decryptInFlight[song.id]
+        if (existing != null) return existing.await()
+        val job = viewModelScope.async(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val bearer = appleClient.getBearer()
+                val mut = mutPrefs.getMUT()
+                if (bearer.isEmpty() || mut.isEmpty()) return@async null
+                val wb = appleClient.getWebPlayback(song.id, bearer, mut)
+                val keyUri = wb.keyUri ?: return@async null
+                val t0 = System.currentTimeMillis()
+                val keyHex = deriveContentKey(wb.adamId, keyUri, bearer, mut) ?: run {
+                    Log.e("AMCENC", "no key"); return@async null
+                }
+                // Apple delivers ONE fMP4 file, segmented only by #EXT-X-BYTERANGE.
+                val base = wb.hlsUrl.substring(0, wb.hlsUrl.lastIndexOf('/') + 1)
+                fun abs(u: String) = if (u.startsWith("http")) u else base + u
+                val fileUri = (Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(wb.hlsText)?.groupValues?.get(1)
+                    ?: wb.hlsText.lineSequence().map { it.trim() }
+                        .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+                    ?: return@async null)
+                    .substringBefore('?').let(::abs)
+                val encrypted = cdmHttp.newCall(
+                    okhttp3.Request.Builder().url(fileUri)
+                        .addHeader("Authorization", "Bearer $bearer")
+                        .addHeader("Cookie", "media-user-token=$mut").build()
+                ).execute().body!!.bytes()
+                val dec = com.applemusicktv.media.widevine.CencDecryptor(keyHex)
+                val tmp = java.io.File(context.cacheDir, "${out.name}.tmp")
+                tmp.writeBytes(dec.decryptWhole(encrypted))
+                tmp.renameTo(out)   // atomic — a half-written file is never played
+                webServer.addLog("AMCENC", "song=${song.id} in=${encrypted.size} out=${out.length()} ${System.currentTimeMillis() - t0}ms")
+                out
+            } catch (e: Exception) {
+                Log.e("AMCENC", "decrypt failed for ${song.id}: ${e.message}", e); null
+            } finally {
+                decryptInFlight.remove(song.id)
+            }
+        }
+        decryptInFlight[song.id] = job
+        return job.await()
     }
 
     fun pause() { player.pause() }
@@ -973,6 +1215,17 @@ class PlayerViewModel @Inject constructor(
 
     private fun prefetchSong(song: Song) {
         if (!_state.value.isFullStream) return
+        // Warm lyrics for the upcoming song so they render the instant it starts.
+        viewModelScope.launch {
+            runCatching { repo.prefetchLyrics(song.id, song.title, song.artistName, song.durationMs / 1000) }
+        }
+        // Standalone: warm the in-app decrypt cache instead of pinging the (often
+        // absent) proxy. decryptToFile writes clear_<id>.mp4, which the next play or
+        // crossfade then reuses instantly.
+        if (useStandalone() && song.id !in proxyOnlySongIds) {
+            viewModelScope.launch { runCatching { decryptToFile(song) } }
+            return
+        }
         val url = repo.prefetchUrl(song.id)
         webServer.addLog("PRE", "prefetch start song=${song.title} url=$url")
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -1069,14 +1322,22 @@ class PlayerViewModel @Inject constructor(
             // pushing progress 5x/sec just recomposed everything reading PlayerState for
             // no visible gain.
             val sourcePos = progressSource.currentPosition
-            // A seek while PAUSED moves the player but not the clock, and the throttle
-            // below only runs while playing — so the bar would sit frozen at the old
-            // position until playback resumed. Detect the jump and push it through.
-            val jumped = kotlin.math.abs(sourcePos - _state.value.progressMs) > 1_000L
-            if (playing || progressSource !== player || jumped) {
-                if (jumped || now - lastProgressPushMs >= 900L) {
-                    lastProgressPushMs = now
-                    _state.update { it.copy(progressMs = sourcePos) }
+            if (awaitingSongStart != null) {
+                // Just switched tracks — pin the clock at 0 until the new item is genuinely
+                // playing (READY and near the start), so the previous song's position/duration
+                // doesn't linger on the bar during the source build.
+                if (playState == Player.STATE_READY && sourcePos < 2_000L) awaitingSongStart = null
+                if (_state.value.progressMs != 0L) _state.update { it.copy(progressMs = 0L) }
+            } else {
+                // A seek while PAUSED moves the player but not the clock, and the throttle
+                // below only runs while playing — so the bar would sit frozen at the old
+                // position until playback resumed. Detect the jump and push it through.
+                val jumped = kotlin.math.abs(sourcePos - _state.value.progressMs) > 1_000L
+                if (playing || progressSource !== player || jumped) {
+                    if (jumped || now - lastProgressPushMs >= 900L) {
+                        lastProgressPushMs = now
+                        _state.update { it.copy(progressMs = sourcePos) }
+                    }
                 }
             }
             // Buffering only counts as "loading" while we're mid-crossfade or actually
@@ -1084,7 +1345,11 @@ class PlayerViewModel @Inject constructor(
             val loading = (playState == Player.STATE_BUFFERING) &&
                 (player.playWhenReady || crossfadeInProgress)
             if (loading != _state.value.isLoading) _state.update { it.copy(isLoading = loading) }
-            if (playState == Player.STATE_ENDED && !crossfadeInProgress) advanceQueue()
+            // Guard against a double-advance: after advanceQueue() the player keeps
+            // reporting STATE_ENDED for a few ticks while the new (standalone) source builds.
+            // awaitingSongStart stays set until the next item is genuinely playing, so we
+            // don't skip a second time within a couple of seconds.
+            if (playState == Player.STATE_ENDED && !crossfadeInProgress && awaitingSongStart == null) advanceQueue()
             // Auto-save position every 10s while playing so restore lands at the right spot
             if (playing && now - lastAutoSaveMs > 10_000L) { lastAutoSaveMs = now; saveState() }
             val timerEnd = _state.value.sleepTimerEndsAt
@@ -1222,10 +1487,17 @@ class PlayerViewModel @Inject constructor(
                             val steps = 50
                             val stepMs = fadeDurationMs / steps
                             val startVol = oldPlayer.volume
+                            // Hand the beat bus to the incoming song once it's the louder
+                            // one. Otherwise the visuals pulse to the outgoing song's tail
+                            // (often a quiet outro) for the whole crossfade and read as dead.
+                            var beatPromoted = false
                             for (i in 1..steps) {
                                 val frac = i.toFloat() / steps
                                 oldPlayer.volume = (startVol * (1f - frac)).coerceAtLeast(0f)
                                 cfExo.volume = frac.coerceAtMost(1f)
+                                if (!beatPromoted && frac >= 0.5f && cfExo.playbackState == Player.STATE_READY) {
+                                    promoteCrossfadeBeat(); beatPromoted = true
+                                }
                                 delay(stepMs)
                             }
                             if (!crossfadeInProgress || crossfadeExo == null) {

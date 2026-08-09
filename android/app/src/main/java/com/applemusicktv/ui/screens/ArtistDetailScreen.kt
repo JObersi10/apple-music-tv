@@ -96,6 +96,7 @@ fun ArtistDetailScreen(
                 Row(Modifier.padding(start = 48.dp, end = 48.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     PillButton("▶  Play") { playerVm.playAlbum(state.topSongs, 0) }
                     PillButton("⇄  Shuffle") { playerVm.playAlbum(state.topSongs.shuffled(), 0) }
+                    PillButton("📻  Station") { vm.playStation { songs -> playerVm.playAlbum(songs, 0) } }
                 }
             }
             itemsIndexedTopSongs(state.topSongs, playerVm)

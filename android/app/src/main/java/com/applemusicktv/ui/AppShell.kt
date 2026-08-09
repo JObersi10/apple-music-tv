@@ -29,6 +29,13 @@ import java.net.URLDecoder
 import com.applemusicktv.ui.viewmodel.LibraryViewModel
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
+import coil.compose.AsyncImage
+import com.applemusicktv.data.model.Song
+import androidx.compose.material3.Text
 
 @Composable
 fun AppShell(modifier: Modifier = Modifier) {
@@ -75,14 +82,23 @@ fun AppShell(modifier: Modifier = Modifier) {
 
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
 
-    // Keep screen on while music is playing; stay on indefinitely on Now Playing tab.
+    // Keep the screen awake ONLY while music is actually playing. When paused, drop the
+    // flag so Fire TV's own screensaver / sleep can take over (our ambient screensaver only
+    // ever runs while playing).
     val playerState by playerVm.state.collectAsState()
-    val keepScreenOn = playerState.isPlaying || isOnNowPlaying
+    val keepScreenOn = playerState.isPlaying
     val activity = LocalContext.current as? Activity
     DisposableEffect(keepScreenOn) {
         if (keepScreenOn) activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
+
+    // In Picture-in-Picture the window is a tiny thumbnail — swap the whole UI for a
+    // minimal card: darkened album art + song title, no controls, no beat animation.
+    if (playerState.isInPip) {
+        PipView(playerState.currentSong)
+        return
     }
 
     val goToNowPlaying by navVm.goToNowPlaying.collectAsState()
@@ -118,7 +134,7 @@ fun AppShell(modifier: Modifier = Modifier) {
     // offers to exit. Detail screens keep the normal pop behaviour.
     val topLevelTabs = setOf(
         Screen.Browse.route, Screen.Library.route, Screen.Search.route,
-        Screen.NowPlaying.route, Screen.DevMenu.route,
+        Screen.NowPlaying.route, Screen.Radio.route, Screen.DevMenu.route,
     )
     BackHandler(enabled = !showExitDialog && currentRoute in topLevelTabs) {
         selectedTab = TopNavTab.ListenNow
@@ -169,6 +185,9 @@ fun AppShell(modifier: Modifier = Modifier) {
                     playerVm = playerVm,
                     onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                    onPlaylistClick = { id, name, artworkUrl ->
+                        navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
+                    },
                 )
             }
             composable(Screen.NowPlaying.route) {
@@ -178,6 +197,9 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
                 )
+            }
+            composable(Screen.Radio.route) {
+                RadioScreen(playerVm = playerVm)
             }
             composable(Screen.DevMenu.route)    {
                 DevMenuScreen(
@@ -303,7 +325,13 @@ fun AppShell(modifier: Modifier = Modifier) {
                             )
                         }
                         androidx.tv.material3.Surface(
-                            onClick = { activity?.moveTaskToBack(true) },
+                            onClick = {
+                                showExitDialog = false
+                                // If there's no activity to background (or the task is
+                                // already at the root), fall back to finish() so the
+                                // popup never just sits there doing nothing.
+                                if (activity?.moveTaskToBack(true) != true) activity?.finish()
+                            },
                             shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                             colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
                                 containerColor = Color(0xFFB22222),
@@ -353,5 +381,38 @@ fun AppShell(modifier: Modifier = Modifier) {
             )
         }
 
+    }
+}
+
+/** Minimal Picture-in-Picture card: the album art darkened, with the title + artist over it. */
+@Composable
+private fun PipView(song: Song?) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (song?.artworkUrl != null) {
+            AsyncImage(
+                model = song.artworkUrl(400),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            // Darken so the text stays legible at thumbnail size.
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)))
+        }
+        if (song != null) {
+            Column(
+                modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+            ) {
+                Text(
+                    song.title, maxLines = 2,
+                    style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        shadow = Shadow(Color.Black.copy(alpha = 0.9f), blurRadius = 8f)),
+                )
+                Text(
+                    song.artistName, maxLines = 1,
+                    style = TextStyle(fontSize = 12.sp, color = Color(0xCCFFFFFF),
+                        shadow = Shadow(Color.Black.copy(alpha = 0.9f), blurRadius = 8f)),
+                )
+            }
+        }
     }
 }

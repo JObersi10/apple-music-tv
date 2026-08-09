@@ -52,6 +52,27 @@ class BeatAnalyzer @Inject constructor() {
         active?.resetBeat()
         _energy.value = 0f
     }
+
+    // ── DIAGNOSTIC: raw decoded-PCM capture ────────────────────────────────
+    // The active BeatProcessor writes post-decrypt PCM here so we can inspect the
+    // standalone chop offline. Remove once the gap-repair processor is built.
+    @Volatile var captureOut: java.io.OutputStream? = null
+    private var captureLeft = 0
+    @Synchronized fun startCapture(out: java.io.OutputStream, bytes: Int) {
+        captureOut = out; captureLeft = bytes
+    }
+    @Synchronized fun capture(buf: java.nio.ByteBuffer) {
+        val out = captureOut ?: return
+        if (captureLeft <= 0) {
+            try { out.flush(); out.close() } catch (_: Exception) {}
+            captureOut = null; return
+        }
+        val d = buf.duplicate()
+        val n = minOf(d.remaining(), captureLeft)
+        val arr = ByteArray(n); d.get(arr, 0, n)
+        try { out.write(arr) } catch (_: Exception) {}
+        captureLeft -= n
+    }
 }
 
 /**
@@ -125,7 +146,11 @@ class BeatProcessor internal constructor(
         if (byteCount == 0) return
 
         // Skip all DSP entirely when this player isn't the one being heard.
-        if (bus.isActive(id)) {
+        // DSP_ENABLED gates the whole per-sample analysis loop — a diagnostic to test
+        // whether that work on the playback thread is starving the audio decoder
+        // (frame-drop chop) on the weak Fire TV.
+        if (DSP_ENABLED && bus.isActive(id)) {
+            bus.capture(inputBuffer)   // diagnostic PCM tap (no-op unless capturing)
             val dup = inputBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
             if (isFloat) {
                 val v = dup.asFloatBuffer()
@@ -220,10 +245,16 @@ class BeatProcessor internal constructor(
     override fun onReset() { resetBeat() }
 
     private companion object {
-        const val LP_STAGES = 3             // -18 dB/oct
-        const val CUTOFF_HZ = 100f          // kick/bass band
+        const val DSP_ENABLED = true       // DIAGNOSTIC: off = skip beat DSP on audio thread
+        const val LP_STAGES = 2             // -12 dB/oct — wider passband so higher-keyed
+                                            // kicks/basslines (e.g. "I Gotta Feeling") still
+                                            // fall inside the band instead of getting rolled off.
+        const val CUTOFF_HZ = 180f          // kick/bass band, widened from 100 Hz to catch
+                                            // beats whose fundamental sits higher up.
         const val HP_HZ = 25f               // kill DC and sub rumble
-        const val SENSITIVITY = 1.5f        // stddevs above mean to count as a beat
+        const val SENSITIVITY = 1.1f        // stddevs above mean to count as a beat — lowered
+                                            // so kicks in dense electro mixes (wobble bass keeps
+                                            // the running mean high) still clear the bar.
         const val REFRACTORY_WINDOWS = 12   // 120 ms → max ~500 BPM
         const val MIN_HIST = 25             // need 250 ms of history before firing
         const val FLOOR = 0.004f            // ignore near-silence

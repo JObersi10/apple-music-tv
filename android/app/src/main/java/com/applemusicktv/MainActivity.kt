@@ -1,6 +1,10 @@
 package com.applemusicktv
 
+import android.app.PictureInPictureParams
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -21,9 +25,33 @@ class MainActivity : ComponentActivity() {
         setContent { AppShell() }
     }
 
+    /** Enter Picture-in-Picture. May be unsupported on some Fire TV hardware — harmless no-op there. */
+    fun enterPip() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        runCatching {
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+                .build()
+            enterPictureInPictureMode(params)
+        }
+    }
+
+    /** Home / recents while on Now Playing → drop into PiP. Anywhere else, just keep playing. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (navVm.isOnNowPlaying && !isInPictureInPictureMode) enterPip()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPip, newConfig)
+        playerVm.setPipMode(isInPip)
+    }
+
     override fun onStop() {
         super.onStop()
-        playerVm.pause()
+        // Keep playing in the background when the user has enabled it (or when we're in PiP);
+        // otherwise pause as before. The MediaSessionService keeps audio alive either way.
+        if (!playerVm.backgroundPlayEnabled && !isInPictureInPictureMode) playerVm.pause()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

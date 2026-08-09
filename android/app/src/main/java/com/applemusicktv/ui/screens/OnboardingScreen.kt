@@ -212,7 +212,7 @@ private fun StepPreferences(vm: OnboardingViewModel, s: com.applemusicktv.ui.vie
 
 @Composable
 private fun StepTips(onScreenToggle: Boolean) {
-    StepHeader("How to use it", "Five things you won't find on your own.")
+    StepHeader("How to use it", "A few things you won't find on your own.")
 
     Column(Modifier.padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
         Tip(
@@ -230,7 +230,15 @@ private fun StepTips(onScreenToggle: Boolean) {
         )
         Tip(
             "The ··· button is your settings",
-            "Sleep timer, how strongly the background pulses to the beat, how long songs blend into each other, shuffle and repeat.",
+            "Sleep timer, shuffle and repeat, Full-Screen Lyrics, the ambient screensaver timeout, and Picture-in-Picture all live here.",
+        )
+        Tip(
+            "Full-Screen Lyrics + the ambient screensaver",
+            "From the ··· menu, Full-Screen Lyrics blows the words up big with transport controls in the corner. Leave it idle and an ambient screensaver dims to just the art and title — set the timeout in Settings.",
+        )
+        Tip(
+            "Music keeps playing when you leave",
+            "Background play is on by default, so audio continues when you press Home. Turn it off in Settings if you'd rather it pause. Picture-in-Picture (··· menu) shrinks it to a corner — may not work on every Fire TV.",
         )
         Tip(
             "The first play of a song is slow. That's normal.",

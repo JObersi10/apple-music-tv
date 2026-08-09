@@ -6,5 +6,5 @@ enum class TopNavTab(val label: String) {
     Library("Library"),
     Search("Search"),
     NowPlaying("Now Playing"),
-    Dev("Dev"),
+    Dev("⚙"),
 }

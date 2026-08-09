@@ -2,10 +2,14 @@ package com.applemusicktv.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.applemusicktv.data.CrossfadePreferences
 import com.applemusicktv.data.LyricsOffsetPreferences
 import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.ServerPreferences
+import com.applemusicktv.data.StandalonePreferences
 import com.applemusicktv.data.repository.MusicRepository
+import com.applemusicktv.media.BeatAnalyzer
+import com.applemusicktv.data.NetworkLog
 import com.applemusicktv.media.InAppWebServer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +30,10 @@ data class DevMenuState(
     val webServerUrl:   String         = "",
     val pcServerIp:     String         = "",
     val standaloneMode: Boolean        = false,
+    val standaloneOn:   Boolean        = false,
     val lyricsOffsetMs: Long           = 0L,
+    val crossfadeMs:    Long           = 7_000L,
+    val beatLatencyMs:  Long           = 0L,
     val logs:           List<LogEntry> = emptyList(),
 )
 
@@ -37,12 +44,18 @@ class DevMenuViewModel @Inject constructor(
     private val mutPrefs: MutPreferences,
     private val serverPrefs: ServerPreferences,
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
+    private val crossfadePrefs: CrossfadePreferences,
+    private val standalonePrefs: StandalonePreferences,
+    private val beatAnalyzer: BeatAnalyzer,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DevMenuState(
         webServerUrl   = webServer.serverUrl(),
         pcServerIp     = serverPrefs.getPcServerIp(),
         lyricsOffsetMs = lyricsOffsetPrefs.getOffset(),
+        crossfadeMs    = crossfadePrefs.getDuration(),
+        beatLatencyMs  = beatAnalyzer.latencyMs,
+        standaloneOn   = standalonePrefs.isEnabled(),
     ))
     val state: StateFlow<DevMenuState> = _state
 
@@ -88,6 +101,36 @@ class DevMenuViewModel @Inject constructor(
             refresh()
         }.onFailure { log("ERROR", it.message ?: "Failed") }
     }
+
+    // ── User settings (mirror of the phone web page) ──────────────────────
+    fun setCrossfade(ms: Long) {
+        crossfadePrefs.setDuration(ms)
+        val v = crossfadePrefs.getDuration()
+        _state.update { it.copy(crossfadeMs = v) }
+        log("OK", "Crossfade ${"%.1f".format(v / 1000f)}s — from next song")
+    }
+
+    fun setLyricsOffset(ms: Long) {
+        lyricsOffsetPrefs.setOffset(ms)
+        _state.update { it.copy(lyricsOffsetMs = lyricsOffsetPrefs.getOffset()) }
+    }
+
+    fun setBeatLatency(ms: Long) {
+        val v = ms.coerceIn(0L, 500L)
+        beatAnalyzer.latencyMs = v
+        beatAnalyzer.resetBeat()
+        _state.update { it.copy(beatLatencyMs = v) }
+    }
+
+    fun toggleStandalone() {
+        val on = !standalonePrefs.isEnabled()
+        standalonePrefs.setEnabled(on)
+        _state.update { it.copy(standaloneOn = on) }
+        log("OK", "Standalone ${if (on) "ON" else "OFF"} — from next song")
+    }
+
+    /** Pre-formatted HTTP lines from the direct client's interceptor. */
+    fun networkLogs(): List<String> = NetworkLog.getAll()
 
     fun clearLogs() = _state.update { it.copy(logs = emptyList()) }
 

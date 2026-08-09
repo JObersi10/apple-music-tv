@@ -57,6 +57,8 @@ data class ApplePlaylistAttrs(
     val curatorName: String = "",
     val artwork: AppleArtwork? = null,
     val description: AppleEditorialNotes? = null,
+    // "editorial" = Apple Music's own curated playlists (Sports, etc.) — ranked first.
+    val playlistType: String? = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -91,7 +93,11 @@ data class AppleRelId(val id: String = "")
 data class AppleRelList(val data: List<AppleRelId> = emptyList())
 
 @JsonClass(generateAdapter = true)
-data class AppleRelationships(val catalog: AppleRelList? = null)
+data class AppleRelationships(
+    val catalog: AppleRelList? = null,
+    val artists: AppleRelList? = null,
+    val albums: AppleRelList? = null,
+)
 
 @JsonClass(generateAdapter = true)
 data class AppleItem<T>(
@@ -112,6 +118,7 @@ data class AppleSearchResults(
     val songs: AppleList<AppleItem<AppleSongAttrs>> = AppleList(),
     val albums: AppleList<AppleItem<AppleAlbumAttrs>> = AppleList(),
     val artists: AppleList<AppleItem<AppleArtistAttrs>> = AppleList(),
+    val playlists: AppleList<AppleItem<ApplePlaylistAttrs>> = AppleList(),
 )
 
 @JsonClass(generateAdapter = true)
@@ -124,6 +131,8 @@ fun AppleItem<AppleSongAttrs>.toSongDto() = SongDto(
     title          = attributes?.name ?: "",
     artistName     = attributes?.artistName ?: "",
     albumName      = attributes?.albumName ?: "",
+    artistId       = relationships?.artists?.data?.firstOrNull()?.id,
+    albumId        = relationships?.albums?.data?.firstOrNull()?.id,
     durationMs     = attributes?.durationInMillis ?: 0,
     artworkUrl     = attributes?.artwork?.url,
     artworkBgColor = attributes?.artwork?.bgColor,
@@ -155,6 +164,17 @@ fun AppleItem<AppleArtistAttrs>.toArtistDto() = ArtistDto(
     editorialNotes = attributes?.editorialNotes?.standard,
 )
 
+/** Playlists surface in search folded into the album grid (id "pl.*" routes to the
+ *  playlist screen). Named distinctly from the album mapper — same erased signature. */
+fun AppleItem<ApplePlaylistAttrs>.toPlaylistAlbumDto() = AlbumDto(
+    id             = id,
+    title          = attributes?.name ?: "",
+    artistName     = attributes?.curatorName ?: "",
+    artworkUrl     = attributes?.artwork?.url,
+    artworkBgColor = attributes?.artwork?.bgColor,
+    releaseDate    = null,
+)
+
 fun AppleItem<ApplePlaylistAttrs>.toPlaylistDto() = PlaylistDto(
     id             = id,
     name           = attributes?.name ?: "",
@@ -173,7 +193,7 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Query("term") term: String,
         @Query("limit") limit: Int = 20,
-        @Query("types") types: String = "songs,albums,artists",
+        @Query("types") types: String = "songs,albums,artists,playlists",
     ): AppleSearchResponse
 
     @GET("v1/me/library/songs")
@@ -199,6 +219,7 @@ interface DirectAppleApi {
     suspend fun playlistTracks(
         @Path("id") id: String,
         @Query("limit") limit: Int = 100,
+        @Query("offset") offset: Int = 0,
     ): AppleList<AppleItem<AppleSongAttrs>>
 
     @GET("v1/catalog/{sf}/playlists/{id}/tracks")
@@ -206,6 +227,7 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("limit") limit: Int = 100,
+        @Query("offset") offset: Int = 0,
     ): AppleList<AppleItem<AppleSongAttrs>>
 
     @GET("v1/me/recommendations")
@@ -253,12 +275,13 @@ interface DirectAppleApi {
     suspend fun catalogSong(
         @Path("sf") storefront: String,
         @Path("id") id: String,
+        @Query("include") include: String = "artists,albums",
     ): AppleList<AppleItem<AppleSongAttrs>>
 
     @GET("v1/me/library/songs/{id}")
     suspend fun librarySong(
         @Path("id") id: String,
-        @Query("include") include: String = "catalog",
+        @Query("include") include: String = "catalog,artists,albums",
     ): AppleList<AppleItem<AppleSongAttrs>>
 
     @GET("v1/catalog/{sf}/artists/{id}")
@@ -276,6 +299,16 @@ interface DirectAppleApi {
     @GET("v1/me/library/artists")
     suspend fun libraryArtists(
         @Query("limit") limit: Int = 100,
+        @Query("offset") offset: Int = 0,
+        // catalog relationship carries the artist id we can resolve artwork from
+        @Query("include") include: String = "catalog",
+    ): AppleList<AppleItem<AppleArtistAttrs>>
+
+    /** Batch catalog artist lookup — used to backfill artwork for library artists. */
+    @GET("v1/catalog/{sf}/artists")
+    suspend fun catalogArtistsByIds(
+        @Path("sf") storefront: String,
+        @Query("ids") ids: String,
     ): AppleList<AppleItem<AppleArtistAttrs>>
 
     /** Raw JSON — the artist page renders straight off Apple's `views` payload. */
@@ -298,6 +331,22 @@ interface DirectAppleApi {
     /** Motion artwork lives on the album, so a song has to be resolved to one first. */
     @GET("v1/catalog/{sf}/albums/{id}")
     suspend fun catalogAlbumWithMotion(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("extend") extend: String = "editorialVideo",
+    ): Map<String, Any>
+
+    /** Raw station resource — used to probe what a personalized ra.* mix exposes. */
+    @GET("v1/catalog/{sf}/stations/{id}")
+    suspend fun catalogStation(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("include") include: String = "tracks,contents,radio-show",
+    ): Map<String, Any>
+
+    /** Editorial playlists carry their own motion artwork, same shape as albums. */
+    @GET("v1/catalog/{sf}/playlists/{id}")
+    suspend fun catalogPlaylistWithMotion(
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("extend") extend: String = "editorialVideo",

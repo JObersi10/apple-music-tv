@@ -11,6 +11,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -36,14 +37,20 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.lerp
@@ -57,6 +64,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
@@ -67,6 +75,7 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.applemusicktv.data.network.LyricLine
+import com.applemusicktv.data.network.LyricWord
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import com.applemusicktv.ui.viewmodel.RepeatMode
@@ -78,6 +87,9 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/** DIAGNOSTIC: off = don't spin up the motion-artwork video decoder (CPU test). */
+private const val MOTION_ENABLED = true
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -94,8 +106,7 @@ fun NowPlayingScreen(
     val toggleCount by navVm.toggleQueue.collectAsState()
     val showQueue = toggleCount % 2 == 1
 
-    val smoothProgressMs = rememberSmoothProgressMs(state.progressMs, state.isPlaying)
-    val adjustedProgressMs = smoothProgressMs + state.lyricsOffsetMs
+    val smoothProgress = rememberSmoothProgressMs(state.progressMs, state.isPlaying)
 
     DisposableEffect(Unit) {
         playerVm.nowPlayingVisible = true
@@ -134,7 +145,7 @@ fun NowPlayingScreen(
             else -> null
         }
         Row(
-            modifier = Modifier.align(Alignment.TopEnd).padding(end = 72.dp, top = 14.dp),
+            modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -145,15 +156,59 @@ fun NowPlayingScreen(
         }
 
         val playFocus = remember { FocusRequester() }
+        var fullScreenLyrics by remember { mutableStateOf(false) }
+        // System Back exits full-screen lyrics (the 3-dots menu isn't reachable there).
+        androidx.activity.compose.BackHandler(enabled = fullScreenLyrics) { fullScreenLyrics = false }
 
+        // Ambient screensaver: after 10 min of no input while playing, drop to just the
+        // drifting background + a small now-playing chip. Any key wakes it.
+        var screensaverOn by remember { mutableStateOf(false) }
+        var lastInteractionMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(state.screensaverTimeoutMin, state.isPlaying) {
+            if (state.screensaverTimeoutMin <= 0) { screensaverOn = false; return@LaunchedEffect }
+            val thresholdMs = state.screensaverTimeoutMin * 60_000L
+            while (isActive) {
+                kotlinx.coroutines.delay(15_000)
+                if (state.isPlaying && !screensaverOn &&
+                    System.currentTimeMillis() - lastInteractionMs > thresholdMs) screensaverOn = true
+            }
+        }
+
+        // Cross-dissolve between the player, full-screen lyrics and the screensaver so every
+        // switch (and back) animates instead of hard-cutting.
+        val npMode = when {
+            screensaverOn -> 2
+            fullScreenLyrics && state.lyrics.isNotEmpty() -> 1
+            else -> 0
+        }
+        androidx.compose.animation.Crossfade(
+            targetState = npMode,
+            animationSpec = tween(450),
+            modifier = Modifier.fillMaxSize(),
+            label = "npMode",
+        ) { mode -> when (mode) {
+            2 -> AmbientScreensaver(song = song) { screensaverOn = false; lastInteractionMs = System.currentTimeMillis() }
+            1 -> FullScreenLyrics(
+                lyrics = state.lyrics,
+                progressState = smoothProgress,
+                offsetMs = state.lyricsOffsetMs,
+                song = song,
+                isPlaying = state.isPlaying,
+                onSeek = { ms -> playerVm.player.seekTo(ms) },
+                onPrev = playerVm::prev,
+                onPlayPause = playerVm::togglePlayPause,
+                onNext = playerVm::next,
+            )
+            else -> {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 72.dp, vertical = 40.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 72.dp, vertical = 40.dp)
+                .onPreviewKeyEvent { lastInteractionMs = System.currentTimeMillis(); false },
             horizontalArrangement = Arrangement.spacedBy(56.dp),
         ) {
-            // Left — artwork + info + controls
+            // Left — artwork + info + controls, spread flush over the full column height.
             Column(
-                modifier = Modifier.width(320.dp).fillMaxHeight(),
-                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
@@ -178,7 +233,11 @@ fun NowPlayingScreen(
                             )
                         }
                     }
-                    if (state.motionUrl != null) {
+                    // DIAGNOSTIC: motion artwork spins up a SECOND ExoPlayer/video
+                    // decoder. Gated off to test whether it starves the audio decoder
+                    // (standalone frame-drop chop) on the weak Fire TV.
+                    @Suppress("ConstantConditionIf")
+                    if (MOTION_ENABLED && state.motionUrl != null) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
                 }
@@ -226,7 +285,7 @@ fun NowPlayingScreen(
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TransportButton(TransportIcon.Prev, onClick = playerVm::prev,
@@ -274,15 +333,15 @@ fun NowPlayingScreen(
                                     else -> "Sleep Timer"
                                 }
                                 NpMenuItem(timerLabel, Modifier.focusRequester(menuFocus)) { showSleepSubmenu = true }
-                                val beatLabel = when (state.beatIntensity) { 1.0f -> "Beat Pulse: Normal"; 2.0f -> "Beat Pulse: Strong"; else -> "Beat Pulse: Insane" }
-                                NpMenuItem(beatLabel) { playerVm.cycleBeatIntensity() }
-                                NpMenuItem(if (state.crossfadeEnabled) "Crossfade: On" else "Crossfade: Off") { playerVm.toggleCrossfade() }
+                                // Crossfade + Beat Pulse live in Settings now — keep this menu short.
                                 // Settings items leave the menu open so you can see the label
                                 // flip and keep cycling. Only navigation and the sleep timer
                                 // close it; Back dismisses.
                                 NpMenuItem(if (state.isShuffled) "Shuffle: On" else "Shuffle: Off") { playerVm.toggleShuffle() }
                                 val repeatLabel = when (state.repeatMode) { RepeatMode.Off -> "Repeat: Off"; RepeatMode.All -> "Repeat: All"; RepeatMode.One -> "Repeat: One" }
                                 NpMenuItem(repeatLabel) { playerVm.toggleRepeat() }
+                                if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics") { fullScreenLyrics = true; showOptionsMenu = false }
+                                NpMenuItem("Start Screensaver") { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
                                 if (song.artistId != null) NpMenuItem("Go to Artist") { onArtistClick(song.artistId); showOptionsMenu = false }
                                 if (song.albumId != null) NpMenuItem("Go to Album") { onAlbumClick(song.albumId); showOptionsMenu = false }
                             }
@@ -292,50 +351,12 @@ fun NowPlayingScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                val duration = song.durationMs.takeIf { it > 0 } ?: 1L
-                val progress = (smoothProgressMs.toFloat() / duration).coerceIn(0f, 1f)
-                var seekBarFocused by remember { mutableStateOf(false) }
-                var scrubMs by remember(song.id) { mutableLongStateOf(smoothProgressMs) }
-                // Keep scrub cursor in sync with playback when not focused
-                LaunchedEffect(smoothProgressMs, seekBarFocused) {
-                    if (!seekBarFocused) scrubMs = smoothProgressMs
-                }
-                val scrubProgress = (scrubMs.toFloat() / duration).coerceIn(0f, 1f)
-                val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
-                Surface(
-                    onClick = { if (seekBarFocused) { playerVm.player.seekTo(scrubMs); runCatching { playFocus.requestFocus() } } },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-                    border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
-                    modifier = Modifier.fillMaxWidth()
-                        .onFocusChanged { seekBarFocused = it.isFocused }
-                        .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown) {
-                                when (event.key) {
-                                    Key.DirectionLeft  -> { scrubMs = (scrubMs - 10_000).coerceAtLeast(0); true }
-                                    Key.DirectionRight -> { scrubMs = (scrubMs + 10_000).coerceAtMost(duration); true }
-                                    else -> false
-                                }
-                            } else false
-                        },
-                ) {
-                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                        Box(modifier = Modifier.fillMaxWidth().height(if (seekBarFocused) 6.dp else 4.dp).clip(RoundedCornerShape(3.dp)).background(Color(0x44FFFFFF))) {
-                            Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFA233B)))
-                            if (seekBarFocused) {
-                                Box(modifier = Modifier.fillMaxWidth(scrubProgress).fillMaxHeight().background(Color.White.copy(alpha = 0.35f)))
-                            }
-                        }
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
-                    Text(
-                        if (seekBarFocused) formatMs(scrubMs) else formatMs(smoothProgressMs),
-                        style = TextStyle(fontSize = 11.sp, color = if (seekBarFocused) Color.White else Color(0xFFAAAAAA), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f))
-                    )
-                    Text(song.durationFormatted, style = TextStyle(fontSize = 11.sp, color = Color(0xFFAAAAAA), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f)))
-                }
+                PlayerProgressBar(
+                    progressState = smoothProgress,
+                    song = song,
+                    playFocus = playFocus,
+                    player = playerVm.player,
+                )
             }
 
             // Right — lyrics or queue
@@ -365,12 +386,10 @@ fun NowPlayingScreen(
                     } else if (state.lyrics.isNotEmpty()) {
                         LyricsPanel(
                             lyrics = state.lyrics,
-                            // Quantised to 50ms. adjustedProgressMs changes every frame,
-                            // and feeding that straight in recomposed the whole panel —
-                            // index scan over every line plus all item lambdas — 60x a
-                            // second. 20x is indistinguishable for the word lerp.
-                            progressMs = adjustedProgressMs / 50 * 50,
+                            progressState = smoothProgress,
+                            offsetMs = state.lyricsOffsetMs,
                             onSeek = { ms -> playerVm.player.seekTo(ms) },
+                            playFocus = playFocus,
                         )
                     } else {
                         QueuePanel(
@@ -386,6 +405,151 @@ fun NowPlayingScreen(
                 }
             }
         }
+            }
+        } }
+        if (!screensaverOn) NextUpToast(
+            progressState = smoothProgress,
+            durationMs = song.durationMs,
+            nextTitle = (state.userQueue.firstOrNull() ?: state.queue.getOrNull(state.queueIndex + 1))?.title,
+        )
+    }
+}
+
+/**
+ * Small "Next: …" toast, bottom-right, that fades in ~15s before the track switches.
+ * Reads the per-frame clock via derivedStateOf so only the boolean flip recomposes it.
+ */
+@Composable
+private fun BoxScope.NextUpToast(progressState: androidx.compose.runtime.State<Long>, durationMs: Long, nextTitle: String?) {
+    val show by remember(durationMs, nextTitle) {
+        androidx.compose.runtime.derivedStateOf {
+            nextTitle != null && durationMs > 0L && (durationMs - progressState.value) in 1_000L..15_000L
+        }
+    }
+    val alpha by animateFloatAsState(if (show) 1f else 0f, tween(300), label = "nextToast")
+    if (alpha <= 0.01f || nextTitle == null) return
+    Column(
+        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 30.dp, bottom = 52.dp)
+            .graphicsLayer { this.alpha = alpha }
+            .background(Color(0xE6161616), RoundedCornerShape(10.dp))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        Text("NEXT", style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFA233B), letterSpacing = 1.5.sp))
+        Text(nextTitle, maxLines = 1, style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White))
+    }
+}
+
+/**
+ * Ambient screensaver — the drifting background (rendered behind) plus a small
+ * now-playing chip bottom-left. Grabs focus so any key wakes it back to the player.
+ */
+@Composable
+private fun AmbientScreensaver(song: com.applemusicktv.data.model.Song, onWake: () -> Unit) {
+    val fr = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
+    Box(
+        Modifier.fillMaxSize()
+            .focusRequester(fr)
+            .focusable()
+            .onKeyEvent { onWake(); true },
+    ) {
+        // Heavy dim over the drifting background — colours + motion still faintly show.
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.68f)))
+        Row(
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 64.dp, bottom = 56.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            if (song.artworkUrl != null) {
+                AsyncImage(
+                    model = song.artworkUrl(160),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)),
+                )
+            }
+            Column {
+                Text(song.title, maxLines = 1, style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White, shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 10f)))
+                Text(song.artistName, maxLines = 1, style = TextStyle(fontSize = 14.sp, color = Color(0xCCFFFFFF), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 10f)))
+            }
+        }
+    }
+}
+
+/**
+ * Full-screen lyrics view — hides the split layout, shows only the karaoke lyrics with a
+ * small now-playing chip bottom-left. Reached from the 3-dots menu; Back exits.
+ */
+@Composable
+private fun FullScreenLyrics(
+    lyrics: List<LyricLine>,
+    progressState: androidx.compose.runtime.State<Long>,
+    offsetMs: Long,
+    song: com.applemusicktv.data.model.Song,
+    isPlaying: Boolean,
+    onSeek: (Long) -> Unit,
+    onPrev: () -> Unit,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+) {
+    // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
+    // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
+    // lyrics don't get stranded scrolled-away after you fiddle with the D-pad.
+    val playFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
+
+    // Transport controls fade out after 5s of no input; any key brings them back.
+    var lastInputMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var controlsVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(lastInputMs) { kotlinx.coroutines.delay(5000); controlsVisible = false }
+    val ctlAlpha by animateFloatAsState(if (controlsVisible) 1f else 0f, tween(400), label = "fsControls")
+
+    Box(
+        Modifier.fillMaxSize().onPreviewKeyEvent {
+            lastInputMs = System.currentTimeMillis(); controlsVisible = true; false
+        },
+    ) {
+        Column(Modifier.fillMaxSize().padding(start = 72.dp, end = 128.dp, top = 36.dp, bottom = 120.dp)) {
+            LyricsPanel(
+                lyrics = lyrics,
+                progressState = progressState,
+                offsetMs = offsetMs,
+                onSeek = onSeek,
+                playFocus = playFocus,
+                fontScale = 1.3f,
+                autoReturnMs = 5_000L,
+            )
+        }
+        // Now-playing chip, bottom-left — same placement as the screensaver.
+        Row(
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 64.dp, bottom = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            if (song.artworkUrl != null) {
+                AsyncImage(
+                    model = song.artworkUrl(160),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(10.dp)),
+                )
+            }
+            Column {
+                Text(song.title, maxLines = 1, style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White, shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 10f)))
+                Text(song.artistName, maxLines = 1, style = TextStyle(fontSize = 14.sp, color = Color(0xCCFFFFFF), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 10f)))
+            }
+        }
+        // Transport controls, bottom-right (where "Back to exit" used to be). Fades on idle.
+        Row(
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 56.dp, bottom = 40.dp)
+                .graphicsLayer { alpha = ctlAlpha },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            TransportButton(TransportIcon.Prev, onClick = onPrev)
+            TransportButton(if (isPlaying) TransportIcon.Pause else TransportIcon.Play, onClick = onPlayPause, modifier = Modifier.focusRequester(playFocus))
+            TransportButton(TransportIcon.Next, onClick = onNext)
+        }
     }
 }
 
@@ -394,27 +558,89 @@ fun NowPlayingScreen(
  * polling ticks, so word-by-word lyric animation doesn't stutter.
  */
 @Composable
-private fun rememberSmoothProgressMs(reportedMs: Long, isPlaying: Boolean): Long {
+private fun rememberSmoothProgressMs(reportedMs: Long, isPlaying: Boolean): androidx.compose.runtime.State<Long> {
     val anchorRealMs = remember { mutableLongStateOf(System.currentTimeMillis()) }
     val anchorPosMs  = remember { mutableLongStateOf(reportedMs) }
-    var smoothMs by remember { mutableLongStateOf(reportedMs) }
+    // Returned as State so callers can defer the read to leaf composables — only the
+    // one thing that reads .value (the seek bar, the active word wipe) recomposes per
+    // frame, instead of the whole Now Playing tree.
+    val smoothMs = remember { mutableLongStateOf(reportedMs) }
 
     LaunchedEffect(reportedMs) {
         anchorPosMs.longValue  = reportedMs
         anchorRealMs.longValue = System.currentTimeMillis()
-        smoothMs = reportedMs
+        smoothMs.longValue = reportedMs
     }
 
     LaunchedEffect(isPlaying) {
         if (!isPlaying) return@LaunchedEffect
         while (isActive) {
             withFrameMillis {
-                smoothMs = anchorPosMs.longValue + (System.currentTimeMillis() - anchorRealMs.longValue)
+                smoothMs.longValue = anchorPosMs.longValue + (System.currentTimeMillis() - anchorRealMs.longValue)
             }
         }
     }
 
     return smoothMs
+}
+
+/**
+ * Seek bar + time labels. Reads the per-frame progress State in its own scope so the
+ * smooth clock recomposes only this small composable, not the whole Now Playing screen.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PlayerProgressBar(
+    progressState: androidx.compose.runtime.State<Long>,
+    song: com.applemusicktv.data.model.Song,
+    playFocus: FocusRequester,
+    player: androidx.media3.common.Player,
+) {
+    val smoothProgressMs = progressState.value
+    val duration = song.durationMs.takeIf { it > 0 } ?: 1L
+    val progress = (smoothProgressMs.toFloat() / duration).coerceIn(0f, 1f)
+    var seekBarFocused by remember { mutableStateOf(false) }
+    var scrubMs by remember(song.id) { mutableLongStateOf(smoothProgressMs) }
+    // Keep scrub cursor in sync with playback when not focused
+    LaunchedEffect(smoothProgressMs, seekBarFocused) {
+        if (!seekBarFocused) scrubMs = smoothProgressMs
+    }
+    val scrubProgress = (scrubMs.toFloat() / duration).coerceIn(0f, 1f)
+    val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
+    Surface(
+        onClick = { if (seekBarFocused) { player.seekTo(scrubMs); runCatching { playFocus.requestFocus() } } },
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
+        modifier = Modifier.fillMaxWidth()
+            .onFocusChanged { seekBarFocused = it.isFocused }
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown) {
+                    when (event.key) {
+                        Key.DirectionLeft  -> { scrubMs = (scrubMs - 10_000).coerceAtLeast(0); true }
+                        Key.DirectionRight -> { scrubMs = (scrubMs + 10_000).coerceAtMost(duration); true }
+                        else -> false
+                    }
+                } else false
+            },
+    ) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            Box(modifier = Modifier.fillMaxWidth().height(if (seekBarFocused) 6.dp else 4.dp).clip(RoundedCornerShape(3.dp)).background(Color(0x44FFFFFF))) {
+                Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFA233B)))
+                if (seekBarFocused) {
+                    Box(modifier = Modifier.fillMaxWidth(scrubProgress).fillMaxHeight().background(Color.White.copy(alpha = 0.35f)))
+                }
+            }
+        }
+    }
+    Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
+        Text(
+            if (seekBarFocused) formatMs(scrubMs) else formatMs(smoothProgressMs),
+            style = TextStyle(fontSize = 11.sp, color = if (seekBarFocused) Color.White else Color(0xFFAAAAAA), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f))
+        )
+        Text(song.durationFormatted, style = TextStyle(fontSize = 11.sp, color = Color(0xFFAAAAAA), shadow = Shadow(Color.Black.copy(alpha = 0.8f), blurRadius = 8f)))
+    }
 }
 
 /** Looping, muted motion album-art video layered over the static cover. */
@@ -663,15 +889,38 @@ private const val LINE_END_GRACE_MS = 250L
 private const val GAP_FADEOUT_MS    = 500L
 
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long) -> Unit) {
+private fun LyricsPanel(
+    lyrics: List<LyricLine>,
+    progressState: androidx.compose.runtime.State<Long>,
+    offsetMs: Long,
+    onSeek: (Long) -> Unit,
+    playFocus: FocusRequester? = null,
+    fontScale: Float = 1f,
+    autoReturnMs: Long = 7000L,
+) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val activeLineFocus = remember { FocusRequester() }
+
+    // Structure (which line is active, gaps, auto-scroll) only needs coarse progress —
+    // derivedStateOf quantises to 200ms so the list body recomposes ~5x/s, not 60x/s.
+    // The active word wipe reads the raw per-frame State itself, staying smooth.
+    val progressMs by remember(offsetMs) {
+        androidx.compose.runtime.derivedStateOf { ((progressState.value + offsetMs) / 200L) * 200L }
+    }
+    val liveProgress = { progressState.value + offsetMs }
 
     val passedIndex = lyrics.indexOfLast { it.startMs <= progressMs }
-    val activeIndex = if (passedIndex >= 0 && progressMs <= lyrics[passedIndex].endMs + LINE_END_GRACE_MS) passedIndex else -1
+    // Keep a line lit until its background vocals finish too — the lead line shouldn't
+    // dim out while its (call-and-response) background part is still being sung.
+    val activeIndex = if (passedIndex >= 0) {
+        val ln = lyrics[passedIndex]
+        val activeUntil = maxOf(ln.endMs, ln.background?.endMs ?: Long.MIN_VALUE) + LINE_END_GRACE_MS
+        if (progressMs <= activeUntil) passedIndex else -1
+    } else -1
 
     val scrollAnchor = passedIndex.coerceAtLeast(0)
     val firstLoad = remember { mutableStateOf(true) }
@@ -681,6 +930,17 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
     // current line back on screen — and then only at the next line change, so it
     // rejoins the flow instead of yanking mid-line.
     var userScrolled by remember { mutableStateOf(false) }
+    // Also arm the auto-return when the lyric list simply HAS focus (you D-padded LEFT
+    // into it) — not only after a scroll. Focus-in alone used to leave the timer disarmed,
+    // so it never handed focus back to the play button.
+    var listFocused by remember { mutableStateOf(false) }
+    // After the lyrics have been focused/centred for a bit, hand focus back to the
+    // play button so the D-pad isn't stranded in the lyric list.
+    LaunchedEffect(userScrolled, listFocused) {
+        if (playFocus == null || (!userScrolled && !listFocused)) return@LaunchedEffect
+        kotlinx.coroutines.delay(autoReturnMs)
+        if (!listState.isScrollInProgress) { runCatching { playFocus.requestFocus() }; userScrolled = false }
+    }
     val nestedScrollConnection = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
@@ -708,20 +968,19 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
             return@LaunchedEffect
         }
 
-        // Don't re-centre on every line — that's what made fast songs scroll
-        // continuously. Let the active line travel down the screen and only scroll
-        // once it nears the bottom (or has fallen off the top, e.g. after a seek).
+        // Centre the active line on every line change (Apple Music behaviour) — the
+        // old "only scroll near the bottom" logic is what made it jump every few lines.
         val info = listState.layoutInfo
-        val visible = info.visibleItemsInfo
-        if (visible.isEmpty()) { listState.animateScrollToItem(target); return@LaunchedEffect }
-        val first = visible.first().index
-        val last = visible.last().index
-        val viewportEnd = info.viewportEndOffset - info.afterContentPadding
-        val activeItem = visible.firstOrNull { it.index == scrollAnchor }
-        val nearBottom = activeItem == null ||
-            activeItem.offset + activeItem.size > viewportEnd - LYRIC_BOTTOM_MARGIN_PX
-        val offScreen = scrollAnchor < first || scrollAnchor > last
-        if (offScreen || nearBottom) listState.animateScrollToItem(target)
+        val activeItem = info.visibleItemsInfo.firstOrNull { it.index == scrollAnchor }
+        if (activeItem == null) {
+            listState.animateScrollToItem(target)
+        } else {
+            val viewportH = info.viewportEndOffset - info.viewportStartOffset
+            val itemCentre = activeItem.offset + activeItem.size / 2
+            // Sit the active line high — around the album-art midline (~30% down), not centre.
+            val delta = (itemCentre - viewportH * 0.30f)
+            if (kotlin.math.abs(delta) > 8f) listState.animateScrollBy(delta)
+        }
     }
 
     // When navigating back to this screen, scroll to the active line.
@@ -742,6 +1001,28 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
     LazyColumn(
         state = listState,
         modifier = Modifier.weight(1f).padding(end = 16.dp).nestedScroll(nestedScrollConnection)
+            .onFocusChanged { listFocused = it.hasFocus }
+            // Soft fade the top + bottom edges so lines dissolve in/out instead of popping.
+            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                val h = size.height
+                drawRect(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        (48f / h) to Color.Black,
+                        ((h - 150f) / h).coerceIn(0f, 1f) to Color.Black,
+                        1f to Color.Transparent,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+            .then(if (playFocus != null) Modifier.focusProperties {
+                right = playFocus
+                // Entering the list (e.g. LEFT from the play button) lands on the current
+                // line, not whichever line happens to sit nearest the button.
+                enter = { if (activeIndex >= 0) activeLineFocus else androidx.compose.ui.focus.FocusRequester.Default }
+            } else Modifier)
             .onPreviewKeyEvent { ev: androidx.compose.ui.input.key.KeyEvent ->
                 // Block upward D-pad escape to top nav bar from lyrics
                 ev.key == Key.DirectionUp && ev.type == KeyEventType.KeyDown &&
@@ -761,8 +1042,10 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
             val unsynced = line.startMs < 0
             val isActive = !unsynced && idx == activeIndex
             val isPast = !unsynced && (idx < passedIndex || (idx == passedIndex && activeIndex == -1))
-            // Only pass progressMs into active line — inactive lines skip per-word work.
-            val lineProgress = if (isActive) progressMs else if (isPast) line.endMs else line.startMs - 1L
+            // Only the active line reads the live per-frame clock (so only it recomposes
+            // at 60fps). Inactive lines get a fixed value and never re-run on tick.
+            val staticLineProgress = if (isPast) line.endMs else line.startMs - 1L
+            val progressProvider: () -> Long = if (isActive) liveProgress else ({ staticLineProgress })
 
             val prevEnd = if (idx > 0) lyrics[idx - 1].endMs else 0L
             val gapMs = line.startMs - prevEnd
@@ -775,7 +1058,9 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
                 MusicalDots(
                     fraction = ((progressMs - prevEnd).toFloat() / gapMs).coerceIn(0f, 1f),
                     outerAlpha = dotsAlpha,
-                    modifier = Modifier.padding(bottom = 10.dp),
+                    // Inset to align with the lyric text (and clear the left edge so the
+                    // first dot isn't clipped).
+                    modifier = Modifier.padding(start = 12.dp, bottom = 10.dp),
                 )
             }
 
@@ -790,7 +1075,9 @@ private fun LyricsPanel(lyrics: List<LyricLine>, progressMs: Long, onSeek: (Long
                     line = line,
                     isActive = isActive,
                     isPast = isPast,
-                    progressMs = lineProgress,
+                    progress = progressProvider,
+                    fontScale = fontScale,
+                    focusRequester = if (isActive) activeLineFocus else null,
                     onSeek = { onSeek(line.startMs) },
                 )
             }
@@ -828,21 +1115,103 @@ private fun MusicalDots(fraction: Float, outerAlpha: Float = 1f, modifier: Modif
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WordWipeLine(
+    words: List<LyricWord>,
+    activeIdx: Int,
+    progressMs: Long,
+    live: Boolean = true,
+    fontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
+    lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
+    weight: FontWeight = FontWeight.Bold,
+    sungColor: Color = Color.White,
+    unsungColor: Color = Color(0xFF8E8E93),
+) {
+    FlowRow(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        words.forEachIndexed { i, word ->
+            val dur = (word.endMs - word.startMs).coerceAtLeast(1L)
+            val sung = i < activeIdx
+            val isCurrent = i == activeIdx && live
+            val frac = when {
+                sung      -> 1f
+                isCurrent -> ((progressMs - word.startMs).toFloat() / dur).coerceIn(0f, 1f)
+                else      -> 0f
+            }
+            // Smooth sine swell — grows to a peak mid-word then eases back to original
+            // size by the end. Sine (not a linear triangle) keeps it from reading as
+            // shake; left-anchored so the first letter stays put. Slow/held words swell +
+            // glow more; fast words stay flat.
+            val slow  = (dur.coerceIn(300L, 1600L) - 300L) / 1300f
+            val pulse = if (isCurrent) kotlin.math.sin(frac * Math.PI.toFloat()).coerceIn(0f, 1f) else 0f
+            val grow  = 1f + 0.09f * slow * pulse
+            val glowA = if (isCurrent && dur > 700L) 0.34f * pulse * slow else 0f
+            WordWipe(
+                text  = word.text + if (i < words.lastIndex) " " else "",
+                frac  = frac, scale = grow, glowAlpha = glowA,
+                fontSize = fontSize, lineHeight = lineHeight, weight = weight,
+                sungColor = sungColor, unsungColor = unsungColor,
+            )
+        }
+    }
+}
+
+@Composable
+private fun WordWipe(
+    text: String,
+    frac: Float,
+    scale: Float,
+    glowAlpha: Float,
+    fontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
+    lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
+    weight: FontWeight = FontWeight.Bold,
+    sungColor: Color = Color.White,
+    unsungColor: Color = Color(0xFF8E8E93),
+) {
+    val f = frac.coerceIn(0f, 1f)
+    // Soft left→right sweep: a feathered gradient edge instead of a hard clip line,
+    // so the sung/unsung boundary reads as a smooth blur rather than a moving cut.
+    val feather = 0.22f
+    val lo = (f - feather).coerceIn(0f, 1f)
+    val hi = (f + feather).coerceIn(0f, 1f)
+    val brush: Brush = when {
+        f <= 0f -> SolidColor(unsungColor)
+        f >= 1f -> SolidColor(sungColor)
+        else -> Brush.horizontalGradient(0f to sungColor, lo to sungColor, hi to unsungColor, 1f to unsungColor)
+    }
+    val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 32f) else null
+    Text(
+        text,
+        style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp, brush = brush, shadow = glow),
+        modifier = Modifier.graphicsLayer {
+            scaleX = scale; scaleY = scale
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
+        },
+    )
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun LyricLineRow(
     line: LyricLine,
     isActive: Boolean,
     isPast: Boolean,
-    progressMs: Long,
+    progress: () -> Long,
     onSeek: () -> Unit,
+    fontScale: Float = 1f,
+    focusRequester: FocusRequester? = null,
 ) {
+    // Reading the provider here subscribes only this row: the active row (live clock)
+    // recomposes per frame; inactive rows read a constant and never re-run on tick.
+    val progressMs = progress()
     val targetOpacity = when {
         isActive -> 1f
         isPast   -> 0.18f
         else     -> 0.25f
     }
-    val targetScale = if (isActive) 1.08f else 0.93f
+    // Active line grows via font size (20→26sp), NOT a graphicsLayer scale. A left-anchored
+    // 1.08x scale used to push wide lines past the right edge and clip them.
+    val targetScale = if (isActive) 1.0f else 0.93f
     val opacity by animateFloatAsState(targetOpacity, tween(200), label = "lineOpacity")
     val scale   by animateFloatAsState(targetScale,   tween(200), label = "lineScale")
 
@@ -857,7 +1226,7 @@ private fun LyricLineRow(
     ) {
         Surface(
             onClick = onSeek,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.Transparent,
@@ -866,40 +1235,19 @@ private fun LyricLineRow(
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                val mainText: AnnotatedString? = if (isActive && line.words.isNotEmpty()) {
+                if (isActive && line.words.isNotEmpty()) {
+                    // Karaoke wipe: each word fills left→right as it's sung, current word
+                    // grows + glows on slow/held words. Apple Music style.
                     val activeIdx = line.words.indexOfLast { it.startMs <= progressMs }
-                    buildAnnotatedString {
-                        line.words.forEachIndexed { i, word ->
-                            if (i > 0) append(" ")
-                            val dur = (word.endMs - word.startMs).coerceAtLeast(1L)
-                            val isCurrent = i == activeIdx
-                            val frac = if (isCurrent)
-                                ((progressMs - word.startMs).toFloat() / dur).coerceIn(0f, 1f)
-                            else 0f
-                            val color = when {
-                                i < activeIdx -> Color.White
-                                isCurrent -> lerp(Color(0xFF8E8E93), Color.White, frac)
-                                else -> Color(0xFF8E8E93)
-                            }
-                            val glowFrac = if (isCurrent && dur > 700L) (1f - kotlin.math.abs(frac * 2f - 1f)) else 0f
-                            val glow = if (glowFrac > 0f)
-                                Shadow(color = Color.White.copy(alpha = 0.55f * glowFrac), blurRadius = 18f)
-                            else null
-                            withStyle(SpanStyle(color = color, shadow = glow)) {
-                                append(word.text)
-                            }
-                        }
+                    WordWipeLine(words = line.words, activeIdx = activeIdx, progressMs = progressMs, fontSize = (26f * fontScale).sp, lineHeight = (32f * fontScale).sp)
+                } else {
+                    val style = when {
+                        isActive -> TextStyle(fontSize = (26f * fontScale).sp, fontWeight = FontWeight.Bold, lineHeight = (32f * fontScale).sp, letterSpacing = (-0.4).sp, color = Color.White)
+                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (20f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (27f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (20f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (27f * fontScale).sp, letterSpacing = (-0.2).sp)
                     }
-                } else null
-
-                val mainStyle = when {
-                    isActive -> TextStyle(fontSize = 26.sp, fontWeight = FontWeight.Bold, lineHeight = 32.sp,
-                        letterSpacing = (-0.4).sp,
-                        color = if (mainText == null) Color.White else Color.Unspecified)
-                    isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 27.sp, letterSpacing = (-0.2).sp)
-                    else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = 20.sp, fontWeight = FontWeight.Normal, lineHeight = 27.sp, letterSpacing = (-0.2).sp)
+                    Text(text = AnnotatedString(line.text), style = style)
                 }
-                Text(text = mainText ?: AnnotatedString(line.text), style = mainStyle)
 
                 val bg = line.background
                 if (bg != null && bg.text.isNotEmpty()) {
@@ -909,41 +1257,32 @@ private fun LyricLineRow(
                     val bgTargetScale = if (bgLive) 1.08f else 0.93f
                     val bgScale by animateFloatAsState(bgTargetScale, tween(250), label = "bgScale")
 
-                    val bgText: AnnotatedString? = if (bg.words.isNotEmpty()) {
-                        val bgActiveIdx = bg.words.indexOfLast { it.startMs <= bgProgress }
-                        buildAnnotatedString {
-                            bg.words.forEachIndexed { i, word ->
-                                if (i > 0) append(" ")
-                                val dur = (word.endMs - word.startMs).coerceAtLeast(1L)
-                                val isCurrent = i == bgActiveIdx
-                                val frac = if (isCurrent && bgLive)
-                                    ((bgProgress - word.startMs).toFloat() / dur).coerceIn(0f, 1f) else 0f
-                                val col = when {
-                                    !bgLive && i <= bgActiveIdx -> Color(0xFF6E6E73)
-                                    i < bgActiveIdx -> Color(0xFFE0E0E0)
-                                    isCurrent && bgLive -> lerp(Color(0xFF6E6E73), Color(0xFFE0E0E0), frac)
-                                    else -> Color(0xFF6E6E73)
-                                }
-                                val bgGlowFrac = if (isCurrent && bgLive && dur > 700L) (1f - kotlin.math.abs(frac * 2f - 1f)) else 0f
-                                val glow = if (bgGlowFrac > 0f)
-                                    Shadow(color = Color.White.copy(alpha = 0.4f * bgGlowFrac), blurRadius = 14f) else null
-                                withStyle(SpanStyle(color = col, shadow = glow)) { append(word.text) }
-                            }
-                        }
-                    } else null
-
-                    Text(
-                        text = bgText ?: AnnotatedString(bg.text),
-                        style = TextStyle(
-                            fontSize = 19.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (bgText == null) (if (bgLive) Color(0xFFE0E0E0) else Color(0xFF6E6E73)) else Color.Unspecified,
-                        ),
-                        modifier = Modifier.graphicsLayer {
+                    Box(
+                        Modifier.graphicsLayer {
                             scaleX = bgScale; scaleY = bgScale
                             transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
-                        },
-                    )
+                        }
+                    ) {
+                        if (bg.words.isNotEmpty()) {
+                            // Same soft left→right wipe as the lead line, just smaller/dimmer.
+                            val bgActiveIdx = bg.words.indexOfLast { it.startMs <= bgProgress }
+                            WordWipeLine(
+                                words = bg.words, activeIdx = bgActiveIdx, progressMs = bgProgress,
+                                live = bgLive,
+                                fontSize = 19.sp, lineHeight = 24.sp, weight = FontWeight.SemiBold,
+                                sungColor = Color(0xFFE0E0E0), unsungColor = Color(0xFF6E6E73),
+                            )
+                        } else {
+                            Text(
+                                text = AnnotatedString(bg.text),
+                                style = TextStyle(
+                                    fontSize = 19.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (bgLive) Color(0xFFE0E0E0) else Color(0xFF6E6E73),
+                                ),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1007,16 +1346,18 @@ private fun QueuePanel(
                 }
             }
             val visibleQueue = queue.drop(currentIndex + 1)
-            items(visibleQueue.size, key = { rel -> "${queue.getOrNull(currentIndex + rel)?.id}_${currentIndex + rel}" }) { rel ->
-                val idx = currentIndex + rel
+            items(visibleQueue.size, key = { rel -> "${queue.getOrNull(currentIndex + 1 + rel)?.id}_${currentIndex + 1 + rel}" }) { rel ->
+                // visibleQueue[rel] == queue[currentIndex + 1 + rel]. The +1 was missing,
+                // so tapping a row played the track before it.
+                val idx = currentIndex + 1 + rel
                 val song = visibleQueue[rel]
-                val isCurrent = rel == 0
+                val isCurrent = false
                 val isMoving = idx == movingIndex
                 val movingMod = if (isMoving) Modifier.onKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                     when (event.key) {
                         Key.DirectionUp -> {
-                            val target = (movingIndex!! - 1).coerceAtLeast(currentIndex)
+                            val target = (movingIndex!! - 1).coerceAtLeast(currentIndex + 1)
                             if (target != movingIndex) { onMove(movingIndex!!, target); movingIndex = target }
                             true
                         }
@@ -1059,6 +1400,13 @@ private fun QueuePanel(
             }
         }
     }
+}
+
+/** "Off" / "5 min" / "1 h" / "2 h" for a screensaver timeout in minutes. */
+internal fun screensaverLabel(min: Int): String = when {
+    min <= 0    -> "Off"
+    min % 60 == 0 -> "${min / 60} h"
+    else        -> "$min min"
 }
 
 private enum class TransportIcon { Play, Pause, Prev, Next, Panel }
@@ -1223,7 +1571,33 @@ private fun MarqueeText(
         alphaAnim.animateTo(1f, androidx.compose.animation.core.tween(500))
         // stay — no further scroll
     }
-    Box(modifier = modifier.clipToBounds(), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = modifier.clipToBounds().then(
+            // When the text is scrolling, dissolve it at BOTH edges instead of hard-cutting.
+            if (overflows) Modifier
+                .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    val w = size.width
+                    val edge = 22f
+                    // Only fade the LEFT edge once the text has actually scrolled off it —
+                    // at rest (start of the title) the first letters must be fully solid.
+                    val leftFade = if (scrollState.value > 2) Color.Transparent else Color.Black
+                    val rightFade = if (scrollState.value < scrollState.maxValue - 2) Color.Transparent else Color.Black
+                    drawRect(
+                        Brush.horizontalGradient(
+                            0f to leftFade,
+                            (edge / w).coerceIn(0f, 0.5f) to Color.Black,
+                            (1f - edge / w).coerceIn(0.5f, 1f) to Color.Black,
+                            1f to rightFade,
+                        ),
+                        blendMode = BlendMode.DstIn,
+                    )
+                }
+            else Modifier,
+        ),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
             text = text,
             style = TextStyle(fontSize = fontSize, fontWeight = fontWeight, color = color,

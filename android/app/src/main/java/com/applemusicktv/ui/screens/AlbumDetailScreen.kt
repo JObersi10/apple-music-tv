@@ -1,6 +1,7 @@
 package com.applemusicktv.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -146,7 +147,7 @@ fun AlbumDetailScreen(
     // Fullscreen context menu overlay
     menuSong?.let { s ->
         LaunchedEffect(s.id) {
-            if (s.artistId == null && s.albumId == null) {
+            if (s.artistId == null || s.albumId == null) {
                 val (aId, alId) = playerVm.lookupSongIds(s.id)
                 if (aId != null || alId != null)
                     menuSong = s.copy(artistId = aId ?: s.artistId, albumId = alId ?: s.albumId)
@@ -172,7 +173,10 @@ fun AlbumDetailScreen(
                 runCatching { firstFocus.requestFocus() }
             }
             Column(
-                Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(vertical = 4.dp),
+                Modifier.width(320.dp).heightIn(max = 340.dp).clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF1C1C1E))
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                    .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
@@ -180,11 +184,11 @@ fun AlbumDetailScreen(
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
                 AlbumContextItem("▶", "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
                 AlbumContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                if (s.artistId != null || s.albumId != null) {
-                    HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                    if (s.artistId != null) AlbumContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(s.artistId); dismissMenu() } })
-                    if (s.albumId  != null) AlbumContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(s.albumId);   dismissMenu() } })
-                }
+                val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
+                val goAlbum  = s.albumId ?: album.id
+                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
+                if (goArtist != null) AlbumContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(goArtist); dismissMenu() } })
+                if (goAlbum  != null) AlbumContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(goAlbum);   dismissMenu() } })
             }
         }
     }

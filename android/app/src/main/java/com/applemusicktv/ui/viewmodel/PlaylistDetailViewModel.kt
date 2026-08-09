@@ -21,6 +21,7 @@ data class PlaylistDetailState(
     val tracks: List<Song> = emptyList(),
     val artworkUrl: String? = null,
     val curatorName: String = "",
+    val motionUrl: String? = null,
 )
 
 @HiltViewModel
@@ -50,10 +51,19 @@ class PlaylistDetailViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            repo.getPlaylistMotion(playlistId).onSuccess { url ->
+                if (loadedId == playlistId && url != null)
+                    _state.update { it.copy(motionUrl = url) }
+            }
+        }
+
+        viewModelScope.launch {
             repo.getPlaylistTracks(playlistId).onSuccess { songs ->
                 val newState = PlaylistDetailState(
                     tracks     = songs,
                     artworkUrl = initialArtworkUrl ?: songs.firstOrNull()?.artworkUrl,
+                    curatorName = _state.value.curatorName,
+                    motionUrl  = _state.value.motionUrl,
                 )
                 _state.value = newState
                 writeCache(playlistId, newState)

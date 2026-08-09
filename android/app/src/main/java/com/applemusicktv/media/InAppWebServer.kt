@@ -206,9 +206,14 @@ class InAppWebServer @Inject constructor(
             while (!line.isNullOrBlank()) { line = reader.readLine() }
             val header = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
             out.write(header.toByteArray()); out.flush()
-            // Send recent logs as backlog
+            // Dump EVERYTHING on connect: network request log + full app log backlog,
+            // then keep streaming live app logs. `curl http://<firetv-ip>:8081`.
+            out.write("===== NETWORK REQUESTS =====\n".toByteArray())
+            for (n in NetworkLog.getAll()) { out.write("${n}\n".toByteArray()) }
+            out.write("===== APP LOG =====\n".toByteArray())
             val backlog = synchronized(logs) { logs.toList() }
-            for (l in backlog) { out.write("${l}\n".toByteArray()); out.flush() }
+            for (l in backlog) { out.write("${l}\n".toByteArray()) }
+            out.write("===== LIVE =====\n".toByteArray()); out.flush()
             eventClients.add(out)
             try { while (!socket.isClosed) Thread.sleep(500) } catch (_: Exception) {}
             eventClients.remove(out)
@@ -301,11 +306,26 @@ function refresh(){
 setInterval(refresh,3000);
 function copyLogs(id){
   fetch(id==='applogs'?'/logs':'/netlogs').then(r=>r.json()).then(logs=>{
-    navigator.clipboard.writeText(logs.reverse().join('\n')).then(()=>{
-      const b=document.getElementById('copy-'+id);
-      const orig=b.textContent;b.textContent='Copied!';setTimeout(()=>b.textContent=orig,1500);
-    });
+    const text=logs.reverse().join('\n');
+    const b=document.getElementById('copy-'+id);
+    const done=()=>{const orig=b.textContent;b.textContent='Copied!';setTimeout(()=>b.textContent=orig,1500);};
+    // navigator.clipboard only exists in a secure context (HTTPS/localhost). This
+    // page is served over plain HTTP on a LAN IP, so it's usually undefined — fall
+    // back to a hidden textarea + execCommand, which works in insecure contexts.
+    if(navigator.clipboard&&window.isSecureContext){
+      navigator.clipboard.writeText(text).then(done).catch(()=>legacyCopy(text,done,b));
+    } else { legacyCopy(text,done,b); }
   });
+}
+function legacyCopy(text,done,b){
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text;ta.style.position='fixed';ta.style.top='0';ta.style.left='0';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.focus();ta.select();
+    const ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+    if(ok)done();else{b.textContent='Copy failed';setTimeout(()=>b.textContent='Copy',1500);}
+  }catch(e){b.textContent='Copy failed';setTimeout(()=>b.textContent='Copy',1500);}
 }
 </script>
 </head><body>

@@ -22,12 +22,30 @@ class AppleMusicApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        clearStaleCaches()
         webServer.start(appScope)
         // Sync locally-stored MUT to proxy server on startup so ExoPlayer stream requests work
         val mut = mutPrefs.getMUT()
         if (mut.isNotEmpty()) {
             appScope.launch {
                 runCatching { repo.syncMUTToServer(mut) }
+            }
+        }
+    }
+
+    /** Once every 24h, wipe cached artwork/HTTP so stale images/data get re-fetched. */
+    private fun clearStaleCaches() {
+        val prefs = getSharedPreferences("cache_meta", MODE_PRIVATE)
+        val last = prefs.getLong("last_clear", 0L)
+        val now = System.currentTimeMillis()
+        if (now - last < 24L * 60 * 60 * 1000) return
+        prefs.edit().putLong("last_clear", now).apply()
+        appScope.launch {
+            runCatching {
+                coil.Coil.imageLoader(this@AppleMusicApp).apply {
+                    memoryCache?.clear()
+                    diskCache?.clear()
+                }
             }
         }
     }

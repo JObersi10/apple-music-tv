@@ -37,7 +37,7 @@ import com.applemusicktv.ui.viewmodel.SearchViewModel
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, modifier: Modifier = Modifier) {
+fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> }, modifier: Modifier = Modifier) {
     val vm: SearchViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val recents by vm.recentSearches.collectAsState()
@@ -75,11 +75,11 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
         Spacer(Modifier.height(10.dp))
 
         if (editing) {
-            Box(
+            Row(
                 modifier = Modifier.fillMaxWidth(0.5f).height(40.dp)
                     .background(Color(0xFF1C1C1E), RoundedCornerShape(10.dp))
                     .padding(horizontal = 14.dp),
-                contentAlignment = Alignment.CenterStart,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 BasicTextField(
                     value = state.query, onValueChange = vm::onQueryChange,
@@ -92,7 +92,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         onSearch = { closeEditor() },
                         onDone = { closeEditor() },
                     ),
-                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                    modifier = Modifier.weight(1f).focusRequester(focusRequester)
                         // Only close once it has actually held focus: onFocusChanged
                         // fires with isFocused=false on mount, before the
                         // FocusRequester runs, which closed the editor instantly.
@@ -105,22 +105,52 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         inner()
                     }
                 )
+                if (state.query.isNotEmpty()) {
+                    Surface(
+                        onClick = { vm.onQueryChange(""); runCatching { focusRequester.requestFocus() } },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF3A3A3C)),
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                    ) {
+                        Text("✕", color = Color(0xFFAAAAAA), fontSize = 14.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                    }
+                }
             }
         } else {
-            Surface(
-                onClick = { editing = true },
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF2A2A2C),
-                ),
-                modifier = Modifier.fillMaxWidth(0.5f).height(40.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth(0.5f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Box(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
-                    Text(
-                        state.query.ifEmpty { "Search — press to type…" },
-                        color = if (state.query.isEmpty()) Color(0xFF777777) else Color.White,
-                        fontSize = 15.sp,
-                    )
+                Surface(
+                    onClick = { editing = true },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF2A2A2C),
+                    ),
+                    modifier = Modifier.weight(1f).height(40.dp),
+                ) {
+                    Box(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
+                        Text(
+                            state.query.ifEmpty { "Search — press to type…" },
+                            color = if (state.query.isEmpty()) Color(0xFF777777) else Color.White,
+                            fontSize = 15.sp,
+                        )
+                    }
+                }
+                if (state.query.isNotEmpty()) {
+                    Surface(
+                        onClick = { vm.onQueryChange("") },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF3A3A3C)),
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("✕", color = Color(0xFFAAAAAA), fontSize = 14.sp)
+                        }
+                    }
                 }
             }
         }
@@ -154,9 +184,19 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFFFA233B))
             }
-            state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty()) -> {
+            state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty() || state.results!!.playlists.isNotEmpty()) -> {
                 val results = state.results!!
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    if (results.playlists.isNotEmpty()) {
+                        item {
+                            Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                items(results.playlists, key = { it.id }) { pl ->
+                                    AlbumCard(album = pl, size = 130, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
+                                }
+                            }
+                        }
+                    }
                     if (results.artists.isNotEmpty()) {
                         item {
                             Text("Artists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
@@ -253,7 +293,11 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                 modifier = Modifier.height(300.dp),
                             ) {
                                 items(results.albums, key = { it.id }) { album ->
-                                    AlbumCard(album = album, size = 110, onClick = { onAlbumClick(album.id) })
+                                    val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                                    AlbumCard(album = album, size = 110, onClick = {
+                                        if (isPlaylist) onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
+                                        else onAlbumClick(album.id)
+                                    })
                                 }
                             }
                         }

@@ -1,6 +1,7 @@
 package com.applemusicktv.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -79,15 +80,15 @@ fun PlaylistDetailScreen(
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
     Row(modifier = Modifier.fillMaxSize()) {
-        // Left panel — artwork + info only
+        // Left panel — artwork + info, same familiar layout as an album (album cover
+        // is a touch bigger; here the "year" slot becomes the song count and the
+        // artist line becomes the playlist maker).
         Column(
-            modifier = Modifier.width(300.dp).fillMaxHeight()
-                .background(Brush.verticalGradient(listOf(Color(0xFF1A1A2E), Color(0xFF0A0A0A)))),
+            modifier = Modifier.width(300.dp).fillMaxHeight().padding(horizontal = 28.dp, vertical = 40.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(
-                modifier = Modifier.fillMaxWidth().aspectRatio(1f)
-                    .clip(RoundedCornerShape(0.dp))
-                    .background(Color(0xFF2A1A3E)),
+                modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(Color(0xFF2A1A3E)),
             ) {
                 if (state.artworkUrl != null) {
                     AsyncImage(
@@ -97,18 +98,15 @@ fun PlaylistDetailScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
+                state.motionUrl?.let { MotionCover(url = it, modifier = Modifier.fillMaxSize()) }
             }
-
-            Column(
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(playlistName, fontSize = 20.sp, color = Color.White, fontWeight = FontWeight.Bold, lineHeight = 26.sp)
-                if (state.curatorName.isNotEmpty())
-                    Text(state.curatorName, fontSize = 13.sp, color = Color(0xFF888888))
-                if (state.tracks.isNotEmpty())
-                    Text("${state.tracks.size} songs", fontSize = 12.sp, color = Color(0xFF666666))
-            }
+            Spacer(Modifier.height(20.dp))
+            Text(playlistName, fontSize = 20.sp, color = Color.White, fontWeight = FontWeight.Bold,
+                lineHeight = 26.sp, maxLines = 2)
+            if (state.curatorName.isNotEmpty())
+                Text(state.curatorName, fontSize = 15.sp, color = Color(0xFFFA233B), modifier = Modifier.padding(top = 4.dp))
+            if (state.tracks.isNotEmpty())
+                Text("${state.tracks.size} songs", fontSize = 12.sp, color = Color(0xFF555555), modifier = Modifier.padding(top = 4.dp))
         }
 
         // Right panel — Play/Shuffle header + track list
@@ -215,7 +213,10 @@ fun PlaylistDetailScreen(
                 runCatching { firstFocus.requestFocus() }
             }
             Column(
-                Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(vertical = 4.dp),
+                Modifier.width(320.dp).heightIn(max = 340.dp).clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF1C1C1E))
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                    .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
                 Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
@@ -223,11 +224,9 @@ fun PlaylistDetailScreen(
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
                 PlaylistContextItem("▶", "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
                 PlaylistContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                if (s.artistId != null || s.albumId != null) {
-                    HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                    if (s.artistId != null) PlaylistContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(s.artistId); dismissMenu() } })
-                    if (s.albumId  != null) PlaylistContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(s.albumId);   dismissMenu() } })
-                }
+                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
+                s.artistId?.let { aid -> PlaylistContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(aid); dismissMenu() } }) }
+                s.albumId?.let  { alid -> PlaylistContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(alid);  dismissMenu() } }) }
             }
         }
     }

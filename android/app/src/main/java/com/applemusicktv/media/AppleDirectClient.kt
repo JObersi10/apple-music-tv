@@ -91,14 +91,52 @@ class AppleDirectClient @Inject constructor() {
             val adamId = entry.getString("songId")
             val assets = entry.getJSONArray("assets")
 
-            // Prefer ctrp256, fall back to any ctrp
-            var assetUrl = ""
+            // --- DIAGNOSTIC (AMWP) ---------------------------------------------
+            // Dump every flavor so we can see if a cleaner (44.1 kHz) encode is on
+            // offer, and hunt for a per-asset Sound Check / loudness gain that would
+            // explain quiet tracks like FEEL. Tag AMWP; pull with logcat.
+            run {
+                val flavors = (0 until assets.length()).joinToString(", ") { idx ->
+                    val a = assets.getJSONObject(idx)
+                    "${a.optString("flavor")}(${a.optString("sampleRate", "?")}Hz)"
+                }
+                Log.i("AMWP", "song=$adamId flavors=[$flavors]")
+                // Top-level entry keys + any that smell like loudness/gain.
+                Log.i("AMWP", "entryKeys=${entry.keys().asSequence().toList()}")
+                for (k in entry.keys()) {
+                    if (Regex("gain|loud|volume|sound|normal", RegexOption.IGNORE_CASE).containsMatchIn(k))
+                        Log.i("AMWP", "entry.$k=${entry.opt(k)}")
+                }
+                // Sound Check gain often rides on each asset, not the entry.
+                for (idx in 0 until assets.length()) {
+                    val a = assets.getJSONObject(idx)
+                    for (k in a.keys()) {
+                        if (Regex("gain|loud|volume|sound|normal", RegexOption.IGNORE_CASE).containsMatchIn(k))
+                            Log.i("AMWP", "asset[${a.optString("flavor")}].$k=${a.opt(k)}")
+                    }
+                }
+            }
+            // -------------------------------------------------------------------
+
+            // Flavor identities (per gamdl's MEDIA_CODEC_FLAVOR_MAP):
+            //   28:ctrp256 = aac-web    = AAC-LC 256k, Widevine (CENC)  ← no SBR
+            //   32:ctrp64  = aac-he-web = HE-AAC  64k, Widevine (CENC)  ← SBR
+            // On-device, Android's FDK decoder throws 0x4004 ("substituting silence")
+            // on the HE-AAC/SBR frames of some tracks — that's the standalone chop.
+            // AAC-LC has no SBR, so prefer 28:ctrp256; only these two ctrp flavors are
+            // Widevine-decryptable on-device. Fall back ctrp256 → ctrp64 → any ctrp.
+            var ctrp256 = ""; var ctrp64 = ""; var anyCtrp = ""
             for (i in 0 until assets.length()) {
                 val a = assets.getJSONObject(i)
                 val flavor = a.optString("flavor")
-                if (flavor == "28:ctrp256") { assetUrl = a.getString("URL"); break }
-                if (flavor.contains("ctrp") && assetUrl.isEmpty()) assetUrl = a.getString("URL")
+                when {
+                    flavor == "28:ctrp256" -> ctrp256 = a.getString("URL")
+                    flavor == "32:ctrp64"  -> ctrp64  = a.getString("URL")
+                    flavor.contains("ctrp") && anyCtrp.isEmpty() -> anyCtrp = a.getString("URL")
+                }
             }
+            val assetUrl = ctrp256.ifEmpty { ctrp64.ifEmpty { anyCtrp } }
+            Log.i("AMWP", "chose asset flavor=${if (ctrp256.isNotEmpty()) "28:ctrp256" else if (ctrp64.isNotEmpty()) "32:ctrp64" else "other-ctrp"}")
             if (assetUrl.isEmpty()) error("No CENC stream asset for $songId")
 
             // Resolve to media playlist and extract keyUri

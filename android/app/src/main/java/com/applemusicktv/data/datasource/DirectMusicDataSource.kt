@@ -23,6 +23,10 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
             songs   = res.results.songs.data.map { it.toSongDto() },
             albums  = res.results.albums.data.map { it.toAlbumDto() },
             artists = res.results.artists.data.map { it.toArtistDto() },
+            // Apple Music's own editorial playlists (Sports: F1, etc.) first.
+            playlists = res.results.playlists.data
+                .sortedByDescending { it.attributes?.playlistType == "editorial" }
+                .map { it.toPlaylistDto() },
         )
     }
 
@@ -129,6 +133,48 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         api.catalogArtist(storefront, catId ?: id).data.first().toArtistDto()
     }
 
+    /** Standalone autoplay: Apple's song radio needs a bearer we don't hold on-disk, so
+     *  derive a comparable queue from the seed's artist + similar artists' top songs. */
+    suspend fun relatedSongs(seedId: String): Result<List<SongDto>> = runCatching {
+        val artistId = song(seedId).getOrNull()?.artistId ?: return@runCatching emptyList()
+        val seed = artistFull(artistId).getOrNull() ?: return@runCatching emptyList()
+        val pool = seed.topSongs.toMutableList()
+        seed.similarArtists.take(3).forEach { sim ->
+            artistFull(sim.id).getOrNull()?.let { pool += it.topSongs }
+        }
+        pool.distinctBy { it.id }.filter { it.id != seedId }.shuffled()
+    }
+
+    /** Top songs for a genre (Apple charts) → a shuffled genre station queue. */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun genreStationSongs(genreId: String): Result<List<SongDto>> = runCatching {
+        val raw = api.charts(storefront, types = "songs", limit = 50, genre = genreId)
+        val results = raw["results"] as? Map<*, *> ?: return@runCatching emptyList()
+        val songCharts = results["songs"] as? List<*> ?: return@runCatching emptyList()
+        val out = mutableListOf<SongDto>()
+        for (chart in songCharts) {
+            val data = (chart as? Map<*, *>)?.get("data") as? List<*> ?: continue
+            for (e in data) {
+                val n = e as? Map<*, *> ?: continue
+                val a = n["attributes"] as? Map<*, *> ?: continue
+                val art = a["artwork"] as? Map<*, *>
+                out += SongDto(
+                    id = n["id"] as? String ?: continue,
+                    title = a["name"] as? String ?: "",
+                    artistName = a["artistName"] as? String ?: "",
+                    albumName = a["albumName"] as? String ?: "",
+                    durationMs = (a["durationInMillis"] as? Number)?.toLong() ?: 0L,
+                    artworkUrl = art?.get("url") as? String,
+                    artworkBgColor = art?.get("bgColor") as? String,
+                    previewUrl = null,
+                    previewHlsUrl = null,
+                    hasLyrics = (a["hasLyrics"] as? Boolean) ?: false,
+                )
+            }
+        }
+        out.distinctBy { it.id }.shuffled()
+    }
+
     /**
      * The artist page's payload, mapped from Apple's `views` into the same shape the
      * proxy returns so the screen doesn't care which path it came from.
@@ -211,7 +257,32 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
     }
 
     suspend fun libraryArtists(): Result<List<ArtistDto>> = runCatching {
-        api.libraryArtists(limit = 100).data.map { it.toArtistDto() }
+        val libArtists = mutableListOf<AppleItem<AppleArtistAttrs>>()
+        var offset = 0
+        while (true) {
+            val page = api.libraryArtists(limit = 100, offset = offset)
+            libArtists += page.data
+            if (page.next == null || page.data.isEmpty()) break
+            offset += 100
+            if (libArtists.size >= 1000) break
+        }
+        // Library artist objects carry no artwork — resolve it from the catalog artist
+        // the library entry points at (batched, ~20 ids/request).
+        val catIdByLib = libArtists.associate { it.id to it.relationships?.catalog?.data?.firstOrNull()?.id }
+        val artworkByCatId = HashMap<String, String?>()
+        catIdByLib.values.filterNotNull().distinct().chunked(20).forEach { chunk ->
+            runCatching {
+                api.catalogArtistsByIds(storefront, chunk.joinToString(",")).data.forEach { ca ->
+                    artworkByCatId[ca.id] = ca.attributes?.artwork?.url
+                }
+            }
+        }
+        libArtists.map { item ->
+            val dto = item.toArtistDto()
+            if (dto.artworkUrl != null) return@map dto
+            val art = catIdByLib[item.id]?.let { artworkByCatId[it] }
+            if (art != null) dto.copy(artworkUrl = art) else dto
+        }
     }
 
     /**
@@ -260,7 +331,8 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
     suspend fun motion(songId: String): Result<String?> = runCatching {
         val catSongId = if (isLibraryId(songId)) catalogIdForSong(songId) ?: return@runCatching null else songId
         val song = api.catalogSong(storefront, catSongId).data.firstOrNull() ?: return@runCatching null
-        val albumId = song.relationships?.catalog?.data?.firstOrNull()?.id
+        val albumId = song.relationships?.albums?.data?.firstOrNull()?.id
+            ?: song.relationships?.catalog?.data?.firstOrNull()?.id
             ?: return@runCatching null
         val raw = api.catalogAlbumWithMotion(storefront, albumId)
         val data = (raw["data"] as? List<*>)?.firstOrNull() as? Map<*, *> ?: return@runCatching null
@@ -271,13 +343,43 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         ((square["video"] as? String))
     }
 
+    /** Probe: log what a personalized station (ra.*) actually returns. */
+    suspend fun probeStation(id: String): Result<String> = runCatching {
+        val raw = api.catalogStation(storefront, id)
+        val json = org.json.JSONObject(raw as Map<String, Any?>).toString()
+        android.util.Log.i("StationProbe", "id=$id keys=${(raw["data"] as? List<*>)?.firstOrNull()?.let { (it as? Map<*,*>)?.keys }}")
+        android.util.Log.i("StationProbe", "body=${json.take(1200)}")
+        json
+    }
+
+    /** Motion artwork for an editorial playlist (pl.*). Null for user playlists. */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun playlistMotion(playlistId: String): Result<String?> = runCatching {
+        if (!playlistId.startsWith("pl.")) return@runCatching null
+        val raw = api.catalogPlaylistWithMotion(storefront, playlistId)
+        val data = (raw["data"] as? List<*>)?.firstOrNull() as? Map<*, *> ?: return@runCatching null
+        val attrs = data["attributes"] as? Map<*, *> ?: return@runCatching null
+        val video = attrs["editorialVideo"] as? Map<*, *> ?: return@runCatching null
+        val square = (video["motionSquareVideo1x1"] ?: video["motionDetailSquare"]) as? Map<*, *>
+            ?: return@runCatching null
+        (square["video"] as? String)
+    }
+
     suspend fun playlistTracks(id: String): Result<LibrarySongsResponse> = runCatching {
-        val tracks = when {
-            id.startsWith("p.") || id.startsWith("pl.") -> {
-                api.catalogPlaylistTracks(storefront, id).data
-            }
-            else -> api.playlistTracks(id).data
+        // "pl.*" = catalog playlist; "p.*" (and everything else) = the user's library
+        // playlist — routing library ids to the catalog endpoint 404'd them. Paginate
+        // both so playlists longer than 100 tracks come back whole.
+        val isCatalog = id.startsWith("pl.")
+        val all = mutableListOf<AppleItem<AppleSongAttrs>>()
+        var offset = 0
+        while (true) {
+            val page = if (isCatalog) api.catalogPlaylistTracks(storefront, id, limit = 100, offset = offset)
+                       else api.playlistTracks(id, limit = 100, offset = offset)
+            all += page.data
+            if (page.next == null || page.data.isEmpty()) break
+            offset += 100
+            if (all.size >= 1000) break
         }
-        LibrarySongsResponse(songs = tracks.map { it.toSongDto() })
+        LibrarySongsResponse(songs = all.map { it.toSongDto() })
     }
 }
