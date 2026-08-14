@@ -33,7 +33,13 @@ private fun EqualizerDot() {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun TopNavBar(selected: TopNavTab, onSelect: (TopNavTab) -> Unit, isPlaying: Boolean = false, modifier: Modifier = Modifier) {
+fun TopNavBar(
+    selected: TopNavTab,
+    onSelect: (TopNavTab) -> Unit,
+    isPlaying: Boolean = false,
+    updateAvailable: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
     var isFocused by remember { mutableStateOf(false) }
     val alpha by animateFloatAsState(
         targetValue = if (selected == TopNavTab.NowPlaying && !isFocused) 0f else 1f,
@@ -87,6 +93,9 @@ fun TopNavBar(selected: TopNavTab, onSelect: (TopNavTab) -> Unit, isPlaying: Boo
                             )
                             if (tab == TopNavTab.NowPlaying && isPlaying && !isSelected) {
                                 EqualizerDot()
+                            }
+                            if (tab == TopNavTab.Dev && updateAvailable) {
+                                Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(Color(0xFFFA233B)))
                             }
                         }
                     }

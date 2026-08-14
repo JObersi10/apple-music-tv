@@ -49,6 +49,15 @@ fun AppShell(modifier: Modifier = Modifier) {
     // reconnecting is useless if the stale "server down" content stays on screen.
     val homeVm: com.applemusicktv.ui.viewmodel.HomeViewModel = hiltViewModel()
 
+    // Silently poll GitHub Releases once per launch. If a newer build exists, a red dot
+    // shows on the ⚙ tab and the Settings → Software section is pre-filled with it.
+    val appCtx = androidx.compose.ui.platform.LocalContext.current
+    var pendingUpdate by remember { mutableStateOf<com.applemusicktv.util.UpdateInfo?>(null) }
+    LaunchedEffect(Unit) {
+        val beta = com.applemusicktv.util.UpdatePreferences.betaEnabled(appCtx)
+        com.applemusicktv.util.UpdateChecker.check(beta).onSuccess { pendingUpdate = it }
+    }
+
     // First run: setup owns the whole screen. Nothing behind it is usable until the
     // server and token are configured, so there is no nav bar and nothing to browse.
     val onboardingVm: com.applemusicktv.ui.viewmodel.OnboardingViewModel = hiltViewModel()
@@ -205,6 +214,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                 DevMenuScreen(
                     playerVm = playerVm,
                     onDataRefresh = { homeVm.load(); libraryVm.refresh() },
+                    initialUpdate = pendingUpdate,
                 )
             }
             composable(
@@ -356,6 +366,7 @@ fun AppShell(modifier: Modifier = Modifier) {
             TopNavBar(
                 selected  = selectedTab,
                 isPlaying = playerState.isPlaying,
+                updateAvailable = pendingUpdate != null,
                 onSelect = { tab ->
                     selectedTab = tab
                     val route = when (tab) {

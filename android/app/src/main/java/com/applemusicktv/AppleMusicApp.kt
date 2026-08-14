@@ -1,6 +1,10 @@
 package com.applemusicktv
 
 import android.app.Application
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.repository.MusicRepository
 import com.applemusicktv.media.InAppWebServer
@@ -12,7 +16,22 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltAndroidApp
-class AppleMusicApp : Application() {
+class AppleMusicApp : Application(), ImageLoaderFactory {
+
+    /**
+     * Coil's default disk cache grows to ~2% of the whole partition — unbounded on a big
+     * Fire TV. Cap artwork on disk at 100 MB (LRU-evicted) and memory at 15% of RAM.
+     */
+    override fun newImageLoader(): ImageLoader =
+        ImageLoader.Builder(this)
+            .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.15).build() }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(100L * 1024 * 1024)
+                    .build()
+            }
+            .build()
 
     @Inject lateinit var webServer: InAppWebServer
     @Inject lateinit var repo: MusicRepository
@@ -22,6 +41,7 @@ class AppleMusicApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.applemusicktv.util.CrashReporter.install(this)
         clearStaleCaches()
         webServer.start(appScope)
         // Sync locally-stored MUT to proxy server on startup so ExoPlayer stream requests work

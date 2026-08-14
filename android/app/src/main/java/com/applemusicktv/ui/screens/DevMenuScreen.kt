@@ -24,14 +24,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.*
+import com.applemusicktv.BuildConfig
 import com.applemusicktv.ui.viewmodel.DevMenuViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
+import com.applemusicktv.util.UpdateChecker
+import com.applemusicktv.util.UpdateInfo
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun DevMenuScreen(
     playerVm: PlayerViewModel,
     onDataRefresh: () -> Unit = {},
+    initialUpdate: UpdateInfo? = null,
     modifier: Modifier = Modifier,
 ) {
     val vm: DevMenuViewModel = hiltViewModel()
@@ -55,6 +60,11 @@ fun DevMenuScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text("Settings", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color.White)
+
+            // ── SOFTWARE ──────────────────────────────────────────────────
+            SectionLabel("Software")
+            UpdatesSection(initialUpdate)
+            BugReportRow(state.webServerUrl)
 
             // ── PLAYBACK ──────────────────────────────────────────────────
             SectionLabel("Playback")
@@ -196,6 +206,105 @@ fun DevMenuScreen(
                     ActionBtn("Reset", Color(0xFFB22222)) {
                         val am = ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
                         am.clearApplicationUserData()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BugReportRow(webServerUrl: String) {
+    Column(
+        Modifier.fillMaxWidth().background(Color(0xFF161618), RoundedCornerShape(10.dp)).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Bug report / logs", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Medium)
+        if (webServerUrl.isNotEmpty()) {
+            Text("On your phone open:", fontSize = 10.sp, color = Color(0xFF777777))
+            Text("$webServerUrl/report", fontSize = 13.sp, color = Color(0xFF6BCB77),
+                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+            Text("Downloads a text file with app version, device, the last crash and recent logs.",
+                fontSize = 10.sp, color = Color(0xFF777777))
+        } else {
+            Text("Connect to Wi-Fi to expose the report page.", fontSize = 10.sp, color = Color(0xFF777777))
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var update by remember { mutableStateOf(initialUpdate) }
+    var progress by remember { mutableStateOf(-1f) } // -1 = not downloading
+    var beta by remember { mutableStateOf(com.applemusicktv.util.UpdatePreferences.betaEnabled(ctx)) }
+
+    fun runCheck() {
+        if (checking) return
+        checking = true; status = "Checking GitHub…"; update = null
+        scope.launch {
+            val res = UpdateChecker.check(beta)
+            checking = false
+            res.onSuccess { info ->
+                if (info == null) status = "You're on the latest version"
+                else { update = info; status = null }
+            }.onFailure { status = "Check failed — no connection?" }
+        }
+    }
+
+    Column(
+        Modifier.fillMaxWidth().background(Color(0xFF161618), RoundedCornerShape(10.dp)).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("App version", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                Text(
+                    status ?: "v${BuildConfig.VERSION_NAME}",
+                    fontSize = 10.sp, color = Color(0xFF777777), modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            if (update == null && progress < 0f) {
+                ActionBtn(if (checking) "Checking…" else "Check for Updates", Color(0xFF1C1C2E), small = true) { runCheck() }
+            }
+        }
+
+        // Opt into prerelease builds. Re-checks immediately so the result reflects the channel.
+        Toggle(
+            label = "Beta updates", on = beta,
+            sub = if (beta) "Includes prerelease builds" else "Stable releases only",
+            onToggle = {
+                beta = !beta
+                com.applemusicktv.util.UpdatePreferences.setBeta(ctx, beta)
+                runCheck()
+            },
+        )
+
+        // An update is available → show version, notes and a download button.
+        update?.let { info ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Update available: v${info.version}", fontSize = 13.sp, color = Color(0xFF6BCB77), fontWeight = FontWeight.SemiBold)
+                if (info.notes.isNotEmpty())
+                    Text(info.notes.take(400), fontSize = 10.sp, color = Color(0xFF999999), lineHeight = 14.sp)
+                if (progress < 0f) {
+                    val mb = if (info.sizeBytes > 0) " · %.1f MB".format(info.sizeBytes / 1024f / 1024f) else ""
+                    ActionBtn("Download & Install$mb", Color(0xFF14351F)) {
+                        progress = 0f
+                        scope.launch {
+                            UpdateChecker.download(ctx, info) { progress = it }
+                                .onSuccess { apk -> UpdateChecker.install(ctx, apk); progress = -1f }
+                                .onFailure { progress = -1f; status = "Download failed"; update = null }
+                        }
+                    }
+                } else {
+                    Text("Downloading… ${(progress * 100).toInt()}%", fontSize = 12.sp, color = Color.White)
+                    Box(Modifier.fillMaxWidth().height(6.dp).background(Color(0xFF2A2A2C), RoundedCornerShape(50))) {
+                        Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(6.dp)
+                            .background(Color(0xFFFA233B), RoundedCornerShape(50)))
                     }
                 }
             }

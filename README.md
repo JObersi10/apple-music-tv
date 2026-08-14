@@ -56,7 +56,14 @@ remux instead and serves a seekable MP4 over HTTP Range.
   title (may not be supported on all Fire TV hardware)
 - **"Next: …" toast** ~15 s before the track switches
 - Search also returns **playlists** (Apple editorial ranked first)
-- **24-hour cache expiry** for lyrics and artwork so stale data gets re-fetched
+- **24-hour cache expiry** for lyrics and artwork, plus a hard **100 MB disk cap** on the
+  artwork cache (LRU-evicted) so it can't grow unbounded on large drives
+- **In-app updater** — checks GitHub Releases on launch, shows a red dot on the ⚙ tab and a
+  Settings → Software card to download + install the new APK. A **Beta updates** toggle opts
+  into prerelease builds
+- **Crash log + bug report** — a global crash handler records the last crash on-device; the
+  phone web server (port 8080) serves a one-file bug report (app version, device, last crash,
+  recent app + network logs) via **Download Bug Report**
 - **Artist Stations** — a generated, shuffle mix from an artist + similar artists
 - **Internet Radio** tab — geo-detected local stations (radio-browser.info), add any
   country by name (with spell-correction), plus "now playing" song ID from ICY stream
@@ -197,6 +204,15 @@ runs on every push to `main`, every PR to `main`, and on manual dispatch. Each r
 - A specific run — that run's **Actions → Artifacts → `app-debug`**.
 
 Sideload it: `adb install -r app-debug.apk`.
+
+### Releasing (and the in-app updater)
+
+The app polls **`releases/latest`** on launch. For it to detect a new version, bump both
+`versionCode` and `versionName` in `android/app/build.gradle.kts` **and** tag the GitHub
+release with a higher number than the running build (e.g. current build is `1.1`, so tag the
+next release `v1.2`). The updater compares numerically after stripping a leading `v`, so
+`v1.2` > `1.1`; an equal version is not offered. Mark a release **prerelease** to reach only
+users who've enabled **Beta updates** in Settings → Software.
 
 ### Committing / pushing
 

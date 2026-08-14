@@ -138,6 +138,8 @@ class InAppWebServer @Inject constructor(
                 method == "GET"  && path == "/stream"      -> { handleSse(socket, out); return }
 
                 method == "GET"  && path == "/netlogs"     -> send(out, 200, "application/json", netLogsJson())
+                method == "GET"  && path == "/report"      -> send(out, 200, "text/plain", bugReport(), "Content-Disposition: attachment; filename=\"amtv-bugreport.txt\"\r\n")
+                method == "POST" && path == "/clear-crash"        -> { com.applemusicktv.util.CrashReporter.clear(context); addLog("OK", "Crash log cleared"); redirect(out, "/") }
                 method == "POST" && path == "/set-token"          -> { applyToken(parseField(body, "mut")); redirect(out, "/") }
                 method == "POST" && path == "/clear-token"         -> { prefs.setMUT(""); addLog("WARN","Token cleared"); redirect(out, "/") }
                 method == "POST" && path == "/set-lyrics-offset"   -> { applyLyricsOffset(parseField(body, "offset")); redirect(out, "/") }
@@ -243,7 +245,29 @@ class InAppWebServer @Inject constructor(
         body.split("&").find { it.startsWith("$field=") }?.removePrefix("$field=")
             ?.replace("+", " ")?.let { URLDecoder.decode(it, "UTF-8") } ?: ""
 
-    private fun status() = """{"hasMUT":${prefs.hasMUT()},"mutLen":${prefs.getMUT().length},"url":"${serverUrl()}"}"""
+    /** A single self-contained text dump for bug reports: environment + crash + logs. */
+    private fun bugReport(): String {
+        val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+        val crash = com.applemusicktv.util.CrashReporter.lastCrash(context)
+        return buildString {
+            appendLine("===== Apple Music TV — bug report =====")
+            appendLine("Generated: $ts")
+            appendLine("App: v${com.applemusicktv.BuildConfig.VERSION_NAME} (${com.applemusicktv.BuildConfig.VERSION_CODE})")
+            appendLine("Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} · Android ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
+            appendLine("Standalone: ${standalonePrefs.isEnabled()} · Token set: ${prefs.hasMUT()}")
+            appendLine()
+            appendLine("===== LAST CRASH =====")
+            appendLine(crash ?: "(none recorded)")
+            appendLine()
+            appendLine("===== NETWORK REQUESTS =====")
+            NetworkLog.getAll().forEach { appendLine(it) }
+            appendLine()
+            appendLine("===== APP LOG =====")
+            getLogs().forEach { appendLine(it) }
+        }
+    }
+
+    private fun status() = """{"hasMUT":${prefs.hasMUT()},"mutLen":${prefs.getMUT().length},"url":"${serverUrl()}","hasCrash":${com.applemusicktv.util.CrashReporter.lastCrash(context) != null}}"""
     private fun logsJson() = "[${getLogs().joinToString(",") { "\"${it.replace("\"","'")}\"" }}]"
     private fun netLogsJson() = "[${NetworkLog.getAll().joinToString(",") { "\"${it.replace("\"","'")}\"" }}]"
 
@@ -398,6 +422,14 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 <button class="btn btn-p" type=submit style=margin-top:8px>Set Crossfade</button>
 </form>
 <div style="font-size:10px;color:#555;margin-top:8px">Applies from the next song — a fade already running keeps its length. Longer fades need the next track prefetched earlier.</div>
+</div>
+
+<div class=card>
+<h2>Bug Report</h2>
+<div class=row><div class=label>Last crash</div><div class=sub2 style="color:${if (com.applemusicktv.util.CrashReporter.lastCrash(context) != null) "#ff3b30" else "#6bcb77"}">${if (com.applemusicktv.util.CrashReporter.lastCrash(context) != null) "crash on file" else "none"}</div></div>
+<a class="btn btn-p" href=/report download style=text-decoration:none>Download Bug Report</a>
+<form method=POST action=/clear-crash><button class="btn btn-s" type=submit>Clear crash log</button></form>
+<div style="font-size:10px;color:#555;margin-top:8px">Bundles app version, device, the last crash and recent app + network logs into one text file to share.</div>
 </div>
 
 <div class=card>

@@ -1,6 +1,36 @@
 # Handoff — Apple Music TV
 
-Last updated: 2026-08-09
+Last updated: 2026-08-14
+
+## Session 2026-08-14 — Cache cap, self-updater, crash/bug reporting (v1.1)
+
+Features:
+- **100 MB artwork cache cap** — `AppleMusicApp` now implements Coil `ImageLoaderFactory`
+  with a `DiskCache` capped at 100 MB (LRU) + memory at 15%. Coil's default was ~2% of the
+  whole partition (unbounded on big drives). The 24 h stale-wipe still runs on top.
+- **In-app updater** (`util/UpdateChecker`) — polls GitHub `releases/latest` on launch from
+  `AppShell`; a red dot shows on the ⚙ tab (`TopNavBar.updateAvailable`) and Settings →
+  Software (`DevMenuScreen.UpdatesSection`) shows version + notes + Download & Install. APK
+  streams to `cacheDir/updates/`, installed via `FileProvider` (`${applicationId}.updates`) +
+  `ACTION_VIEW` (direct install). Manifest gained `REQUEST_INSTALL_PACKAGES` + the provider;
+  `res/xml/file_paths.xml` scopes it to `updates/`.
+- **Beta updates toggle** (`util/UpdatePreferences`, Settings → Software) — off = stable
+  `releases/latest`; on = newest non-draft release (prereleases included). Both the launch
+  auto-check and the manual check honour it.
+- **Crash log + bug report** — `util/CrashReporter` installs a global uncaught-exception
+  handler (chains the previous one) writing the last crash to `filesDir/crash.log`.
+  `InAppWebServer` added `GET /report` (downloadable text bundle: version + device + last
+  crash + net/app logs), `POST /clear-crash`, and a Bug Report card on the phone page.
+
+Review fixes (kotlin-reviewer): cancellation no longer swallowed by `runCatching`
+(`rethrowCancellation()` + `ensureActive()` in the download loop); progress marshalled to
+Main, throttled to whole-percent; APK URL must be `https://`; FileProvider scoped to `updates/`.
+
+Version bumped to **1.1** (`versionCode 2`). Left as-is by request: the `/report` endpoint
+stays unauthenticated (consistent with the rest of the LAN web server), version compare stays
+numeric-only (no `-beta`-suffix handling).
+
+## Session 2026-08-09 — Now Playing polish + background play / PiP
 
 ## Session 2026-08-09 — Now Playing polish + background play / PiP
 
