@@ -132,11 +132,18 @@ fun NowPlayingScreen(
         LaunchedEffect(chromeVisible, lastNavMs) {
             if (!chromeVisible) return@LaunchedEffect
             while (isActive) {
-                kotlinx.coroutines.delay(1000)
+                kotlinx.coroutines.delay(500)
                 if (System.currentTimeMillis() - lastNavMs > CHROME_HIDE_MS) { chromeVisible = false; break }
             }
         }
-        val chromeAlpha by animateFloatAsState(if (chromeVisible) 1f else 0f, tween(400), label = "chrome")
+        // One 2 s eased "settle" drives the whole transition: chrome fades out and the artwork eases
+        // up a touch, so dropping to idle reads as one deliberate move rather than a hard cut.
+        val idle by animateFloatAsState(
+            if (chromeVisible) 0f else 1f,
+            tween(2000, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            label = "idle",
+        )
+        val chromeAlpha = 1f - idle
         val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
             NowPlayingBackground.BLACK else state.nowPlayingBackground
         DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode)
@@ -240,10 +247,16 @@ fun NowPlayingScreen(
                 },
             horizontalArrangement = Arrangement.spacedBy(56.dp),
         ) {
-            // Left — artwork + info + controls, spread flush over the full column height.
+            // Left — artwork + info + controls, grouped and vertically centred so idle (controls
+            // hidden) doesn't leave an awkward void. Eases up slightly as it settles into idle.
             Column(
-                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp)
+                    .graphicsLayer {
+                        val s = 1f + 0.05f * idle
+                        scaleX = s; scaleY = s
+                        translationY = -idle * 24f
+                    },
+                verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
@@ -311,10 +324,7 @@ fun NowPlayingScreen(
                     MarqueeText(song.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
                         modifier = Modifier.fillMaxWidth())
                 }
-                MarqueeText(song.albumName, fontSize = 12.sp, color = Color(0xFF888888),
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp))
-
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(14.dp))
 
                 LaunchedEffect(song.id) {
                     try { playFocus.requestFocus() } catch (_: Exception) {}
@@ -387,7 +397,9 @@ fun NowPlayingScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                Box(Modifier.graphicsLayer { alpha = chromeAlpha }) {
+                // Column, not Box: PlayerProgressBar emits the bar AND a time row, which a Box would
+                // overlap (the elapsed/duration text clipped over the bar).
+                Column(Modifier.graphicsLayer { alpha = chromeAlpha }) {
                     PlayerProgressBar(
                         progressState = smoothProgress,
                         song = song,
@@ -397,8 +409,10 @@ fun NowPlayingScreen(
                 }
             }
 
-            // Right — lyrics or queue
-            Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = chromeAlpha }) {
+            // Right — lyrics or queue. Lyrics are content, not chrome, so they stay put on idle;
+            // only the queue fades out with the rest of the controls.
+            val rightIsLyrics = !showQueue && state.lyrics.isNotEmpty()
+            Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (rightIsLyrics) 1f else chromeAlpha }) {
                 val label = when {
                     showQueue -> "Queue  •  Menu = Lyrics"
                     state.lyrics.isNotEmpty() -> "Lyrics  •  Menu = Queue"
@@ -781,6 +795,26 @@ private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 28f): Lis
     return result
 }
 
+// Monochrome equivalent of spreadByHue: separate greys by BRIGHTNESS (hue is meaningless when
+// every swatch is grey, so spreadByHue would collapse them all onto the first one).
+private fun spreadByValue(colors: List<Color>, n: Int, minGap: Float = 0.13f): List<Color> {
+    val result = mutableListOf<Color>()
+    val chosen = mutableListOf<Float>()
+    for (c in colors) {
+        val v = maxOf(c.red, c.green, c.blue)
+        if (chosen.all { kotlin.math.abs(v - it) >= minGap }) {
+            result.add(c); chosen.add(v)
+            if (result.size == n) break
+        }
+    }
+    if (result.size < n) {
+        for (c in colors) {
+            if (c !in result) { result.add(c); if (result.size == n) break }
+        }
+    }
+    return result
+}
+
 // Backdrop vibrancy. Raising SAT_* makes colors read as colors rather than tints;
 // VALUE_CEILING is the safety rail that keeps them from turning pale and competing
 // with the white lyrics on the right half of the screen. Don't push it past ~0.85.
@@ -802,32 +836,41 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
             val result = loader.execute(request)
             val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
             val p = Palette.from(bitmap).generate()
-            val picked = listOfNotNull(
+            val swatches = listOfNotNull(
                 p.vibrantSwatch, p.lightVibrantSwatch, p.darkVibrantSwatch,
                 p.mutedSwatch, p.lightMutedSwatch, p.darkMutedSwatch, p.dominantSwatch,
-            ).sortedByDescending { it.population }.map { swatch ->
-                // Push toward vivid, and away from white. A pale high-value swatch is
-                // what makes the backdrop compete with the white lyrics — so floor the
-                // saturation and cap the value instead of just clipping near-white.
-                // Deep saturated colors read as color; pastels read as light grey.
-                val hsv = FloatArray(3)
+            ).sortedByDescending { it.population }
+            // Detect a grey / black-and-white cover from the ORIGINAL saturations, BEFORE the boost:
+            // once every swatch is floored to SAT_FLOOR they all look colourful and the test can't
+            // tell. A monochrome sleeve keeps its greys (and can go near-white), separated by
+            // brightness instead of hue, so the orbs read as three shades of grey — not invented colour.
+            val hsv = FloatArray(3)
+            val maxSat = swatches.maxOfOrNull { android.graphics.Color.colorToHSV(it.rgb, hsv); hsv[1] } ?: 0f
+            val monochrome = maxSat < 0.18f
+            val picked = swatches.map { swatch ->
                 android.graphics.Color.colorToHSV(swatch.rgb, hsv)
-                hsv[1] = (hsv[1] * SAT_BOOST).coerceIn(SAT_FLOOR, 1f)
-                hsv[2] = hsv[2].coerceAtMost(VALUE_CEILING)
+                if (monochrome) {
+                    hsv[1] = 0f                                              // true grey, no invented hue
+                    hsv[2] = (0.45f + hsv[2] * 0.55f).coerceIn(0.42f, 0.96f) // keep the spread, stay glow-visible
+                } else {
+                    // Deep saturated colours read as colour; pastels read as light grey. Floor the
+                    // saturation and cap the value so a pale swatch doesn't wash out the lyrics.
+                    hsv[1] = (hsv[1] * SAT_BOOST).coerceIn(SAT_FLOOR, 1f)
+                    hsv[2] = hsv[2].coerceAtMost(VALUE_CEILING)
+                }
                 Color(android.graphics.Color.HSVToColor(hsv))
             }.distinct()
             val dom = Color(p.getDominantColor(0xFF050505.toInt()))
             val domLum = 0.2126f * dom.red + 0.7152f * dom.green + 0.0722f * dom.blue
 
-            if (domLum < 0.06f) {
-                // Truly black artwork — nothing to extract
-                colors = fallback
-            } else if (picked.size >= 2) {
-                colors = spreadByHue(picked, 6)
-            } else {
-                val dark  = Color(dom.red * 0.4f, dom.green * 0.4f, dom.blue * 0.4f)
-                val light = Color((dom.red + 0.3f).coerceAtMost(1f), (dom.green + 0.3f).coerceAtMost(1f), (dom.blue + 0.3f).coerceAtMost(1f))
-                colors = listOf(dom, light, dark, dom, light, dark)
+            colors = when {
+                domLum < 0.06f && !monochrome -> fallback   // truly black colour art — nothing to extract
+                picked.size >= 2 -> if (monochrome) spreadByValue(picked, 6) else spreadByHue(picked, 6)
+                else -> {
+                    val dark  = Color(dom.red * 0.4f, dom.green * 0.4f, dom.blue * 0.4f)
+                    val light = Color((dom.red + 0.3f).coerceAtMost(1f), (dom.green + 0.3f).coerceAtMost(1f), (dom.blue + 0.3f).coerceAtMost(1f))
+                    listOf(dom, light, dark, dom, light, dark)
+                }
             }
         } catch (_: Exception) {}
     }
@@ -880,6 +923,13 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     val colors4 = List(4) { i ->
         lerp(animated[(i * 2) % n], animated[(i * 2 + 1) % n], colorFracs[i])
     }
+    // Projector orbs: THREE distinct accents from the cover (slots 0/1/2 = the three most-separated
+    // colours). Each drifts a *little* toward the next accent so it changes over time without ever
+    // losing its identity — bass orb stays roughly the first accent, and so on.
+    val tt3 = listOf(t1, t2, t3)
+    val orbColors = List(3) { i ->
+        lerp(animated[i % n], animated[(i + 1) % n], 0.10f + 0.18f * tt3[i])
+    }
 
     // PROJECTOR uses TRUE black; a projector throws light on a wall, so the near-black #050505 lift
     // that stops a panel crushing shadows becomes a visible grey rectangle instead.
@@ -897,18 +947,21 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 val phase   = floatArrayOf(0f, 2.1f, 4.2f)
                 val drift   = floatArrayOf(t1, t2, t3)
                 val twoPi = (2.0 * Math.PI).toFloat()
-                val baseR = minOf(w, h) * 0.34f
+                // Smaller orbs than the full-screen blobs — a projector glow is a light source, not a
+                // wash. Wider drift so they still roam the frame at the smaller size.
+                val baseR = minOf(w, h) * 0.22f
                 for (i in 0 until 3) {
                     val lvl = orbLevels[i]
-                    val cx = anchorX[i] * w + cos(drift[i] * twoPi + phase[i]) * 0.09f * w
-                    val cy = anchorY[i] * h + sin(drift[i] * twoPi + phase[i]) * 0.05f * h
+                    val cx = anchorX[i] * w + cos(drift[i] * twoPi + phase[i]) * 0.11f * w
+                    val cy = anchorY[i] * h + sin(drift[i] * twoPi + phase[i]) * 0.06f * h
                     val c = Offset(cx, cy)
-                    val col = colors4[i]
+                    val col = orbColors[i]
                     // Halo: CONSTANT alpha, the beat rides size only — a halo that brightens on the
                     // beat lifts the whole black frame, the one thing an edgeless image must not do.
-                    val r = baseR * (1f + lvl * 0.6f)
+                    // Brighter than before now that the edge vignette no longer eats into it.
+                    val r = baseR * (1f + lvl * 0.7f)
                     drawCircle(
-                        brush = Brush.radialGradient(listOf(col.copy(alpha = 0.52f), col.copy(alpha = 0f)), center = c, radius = r),
+                        brush = Brush.radialGradient(listOf(col.copy(alpha = 0.62f), col.copy(alpha = 0f)), center = c, radius = r),
                         radius = r, center = c, blendMode = BlendMode.Screen,
                     )
                     // Core: small, whitened (a real glow's hottest point desaturates), alpha rides the
@@ -916,14 +969,14 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                     val cr = r * 0.34f
                     val core = lerp(col, Color.White, 0.55f)
                     drawCircle(
-                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.22f + lvl * 0.5f).coerceAtMost(0.8f)), core.copy(alpha = 0f)), center = c, radius = cr),
+                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.28f + lvl * 0.5f).coerceAtMost(0.85f)), core.copy(alpha = 0f)), center = c, radius = cr),
                         radius = cr, center = c, blendMode = BlendMode.Screen,
                     )
                 }
-                // Dissolve to TRUE black on every side. Per-dimension so the vignette is even at any
-                // aspect ratio — a single radial can't blacken 16:9's short axis without over-darkening
-                // the long one. This is the edge guarantee: the light runs out inside the frame.
-                val ev = h * 0.18f; val eh = w * 0.18f
+                // A LIGHT edge fade only — just enough to guarantee no lit rectangle at the frame edge.
+                // The orbs are small and pulled inward, so they never reach the edge anyway; a heavy
+                // vignette here was painting black back over the glow and killing it.
+                val ev = h * 0.10f; val eh = w * 0.10f
                 drawRect(Brush.verticalGradient(listOf(Color.Black, Color(0x00000000)), startY = 0f, endY = ev))
                 drawRect(Brush.verticalGradient(listOf(Color(0x00000000), Color.Black), startY = h - ev, endY = h))
                 drawRect(Brush.horizontalGradient(listOf(Color.Black, Color(0x00000000)), startX = 0f, endX = eh))
@@ -982,8 +1035,8 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     }
 }
 
-/** Idle time (no D-pad navigation) before the Now Playing chrome auto-hides. */
-private const val CHROME_HIDE_MS = 5000L
+/** Idle time (no D-pad navigation) before the Now Playing chrome auto-hides (then a 2 s settle). */
+private const val CHROME_HIDE_MS = 7000L
 
 /** D-pad navigation / select keys — the ones allowed to wake the auto-hidden chrome. Media transport
  *  keys are deliberately excluded so play/pause/skip don't bring the controls back. */
