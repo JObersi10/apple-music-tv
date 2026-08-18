@@ -367,10 +367,11 @@ class BeatProcessor internal constructor(
         const val BAND_EMIT_EVERY = 3       // windows per band emit → ~33 updates/sec (10 ms × 3)
         const val BAND_BASE_RATE = 0.02f    // per-emission baseline follow (~1.5 s) — the reference the
                                             // orb swells above. Slow enough to stay a "typical" level.
-        const val BAND_EXCESS_MAX = 0.65f   // rise-above-baseline that maps to a fully lit orb: raw at
-                                            // ~1.65× its baseline. Low so kicks/hits punch to full.
+        const val BAND_EXCESS_MAX = 1.1f    // rise-above-baseline mapping to a fully lit orb. Headroom
+                                            // so hits land mid-range and only the biggest peak, so the
+                                            // orb doesn't clip flat at 1 (the "maxed out" look).
         const val BAND_GATE = 0.05f         // ignore swells under 5 % of full — kills idle shimmer
         const val BAND_ATTACK = 0.42f       // snap up on the hit…
-        const val BAND_RELEASE = 0.06f      // …fall away after
+        const val BAND_RELEASE = 0.11f      // …and fall back BETWEEN hits so it visibly pulses
     }
 }
