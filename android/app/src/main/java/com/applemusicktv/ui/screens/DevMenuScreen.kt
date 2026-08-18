@@ -98,11 +98,6 @@ fun DevMenuScreen(
                 sub = if (pstate.screensaverKeepBackground) "Beat keeps drifting while idle" else "Idle mode drops to plain black",
                 onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
-            Toggle(
-                label = "Background play", on = pstate.backgroundPlayEnabled,
-                sub = if (pstate.backgroundPlayEnabled) "Keeps playing when you leave the app" else "Pauses when you leave the app",
-                onToggle = { playerVm.toggleBackgroundPlay() },
-            )
 
             // ── LYRICS ────────────────────────────────────────────────────
             SectionLabel("Lyrics")

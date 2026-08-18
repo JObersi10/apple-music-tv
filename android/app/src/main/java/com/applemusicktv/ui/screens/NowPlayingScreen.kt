@@ -28,6 +28,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -122,6 +124,19 @@ fun NowPlayingScreen(
         // black regardless of the chosen mode.
         var screensaverOn by remember { mutableStateOf(false) }
         var lastInteractionMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        // Auto-hide chrome (clock, controls, queue) after a short idle so a steady state is just
+        // artwork + orbs. Only D-pad NAVIGATION brings it back — the media transport keys deliberately
+        // don't, so play/pause/skip from across the room leaves the clean view alone.
+        var chromeVisible by remember { mutableStateOf(true) }
+        var lastNavMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(chromeVisible, lastNavMs) {
+            if (!chromeVisible) return@LaunchedEffect
+            while (isActive) {
+                kotlinx.coroutines.delay(1000)
+                if (System.currentTimeMillis() - lastNavMs > CHROME_HIDE_MS) { chromeVisible = false; break }
+            }
+        }
+        val chromeAlpha by animateFloatAsState(if (chromeVisible) 1f else 0f, tween(400), label = "chrome")
         val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
             NowPlayingBackground.BLACK else state.nowPlayingBackground
         DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode)
@@ -153,7 +168,8 @@ fun NowPlayingScreen(
             else -> null
         }
         Row(
-            modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 10.dp),
+            modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 10.dp)
+                .graphicsLayer { alpha = chromeAlpha },
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -209,7 +225,19 @@ fun NowPlayingScreen(
             else -> {
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 72.dp, vertical = 40.dp)
-                .onPreviewKeyEvent { lastInteractionMs = System.currentTimeMillis(); false },
+                .onPreviewKeyEvent { e ->
+                    // Navigation only: media keys don't count as activity, so they neither wake the
+                    // chrome nor postpone the screensaver.
+                    if (e.type == KeyEventType.KeyDown && isNavKey(e.key)) {
+                        val now = System.currentTimeMillis()
+                        lastInteractionMs = now
+                        lastNavMs = now
+                        // First nav press just reveals the chrome — consume it so focus doesn't also
+                        // jump while everything's still invisible.
+                        if (!chromeVisible) { chromeVisible = true; return@onPreviewKeyEvent true }
+                    }
+                    false
+                },
             horizontalArrangement = Arrangement.spacedBy(56.dp),
         ) {
             // Left — artwork + info + controls, spread flush over the full column height.
@@ -292,6 +320,7 @@ fun NowPlayingScreen(
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
                 Row(
+                    modifier = Modifier.graphicsLayer { alpha = chromeAlpha },
                     horizontalArrangement = Arrangement.spacedBy(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -358,16 +387,18 @@ fun NowPlayingScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                PlayerProgressBar(
-                    progressState = smoothProgress,
-                    song = song,
-                    playFocus = playFocus,
-                    player = playerVm.player,
-                )
+                Box(Modifier.graphicsLayer { alpha = chromeAlpha }) {
+                    PlayerProgressBar(
+                        progressState = smoothProgress,
+                        song = song,
+                        playFocus = playFocus,
+                        player = playerVm.player,
+                    )
+                }
             }
 
             // Right — lyrics or queue
-            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = chromeAlpha }) {
                 val label = when {
                     showQueue -> "Queue  •  Menu = Lyrics"
                     state.lyrics.isNotEmpty() -> "Lyrics  •  Menu = Queue"
@@ -821,6 +852,15 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     val scaledRaw = (rawEnergy * beatMultiplier).coerceIn(0f, 1f)
     val energy by animateFloatAsState(scaledRaw, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
 
+    // Per-band levels drive the three projector orbs (bass / vocal / treble). Spring-smoothed the
+    // same way as [energy] so the swell reads as motion, not stepping. Collected unconditionally
+    // (composable rule) even in Dynamic/Black, where they're simply unused.
+    val rawBands by beatAnalyzer.bands.collectAsState()
+    val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow)
+    val band0 by animateFloatAsState((rawBands.getOrElse(0) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "bass")
+    val band1 by animateFloatAsState((rawBands.getOrElse(1) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "vocal")
+    val band2 by animateFloatAsState((rawBands.getOrElse(2) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "treble")
+
     // Palette derived from the full-res artwork for color accuracy
     val paletteUrl = artworkUrlTemplate?.replace("{w}", "1200")?.replace("{h}", "1200")?.replace("{f}", "jpg")
     val palette = rememberArtworkPalette(paletteUrl)
@@ -844,14 +884,58 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     // PROJECTOR uses TRUE black; a projector throws light on a wall, so the near-black #050505 lift
     // that stops a panel crushing shadows becomes a visible grey rectangle instead.
     Box(Modifier.fillMaxSize().background(if (projector) Color.Black else Color(0xFF050505))) {
-        // Color blobs
         Box(Modifier.fillMaxSize().drawBehind {
             val w = size.width; val h = size.height
+
+            if (projector) {
+                // THREE ORBS, ONE PER BAND — bass (slow, low), vocal (centre-panned, mid), treble
+                // (fast, high). Each rides an ellipse on its own animator+phase so the composition
+                // never repeats, swells on its band, and glows from a palette colour.
+                val orbLevels = floatArrayOf(band0, band1, band2)
+                val anchorX = floatArrayOf(0.40f, 0.52f, 0.64f)
+                val anchorY = floatArrayOf(0.44f, 0.56f, 0.46f)
+                val phase   = floatArrayOf(0f, 2.1f, 4.2f)
+                val drift   = floatArrayOf(t1, t2, t3)
+                val twoPi = (2.0 * Math.PI).toFloat()
+                val baseR = minOf(w, h) * 0.34f
+                for (i in 0 until 3) {
+                    val lvl = orbLevels[i]
+                    val cx = anchorX[i] * w + cos(drift[i] * twoPi + phase[i]) * 0.09f * w
+                    val cy = anchorY[i] * h + sin(drift[i] * twoPi + phase[i]) * 0.05f * h
+                    val c = Offset(cx, cy)
+                    val col = colors4[i]
+                    // Halo: CONSTANT alpha, the beat rides size only — a halo that brightens on the
+                    // beat lifts the whole black frame, the one thing an edgeless image must not do.
+                    val r = baseR * (1f + lvl * 0.6f)
+                    drawCircle(
+                        brush = Brush.radialGradient(listOf(col.copy(alpha = 0.52f), col.copy(alpha = 0f)), center = c, radius = r),
+                        radius = r, center = c, blendMode = BlendMode.Screen,
+                    )
+                    // Core: small, whitened (a real glow's hottest point desaturates), alpha rides the
+                    // band — a tiny fraction of the area, so it can punch without lifting the black.
+                    val cr = r * 0.34f
+                    val core = lerp(col, Color.White, 0.55f)
+                    drawCircle(
+                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.22f + lvl * 0.5f).coerceAtMost(0.8f)), core.copy(alpha = 0f)), center = c, radius = cr),
+                        radius = cr, center = c, blendMode = BlendMode.Screen,
+                    )
+                }
+                // Dissolve to TRUE black on every side. Per-dimension so the vignette is even at any
+                // aspect ratio — a single radial can't blacken 16:9's short axis without over-darkening
+                // the long one. This is the edge guarantee: the light runs out inside the frame.
+                val ev = h * 0.18f; val eh = w * 0.18f
+                drawRect(Brush.verticalGradient(listOf(Color.Black, Color(0x00000000)), startY = 0f, endY = ev))
+                drawRect(Brush.verticalGradient(listOf(Color(0x00000000), Color.Black), startY = h - ev, endY = h))
+                drawRect(Brush.horizontalGradient(listOf(Color.Black, Color(0x00000000)), startX = 0f, endX = eh))
+                drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color.Black), startX = w - eh, endX = w))
+                // Right-side darkening for lyrics readability (a gradient, not an edge).
+                drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color(0x6A000000)), startX = w * 0.35f, endX = w))
+                return@drawBehind
+            }
+
+            // DYNAMIC — four drifting album-colour blobs.
             val beatScale = 1f + energy * 0.25f
-            // The halo's alpha must NOT ride the beat in projector mode: it covers most of the frame,
-            // so pulsing it lifts the whole picture a shade on every kick — the one thing an edgeless
-            // projected image must never do. Size (beatScale) carries the beat instead.
-            val beatAlpha = if (projector) 0.72f else 0.66f + energy * 0.22f
+            val beatAlpha = 0.66f + energy * 0.22f
             val r = maxOf(w, h) * 0.62f * beatScale
             val nudge = energy * maxOf(w, h) * 0.02f
             val nudgeOffsets = listOf(
@@ -860,17 +944,11 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 Offset( nudge * 0.6f, -nudge),
                 Offset(-nudge * 0.4f,  nudge * 0.8f),
             )
-            // PROJECTOR compresses the blob centres toward the middle (bias < 1) so the composition
-            // sits inside the frame and the edge vignette below can dissolve it to black without ever
-            // clipping a blob against a boundary. Bias 1 leaves DYNAMIC exactly as it was.
-            val bias = if (projector) 0.62f else 1f
-            fun bx(f: Float) = (0.5f + (f - 0.5f) * bias) * w
-            fun by(f: Float) = (0.5f + (f - 0.5f) * bias) * h
             val centers = listOf(
-                Offset(bx(lerp(0.02f, 0.28f, t1)), by(lerp(0.05f, 0.32f, t2))),
-                Offset(bx(lerp(0.72f, 0.98f, t2)), by(lerp(0.05f, 0.35f, t3))),
-                Offset(bx(lerp(0.05f, 0.30f, t3)), by(lerp(0.68f, 0.95f, t1))),
-                Offset(bx(lerp(0.70f, 0.98f, t1)), by(lerp(0.65f, 0.95f, t3))),
+                Offset(lerp(0.02f, 0.28f, t1) * w, lerp(0.05f, 0.32f, t2) * h),
+                Offset(lerp(0.72f, 0.98f, t2) * w, lerp(0.05f, 0.35f, t3) * h),
+                Offset(lerp(0.05f, 0.30f, t3) * w, lerp(0.68f, 0.95f, t1) * h),
+                Offset(lerp(0.70f, 0.98f, t1) * w, lerp(0.65f, 0.95f, t3) * h),
             ).mapIndexed { i, c -> c + nudgeOffsets[i] }
             colors4.forEachIndexed { i, color ->
                 drawCircle(
@@ -882,38 +960,37 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                     blendMode = BlendMode.Screen,
                 )
             }
-            if (projector) {
-                // Dissolve to TRUE black on every side. Per-dimension so the vignette is even at any
-                // aspect ratio — a single radial can't blacken 16:9's short axis without over-darkening
-                // the long one. This is the edge guarantee: the light runs out inside the frame.
-                val ev = h * 0.18f; val eh = w * 0.18f
-                drawRect(Brush.verticalGradient(listOf(Color.Black, Color(0x00000000)), startY = 0f, endY = ev))
-                drawRect(Brush.verticalGradient(listOf(Color(0x00000000), Color.Black), startY = h - ev, endY = h))
-                drawRect(Brush.horizontalGradient(listOf(Color.Black, Color(0x00000000)), startX = 0f, endX = eh))
-                drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color.Black), startX = w - eh, endX = w))
-            } else {
-                // Center darkening
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(Color(0x77000000), Color(0x00000000)),
-                        center = Offset(w * 0.5f, h * 0.5f), radius = maxOf(w, h) * 0.55f,
-                    ),
-                    radius = maxOf(w, h) * 0.55f, center = Offset(w * 0.5f, h * 0.5f),
-                )
-            }
-            // Right-side darkening for lyrics readability (a gradient, not an edge — kept in both looks).
+            // Center darkening
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(Color(0x77000000), Color(0x00000000)),
+                    center = Offset(w * 0.5f, h * 0.5f), radius = maxOf(w, h) * 0.55f,
+                ),
+                radius = maxOf(w, h) * 0.55f, center = Offset(w * 0.5f, h * 0.5f),
+            )
+            // Right-side darkening for lyrics readability
             drawRect(
                 brush = Brush.horizontalGradient(
                     listOf(Color(0x00000000), Color(0x7A000000)),
                     startX = w * 0.35f, endX = w,
                 ),
             )
-            // Flat veil is DYNAMIC-only: on a projector any non-zero black is light on the wall, and
-            // the vignette already carries readability.
-            if (!projector) drawRect(Color(0x22000000))
+            // Kept low: the flat veil mutes every hue equally, so readability comes
+            // from the right-side gradient above instead.
+            drawRect(Color(0x22000000))
         })
     }
 }
+
+/** Idle time (no D-pad navigation) before the Now Playing chrome auto-hides. */
+private const val CHROME_HIDE_MS = 5000L
+
+/** D-pad navigation / select keys — the ones allowed to wake the auto-hidden chrome. Media transport
+ *  keys are deliberately excluded so play/pause/skip don't bring the controls back. */
+private fun isNavKey(key: Key): Boolean =
+    key == Key.DirectionUp || key == Key.DirectionDown ||
+        key == Key.DirectionLeft || key == Key.DirectionRight ||
+        key == Key.DirectionCenter || key == Key.Enter || key == Key.NumPadEnter
 
 /** How many lines of already-sung context stay above the active line after a scroll. */
 private const val LYRIC_LEAD_LINES = 2

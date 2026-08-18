@@ -801,6 +801,18 @@ class PlayerViewModel @Inject constructor(
         prefs.edit { putBoolean("crossfade_enabled", next) }
     }
 
+    /**
+     * Hard stop for a real app exit (the "Exit" confirmation). `moveTaskToBack`/`finish` alone leave
+     * this ViewModel — and its ExoPlayer — alive in the background, so the audio kept playing; stop
+     * the output explicitly so exiting actually stops the music.
+     */
+    fun stopPlayback() {
+        player.pause()
+        player.stop()
+        _state.update { it.copy(isPlaying = false) }
+        beatAnalyzer.resetBeat()
+    }
+
     /** Cycle the Now Playing backdrop: Dynamic → Projector → Black → Dynamic (dir = +1 / -1). */
     fun stepNowPlayingBackground(dir: Int) {
         val modes = NowPlayingBackground.entries

@@ -337,6 +337,10 @@ fun AppShell(modifier: Modifier = Modifier) {
                         androidx.tv.material3.Surface(
                             onClick = {
                                 showExitDialog = false
+                                // A real exit must stop the audio: the player lives in the ViewModel,
+                                // which survives moveTaskToBack/finish, so without this the music kept
+                                // playing after "Exit".
+                                playerVm.stopPlayback()
                                 // If there's no activity to background (or the task is
                                 // already at the root), fall back to finish() so the
                                 // popup never just sits there doing nothing.

@@ -25,6 +25,13 @@ class BeatAnalyzer @Inject constructor() {
     private val _energy = MutableStateFlow(0f)
     val energy: StateFlow<Float> = _energy
 
+    // Per-band levels for the projector orbs: [bass, vocal, treble], each 0..1. Separate from
+    // [energy] (a bass-onset envelope for the dynamic blobs) because the orbs want a *sustained*
+    // RMS level per band — the bass orb swells on the kick, the middle orb tracks the centre-panned
+    // voice, the treble orb flickers on cymbals.
+    private val _bands = MutableStateFlow(floatArrayOf(0f, 0f, 0f))
+    val bands: StateFlow<FloatArray> = _bands
+
     /** Set to match current audio output latency (0 for speakers, ~200 for BT). */
     @Volatile var latencyMs: Long = 0L
 
@@ -45,12 +52,17 @@ class BeatAnalyzer @Inject constructor() {
         if (id == activeId) _energy.value = value
     }
 
+    internal fun publishBands(id: Int, b: FloatArray) {
+        if (id == activeId) _bands.value = b
+    }
+
     internal fun isActive(id: Int) = id == activeId
 
     /** Drop buffered pulses and detector history (e.g. after a latency change). */
     fun resetBeat() {
         active?.resetBeat()
         _energy.value = 0f
+        _bands.value = floatArrayOf(0f, 0f, 0f)
     }
 
     // ── DIAGNOSTIC: raw decoded-PCM capture ────────────────────────────────
@@ -106,6 +118,28 @@ class BeatProcessor internal constructor(
     private var hpAlpha = 0.004f
     private var hp = 0f
 
+    // --- per-band orb levels (bass / vocal / treble) ---
+    // A small filter bank, not an FFT: three multiplies per sample and the visual difference at orb
+    // scale is nil. Bass = low-pass of the mono mid; treble = mid minus a 4 kHz low-pass (the high
+    // residue); vocal = band-passed MID minus band-passed SIDE, so only centre-panned content (the
+    // singer) survives — instruments sharing the vocal range cancel because they're panned wide.
+    private var aBass = 0f      // 160 Hz low-pass
+    private var aVocLo = 0f     // 300 Hz  (low edge of the vocal band-pass)
+    private var aVocHi = 0f     // 3400 Hz (high edge)
+    private var aTreb = 0f      // 4000 Hz
+    private var sBassMid = 0f
+    private var sVocLoMid = 0f; private var sVocHiMid = 0f
+    private var sVocLoSide = 0f; private var sVocHiSide = 0f
+    private var sTrebMid = 0f
+    private var bAccBass = 0f; private var bAccTreb = 0f
+    private var bAccVocMid = 0f; private var bAccVocSide = 0f
+    private var bandWinCount = 0
+    private var bandWindowSamples = 1323     // ~30 ms — one emit per, so ~33 updates/sec
+    // Per-band decaying peak for normalisation, and the smoothed output level. The peak decay is a
+    // per-emission figure (~33/sec) tuned so quiet tracks still light up and loud ones don't pin.
+    private val bandPeak = floatArrayOf(1e-4f, 1e-4f, 1e-4f)
+    private val bandLevel = floatArrayOf(0f, 0f, 0f)
+
     // --- fixed analysis window ---
     private var windowSamples = 441          // 10 ms @ 44.1 kHz
     private var winAcc = 0f                  // sum of squares
@@ -124,6 +158,8 @@ class BeatProcessor internal constructor(
 
     // Ring buffer of (emitAtMs, energy) pairs for latency compensation
     private val pending = ArrayDeque<Pair<Long, Float>>()
+    // …and the same for the per-band orb levels.
+    private val bandPending = ArrayDeque<Pair<Long, FloatArray>>()
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return when (inputAudioFormat.encoding) {
@@ -135,6 +171,9 @@ class BeatProcessor internal constructor(
                 // alpha for a one-pole LPF at CUTOFF_HZ
                 lpAlpha = (2f * Math.PI.toFloat() * CUTOFF_HZ / sampleRate).coerceIn(0.001f, 0.9f)
                 hpAlpha = (2f * Math.PI.toFloat() * HP_HZ / sampleRate).coerceIn(0.0001f, 0.5f)
+                fun a(hz: Float) = (2f * Math.PI.toFloat() * hz / sampleRate).coerceIn(0.0001f, 0.9f)
+                aBass = a(160f); aVocLo = a(300f); aVocHi = a(3400f); aTreb = a(4000f)
+                bandWindowSamples = (windowSamples * BAND_EMIT_EVERY).coerceAtLeast(64)
                 inputAudioFormat
             }
             else -> AudioProcessor.AudioFormat.NOT_SET
@@ -155,16 +194,22 @@ class BeatProcessor internal constructor(
             if (isFloat) {
                 val v = dup.asFloatBuffer()
                 while (v.remaining() >= channels) {
-                    var mono = 0f
-                    for (c in 0 until channels) mono += v.get()
-                    feed(mono / channels)
+                    val l = v.get()
+                    val r = if (channels > 1) v.get() else l
+                    var c = 2; while (c < channels) { v.get(); c++ }   // drop surround channels
+                    val mid = (l + r) * 0.5f
+                    feed(mid)                          // bass-onset envelope (mono ≈ mid)
+                    feedBands(mid, (l - r) * 0.5f)     // per-band orb levels
                 }
             } else {
                 val v = dup.asShortBuffer()
                 while (v.remaining() >= channels) {
-                    var mono = 0f
-                    for (c in 0 until channels) mono += v.get().toFloat()
-                    feed(mono / (channels * 32768f))
+                    val l = v.get().toFloat() / 32768f
+                    val r = if (channels > 1) v.get().toFloat() / 32768f else l
+                    var c = 2; while (c < channels) { v.get(); c++ }
+                    val mid = (l + r) * 0.5f
+                    feed(mid)
+                    feedBands(mid, (l - r) * 0.5f)
                 }
             }
             drain()
@@ -189,6 +234,49 @@ class BeatProcessor internal constructor(
         val e = sqrt(winAcc / winCount)
         winAcc = 0f; winCount = 0
         closeWindow(e)
+    }
+
+    /**
+     * One stereo frame → the three orb bands. Accumulates squared energy per band over a ~30 ms
+     * window, then normalises each band against its own decaying peak and emits [bass, vocal, treble].
+     */
+    private fun feedBands(mid: Float, side: Float) {
+        sBassMid  += aBass  * (mid  - sBassMid)
+        sTrebMid  += aTreb  * (mid  - sTrebMid)
+        sVocLoMid += aVocLo * (mid  - sVocLoMid);  sVocHiMid += aVocHi * (mid  - sVocHiMid)
+        sVocLoSide += aVocLo * (side - sVocLoSide); sVocHiSide += aVocHi * (side - sVocHiSide)
+
+        val treb   = mid - sTrebMid                 // high residue
+        val bpMid  = sVocHiMid - sVocLoMid          // 300–3400 Hz band-pass, mid
+        val bpSide = sVocHiSide - sVocLoSide        // …and side
+
+        bAccBass    += sBassMid * sBassMid
+        bAccTreb    += treb * treb
+        bAccVocMid  += bpMid * bpMid
+        bAccVocSide += bpSide * bpSide
+        if (++bandWinCount < bandWindowSamples) return
+
+        val inv = 1f / bandWinCount
+        val raw0 = sqrt(bAccBass * inv)                                        // bass
+        val raw2 = sqrt(bAccTreb * inv)                                        // treble
+        val raw1 = (sqrt(bAccVocMid * inv) - sqrt(bAccVocSide * inv))          // vocal = centre only
+            .coerceAtLeast(0f)
+        bAccBass = 0f; bAccTreb = 0f; bAccVocMid = 0f; bAccVocSide = 0f; bandWinCount = 0
+
+        val raw = floatArrayOf(raw0, raw1, raw2)
+        for (b in 0 until 3) {
+            bandPeak[b] = maxOf(raw[b], bandPeak[b] * BAND_PEAK_DECAY, 1e-4f)
+            val ratio  = (raw[b] / bandPeak[b]).coerceIn(0f, 1f)
+            val norm   = ((ratio - BAND_GATE) / (1f - BAND_GATE)).coerceIn(0f, 1f)
+            // Asymmetric follow: a glow should arrive with the hit and fade after it, so attack is
+            // quick and release slow. Symmetric smoothing just looks like breathing on a timer.
+            val rate   = if (norm > bandLevel[b]) BAND_ATTACK else BAND_RELEASE
+            bandLevel[b] += (norm - bandLevel[b]) * rate
+        }
+        val delay = bus.latencyMs
+        val out = floatArrayOf(bandLevel[0], bandLevel[1], bandLevel[2])
+        if (delay <= 0L) bus.publishBands(id, out)
+        else bandPending.addLast(Pair(System.currentTimeMillis() + delay, out))
     }
 
     private fun closeWindow(e: Float) {
@@ -231,15 +319,23 @@ class BeatProcessor internal constructor(
         while (pending.isNotEmpty() && pending.peekFirst().first <= now) {
             bus.publish(id, pending.pollFirst().second)
         }
+        while (bandPending.isNotEmpty() && bandPending.peekFirst().first <= now) {
+            bus.publishBands(id, bandPending.pollFirst().second)
+        }
     }
 
     fun resetBeat() {
-        pending.clear()
+        pending.clear(); bandPending.clear()
         hist.clear(); histSum = 0f; histSumSq = 0f
         winAcc = 0f; winCount = 0
         lp.fill(0f); hp = 0f; level = 0f; lastEmitted = -1f
         windowsSinceBeat = 99
+        sBassMid = 0f; sTrebMid = 0f
+        sVocLoMid = 0f; sVocHiMid = 0f; sVocLoSide = 0f; sVocHiSide = 0f
+        bAccBass = 0f; bAccTreb = 0f; bAccVocMid = 0f; bAccVocSide = 0f; bandWinCount = 0
+        bandPeak.fill(1e-4f); bandLevel.fill(0f)
         bus.publish(id, 0f)
+        bus.publishBands(id, floatArrayOf(0f, 0f, 0f))
     }
 
     override fun onReset() { resetBeat() }
@@ -259,5 +355,13 @@ class BeatProcessor internal constructor(
         const val MIN_HIST = 25             // need 250 ms of history before firing
         const val FLOOR = 0.004f            // ignore near-silence
         const val DECAY_PER_WINDOW = 0.955f // ~10 ms step → ~250 ms fall
+
+        // --- orb bands ---
+        const val BAND_EMIT_EVERY = 3       // windows per band emit → ~33 updates/sec (10 ms × 3)
+        const val BAND_PEAK_DECAY = 0.9995f // per-emission peak decay: quiet tracks still light up,
+                                            // loud ones don't pin. See PROJECTOR_MODE.md §normalise.
+        const val BAND_GATE = 0.06f         // noise gate below 6 % of the running peak
+        const val BAND_ATTACK = 0.30f       // fast rise…
+        const val BAND_RELEASE = 0.045f     // …slow fall
     }
 }
