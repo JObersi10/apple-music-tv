@@ -120,6 +120,8 @@ data class PlayerState(
      * screensaver drops to plain black so the extra motion doesn't linger overnight.
      */
     val screensaverKeepBackground: Boolean = false,
+    /** Show the clock and the queue/lyrics panel hint on Now Playing. Off = a cleaner, art-only view. */
+    val showNowPlayingInfo: Boolean = true,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
     val isLoading:        Boolean         = false,
     /** True while the current track is playing via on-device Widevine. */
@@ -519,6 +521,7 @@ class PlayerViewModel @Inject constructor(
             lyricsOffsetMs = lyricsOffsetPrefs.getOffset(),
             nowPlayingBackground = NowPlayingBackground.fromName(prefs.getString("np_background", null)),
             screensaverKeepBackground = prefs.getBoolean("screensaver_keep_bg", false),
+            showNowPlayingInfo = prefs.getBoolean("np_info", true),
         ) }
         player.addListener(playerListener)
         mediaSession = buildMediaSession(player)
@@ -680,7 +683,8 @@ class PlayerViewModel @Inject constructor(
             val bgPlay = prefs.getBoolean("background_play", true)
             val npBg = NowPlayingBackground.fromName(prefs.getString("np_background", null))
             val keepBg = prefs.getBoolean("screensaver_keep_bg", false)
-            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, progressMs = posMs) }
+            val npInfo = prefs.getBoolean("np_info", true)
+            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, progressMs = posMs) }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
             val standalone = full && useStandalone()
             webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
@@ -826,6 +830,12 @@ class PlayerViewModel @Inject constructor(
         val next = !_state.value.screensaverKeepBackground
         _state.update { it.copy(screensaverKeepBackground = next) }
         prefs.edit { putBoolean("screensaver_keep_bg", next) }
+    }
+
+    fun toggleNowPlayingInfo() {
+        val next = !_state.value.showNowPlayingInfo
+        _state.update { it.copy(showNowPlayingInfo = next) }
+        prefs.edit { putBoolean("np_info", next) }
     }
 
     private val screensaverSteps = listOf(0, 1, 2, 5, 10, 20, 30, 60, 120)

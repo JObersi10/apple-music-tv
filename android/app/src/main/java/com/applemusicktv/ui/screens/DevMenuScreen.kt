@@ -70,32 +70,40 @@ fun DevMenuScreen(
             SectionLabel("Playback")
             Stepper(
                 label = "Crossfade", value = "%.1fs".format(state.crossfadeMs / 1000f),
-                sub = "Blend between songs · applies next song",
+                sub = "Overlap the end of one song into the next",
                 onDec = { vm.setCrossfade(state.crossfadeMs - 500) },
                 onInc = { vm.setCrossfade(state.crossfadeMs + 500) },
             )
             Toggle(
-                label = "Standalone mode", on = state.standaloneOn,
-                sub = if (state.standaloneOn) "On-device decrypt · no PC needed" else "Route through PC server",
+                label = "Standalone playback", on = state.standaloneOn,
+                sub = if (state.standaloneOn) "Decode on this device — no PC required" else "Stream through the PC server",
                 onToggle = { vm.toggleStandalone() },
             )
+
+            // ── NOW PLAYING ───────────────────────────────────────────────
+            SectionLabel("Now Playing")
             Stepper(
                 label = "Background",
                 value = pstate.nowPlayingBackground.label,
-                sub = "Now Playing backdrop: colour orbs, projector, or black",
+                sub = "Colour orbs, projector glow, or solid black",
                 onDec = { playerVm.stepNowPlayingBackground(-1) },
                 onInc = { playerVm.stepNowPlayingBackground(1) },
+            )
+            Toggle(
+                label = "Show info", on = pstate.showNowPlayingInfo,
+                sub = if (pstate.showNowPlayingInfo) "Display the clock and panel hints" else "Hide them for an art-only view",
+                onToggle = { playerVm.toggleNowPlayingInfo() },
             )
             Stepper(
                 label = "Screensaver",
                 value = screensaverLabel(pstate.screensaverTimeoutMin),
-                sub = "Minutes idle before it dims the screen",
+                sub = "How long to wait before dimming the screen",
                 onDec = { playerVm.stepScreensaverTimeout(-1) },
                 onInc = { playerVm.stepScreensaverTimeout(1) },
             )
             Toggle(
-                label = "Screensaver keeps the orbs", on = pstate.screensaverKeepBackground,
-                sub = if (pstate.screensaverKeepBackground) "Orbs keep moving while the screensaver is on" else "Screensaver drops to plain black",
+                label = "Ambient screensaver", on = pstate.screensaverKeepBackground,
+                sub = if (pstate.screensaverKeepBackground) "Keep the moving background while dimmed" else "Fade to plain black while dimmed",
                 onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
 

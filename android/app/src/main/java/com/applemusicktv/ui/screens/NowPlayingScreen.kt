@@ -136,11 +136,15 @@ fun NowPlayingScreen(
                 if (System.currentTimeMillis() - lastNavMs > CHROME_HIDE_MS) { chromeVisible = false; break }
             }
         }
-        // One 2 s eased "settle" drives the whole transition: chrome fades out and the artwork eases
-        // up a touch, so dropping to idle reads as one deliberate move rather than a hard cut.
+        // Asymmetric transition: dropping INTO idle is a slow ~1.6 s eased settle (chrome fades, art
+        // eases into place) so it reads as one deliberate move; coming BACK is a fast ~240 ms punch so
+        // the controls snap to attention the instant you touch the D-pad — no waiting for a fade.
         val idle by animateFloatAsState(
             if (chromeVisible) 0f else 1f,
-            tween(2000, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            animationSpec = if (chromeVisible)
+                tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+            else
+                tween(1600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
             label = "idle",
         )
         val chromeAlpha = 1f - idle
@@ -174,7 +178,7 @@ fun NowPlayingScreen(
             }
             else -> null
         }
-        Row(
+        if (state.showNowPlayingInfo) Row(
             modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 10.dp)
                 .graphicsLayer { alpha = chromeAlpha },
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -252,9 +256,12 @@ fun NowPlayingScreen(
             Column(
                 modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp)
                     .graphicsLayer {
-                        val s = 1f + 0.05f * idle
+                        // On idle the controls + progress bar fade but still hold their layout space,
+                        // which leaves the art sitting high. Ease the whole group DOWN a touch (and a
+                        // hair larger) so the artwork + title + artist settle into the visual centre.
+                        val s = 1f + 0.03f * idle
                         scaleX = s; scaleY = s
-                        translationY = -idle * 24f
+                        translationY = idle * 30f
                     },
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -301,14 +308,16 @@ fun NowPlayingScreen(
                         letterSpacing = (-0.5).sp,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 38.dp),
                     )
-                    Surface(
+                    // The ⋯ options button is chrome: it fades out with the controls on idle so the
+                    // steady-state view is just artwork + text.
+                    if (chromeAlpha > 0.02f) Surface(
                         onClick = { showOptionsMenu = true; showSleepSubmenu = false },
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                         colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), focusedContainerColor = Color(0x33FFFFFF)),
-                        modifier = Modifier.align(Alignment.CenterEnd).size(32.dp),
+                        modifier = Modifier.align(Alignment.CenterEnd).size(32.dp).graphicsLayer { alpha = chromeAlpha },
                     ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("···", fontSize = 13.sp, color = Color.White) } }
                 }
-                Spacer(Modifier.height(5.dp))
+                Spacer(Modifier.height(3.dp))
                 if (song.artistId != null) {
                     Surface(
                         onClick = { onArtistClick(song.artistId) },
@@ -412,6 +421,12 @@ fun NowPlayingScreen(
             // Right — lyrics or queue. Lyrics are content, not chrome, so they stay put on idle;
             // only the queue fades out with the rest of the controls.
             val rightIsLyrics = !showQueue && state.lyrics.isNotEmpty()
+            // The "Lyrics • Menu = Queue" hint is a teaching aid, not permanent chrome. Show it only
+            // while you're actually working with the panel (it has focus) — and only if the Now Playing
+            // info setting is on — then fade it away. It still reserves its row so nothing jumps.
+            var rightFocused by remember { mutableStateOf(false) }
+            val hintAlpha by animateFloatAsState(
+                if (state.showNowPlayingInfo && rightFocused) 1f else 0f, tween(250), label = "panelHint")
             Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (rightIsLyrics) 1f else chromeAlpha }) {
                 val label = when {
                     showQueue -> "Queue  •  Menu = Lyrics"
@@ -422,9 +437,9 @@ fun NowPlayingScreen(
                     label,
                     fontSize = 10.sp,
                     color = Color(0x99FFFFFF),
-                    modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp),
+                    modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp).graphicsLayer { alpha = hintAlpha },
                 )
-                Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight().onFocusChanged { rightFocused = it.hasFocus }) {
                     if (showQueue) {
                         QueuePanel(
                             queue = state.queue,
@@ -463,6 +478,7 @@ fun NowPlayingScreen(
             progressState = smoothProgress,
             durationMs = song.durationMs,
             nextTitle = (state.userQueue.firstOrNull() ?: state.queue.getOrNull(state.queueIndex + 1))?.title,
+            songKey = song.id,
         )
     }
 }
@@ -472,11 +488,22 @@ fun NowPlayingScreen(
  * Reads the per-frame clock via derivedStateOf so only the boolean flip recomposes it.
  */
 @Composable
-private fun BoxScope.NextUpToast(progressState: androidx.compose.runtime.State<Long>, durationMs: Long, nextTitle: String?) {
-    val show by remember(durationMs, nextTitle) {
+private fun BoxScope.NextUpToast(progressState: androidx.compose.runtime.State<Long>, durationMs: Long, nextTitle: String?, songKey: String) {
+    val rawShow by remember(durationMs, nextTitle) {
         androidx.compose.runtime.derivedStateOf {
             nextTitle != null && durationMs > 0L && (durationMs - progressState.value) in 1_000L..15_000L
         }
+    }
+    // Debounce, keyed on the track: at a track change queueIndex advances a frame before the new
+    // duration/position land, so the raw window briefly points one song too far ahead and flashes the
+    // "next next" title. Hard-hide on any song change and require the window to hold for 400 ms before
+    // showing, so only a genuine end-of-track approach ever appears.
+    var show by remember { mutableStateOf(false) }
+    LaunchedEffect(songKey) { show = false }
+    LaunchedEffect(rawShow, songKey) {
+        if (!rawShow) { show = false; return@LaunchedEffect }
+        kotlinx.coroutines.delay(400)
+        show = true
     }
     val alpha by animateFloatAsState(if (show) 1f else 0f, tween(300), label = "nextToast")
     if (alpha <= 0.01f || nextTitle == null) return
@@ -899,7 +926,9 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     // same way as [energy] so the swell reads as motion, not stepping. Collected unconditionally
     // (composable rule) even in Dynamic/Black, where they're simply unused.
     val rawBands by beatAnalyzer.bands.collectAsState()
-    val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow)
+    // Heavily damped so the orbs glide rather than jitter — the swell should read as slow breathing,
+    // not a twitch on every frame.
+    val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.95f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow)
     val band0 by animateFloatAsState((rawBands.getOrElse(0) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "bass")
     val band1 by animateFloatAsState((rawBands.getOrElse(1) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "vocal")
     val band2 by animateFloatAsState((rawBands.getOrElse(2) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "treble")
@@ -952,16 +981,17 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 val baseR = minOf(w, h) * 0.22f
                 for (i in 0 until 3) {
                     val lvl = orbLevels[i]
-                    val cx = anchorX[i] * w + cos(drift[i] * twoPi + phase[i]) * 0.11f * w
-                    val cy = anchorY[i] * h + sin(drift[i] * twoPi + phase[i]) * 0.06f * h
+                    // Gentler drift so the orbs roam slowly instead of swimming around the frame.
+                    val cx = anchorX[i] * w + cos(drift[i] * twoPi + phase[i]) * 0.08f * w
+                    val cy = anchorY[i] * h + sin(drift[i] * twoPi + phase[i]) * 0.045f * h
                     val c = Offset(cx, cy)
                     val col = orbColors[i]
                     // Halo: CONSTANT alpha, the beat rides size only — a halo that brightens on the
                     // beat lifts the whole black frame, the one thing an edgeless image must not do.
-                    // Brighter than before now that the edge vignette no longer eats into it.
-                    val r = baseR * (1f + lvl * 0.7f)
+                    // Dimmed so the glow doesn't wash out the grey lyrics on the right half.
+                    val r = baseR * (1f + lvl * 0.5f)
                     drawCircle(
-                        brush = Brush.radialGradient(listOf(col.copy(alpha = 0.62f), col.copy(alpha = 0f)), center = c, radius = r),
+                        brush = Brush.radialGradient(listOf(col.copy(alpha = 0.42f), col.copy(alpha = 0f)), center = c, radius = r),
                         radius = r, center = c, blendMode = BlendMode.Screen,
                     )
                     // Core: small, whitened (a real glow's hottest point desaturates), alpha rides the
@@ -969,7 +999,7 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                     val cr = r * 0.34f
                     val core = lerp(col, Color.White, 0.55f)
                     drawCircle(
-                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.28f + lvl * 0.5f).coerceAtMost(0.85f)), core.copy(alpha = 0f)), center = c, radius = cr),
+                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.18f + lvl * 0.4f).coerceAtMost(0.66f)), core.copy(alpha = 0f)), center = c, radius = cr),
                         radius = cr, center = c, blendMode = BlendMode.Screen,
                     )
                 }

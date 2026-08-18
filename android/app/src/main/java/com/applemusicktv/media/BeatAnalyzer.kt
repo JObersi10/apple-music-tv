@@ -135,9 +135,11 @@ class BeatProcessor internal constructor(
     private var bAccVocMid = 0f; private var bAccVocSide = 0f
     private var bandWinCount = 0
     private var bandWindowSamples = 1323     // ~30 ms — one emit per, so ~33 updates/sec
-    // Per-band decaying peak for normalisation, and the smoothed output level. The peak decay is a
-    // per-emission figure (~33/sec) tuned so quiet tracks still light up and loud ones don't pin.
-    private val bandPeak = floatArrayOf(1e-4f, 1e-4f, 1e-4f)
+    // Per-band slow baseline (~1.5 s) and the smoothed output level. The orbs react to how far each
+    // band rises ABOVE its own baseline, not to absolute loudness — a steady-loud band (bass on a
+    // four-on-the-floor track) sits at its baseline and reads ~0, so it pulses on the hit instead of
+    // pinning at max forever. See PROJECTOR_MODE.md §normalise.
+    private val bandBase = floatArrayOf(0f, 0f, 0f)
     private val bandLevel = floatArrayOf(0f, 0f, 0f)
 
     // --- fixed analysis window ---
@@ -265,9 +267,14 @@ class BeatProcessor internal constructor(
 
         val raw = floatArrayOf(raw0, raw1, raw2)
         for (b in 0 until 3) {
-            bandPeak[b] = maxOf(raw[b], bandPeak[b] * BAND_PEAK_DECAY, 1e-4f)
-            val ratio  = (raw[b] / bandPeak[b]).coerceIn(0f, 1f)
-            val norm   = ((ratio - BAND_GATE) / (1f - BAND_GATE)).coerceIn(0f, 1f)
+            // Track a slow baseline for this band, then measure the RELATIVE swell above it. Ratio 1.0
+            // means "at its own average" → 0 output; it takes a real rise above baseline to light up,
+            // so the orb breathes with the beat instead of sitting pinned. Seed the baseline on the
+            // first window so the opening seconds aren't a blast while it converges from zero.
+            if (bandBase[b] < 1e-5f) bandBase[b] = raw[b]
+            else bandBase[b] += BAND_BASE_RATE * (raw[b] - bandBase[b])
+            val excess = (raw[b] / (bandBase[b] + 1e-5f) - 1f).coerceIn(0f, BAND_EXCESS_MAX) / BAND_EXCESS_MAX
+            val norm   = ((excess - BAND_GATE) / (1f - BAND_GATE)).coerceIn(0f, 1f)
             // Asymmetric follow: a glow should arrive with the hit and fade after it, so attack is
             // quick and release slow. Symmetric smoothing just looks like breathing on a timer.
             val rate   = if (norm > bandLevel[b]) BAND_ATTACK else BAND_RELEASE
@@ -333,7 +340,7 @@ class BeatProcessor internal constructor(
         sBassMid = 0f; sTrebMid = 0f
         sVocLoMid = 0f; sVocHiMid = 0f; sVocLoSide = 0f; sVocHiSide = 0f
         bAccBass = 0f; bAccTreb = 0f; bAccVocMid = 0f; bAccVocSide = 0f; bandWinCount = 0
-        bandPeak.fill(1e-4f); bandLevel.fill(0f)
+        bandBase.fill(0f); bandLevel.fill(0f)
         bus.publish(id, 0f)
         bus.publishBands(id, floatArrayOf(0f, 0f, 0f))
     }
@@ -358,10 +365,12 @@ class BeatProcessor internal constructor(
 
         // --- orb bands ---
         const val BAND_EMIT_EVERY = 3       // windows per band emit → ~33 updates/sec (10 ms × 3)
-        const val BAND_PEAK_DECAY = 0.9995f // per-emission peak decay: quiet tracks still light up,
-                                            // loud ones don't pin. See PROJECTOR_MODE.md §normalise.
-        const val BAND_GATE = 0.06f         // noise gate below 6 % of the running peak
+        const val BAND_BASE_RATE = 0.02f    // per-emission baseline follow (~1.5 s) — the reference the
+                                            // orb swells above. Slow enough to stay a "typical" level.
+        const val BAND_EXCESS_MAX = 1.1f    // rise-above-baseline that maps to a fully lit orb: raw at
+                                            // ~2.1× its baseline. Higher = orbs peak less readily.
+        const val BAND_GATE = 0.08f         // ignore swells under 8 % of full — kills idle shimmer
         const val BAND_ATTACK = 0.30f       // fast rise…
-        const val BAND_RELEASE = 0.045f     // …slow fall
+        const val BAND_RELEASE = 0.05f      // …slow fall
     }
 }
