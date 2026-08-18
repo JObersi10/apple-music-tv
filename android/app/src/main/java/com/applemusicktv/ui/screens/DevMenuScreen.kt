@@ -80,11 +80,23 @@ fun DevMenuScreen(
                 onToggle = { vm.toggleStandalone() },
             )
             Stepper(
+                label = "Now Playing background",
+                value = pstate.nowPlayingBackground.label,
+                sub = "Dynamic blobs · edgeless projector · plain black",
+                onDec = { playerVm.stepNowPlayingBackground(-1) },
+                onInc = { playerVm.stepNowPlayingBackground(1) },
+            )
+            Stepper(
                 label = "Screensaver",
                 value = screensaverLabel(pstate.screensaverTimeoutMin),
                 sub = "Idle time before ambient mode",
                 onDec = { playerVm.stepScreensaverTimeout(-1) },
                 onInc = { playerVm.stepScreensaverTimeout(1) },
+            )
+            Toggle(
+                label = "Keep background in screensaver", on = pstate.screensaverKeepBackground,
+                sub = if (pstate.screensaverKeepBackground) "Beat keeps drifting while idle" else "Idle mode drops to plain black",
+                onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
             Toggle(
                 label = "Background play", on = pstate.backgroundPlayEnabled,

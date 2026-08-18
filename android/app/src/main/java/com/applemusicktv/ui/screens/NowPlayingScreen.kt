@@ -77,6 +77,7 @@ import coil.request.ImageRequest
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.data.network.LyricWord
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
+import com.applemusicktv.ui.viewmodel.NowPlayingBackground
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import com.applemusicktv.ui.viewmodel.RepeatMode
 import androidx.lifecycle.Lifecycle
@@ -116,7 +117,14 @@ fun NowPlayingScreen(
     val artistFocusHolder = remember { FocusRequester() }
 
     Box(modifier = modifier.fillMaxSize()) {
-        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity)
+        // Screensaver state is declared here (not lower down) so the backdrop can react to it: when
+        // idle mode kicks in and the user hasn't opted to keep the beat, the backdrop drops to plain
+        // black regardless of the chosen mode.
+        var screensaverOn by remember { mutableStateOf(false) }
+        var lastInteractionMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
+            NowPlayingBackground.BLACK else state.nowPlayingBackground
+        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode)
 
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -162,8 +170,7 @@ fun NowPlayingScreen(
 
         // Ambient screensaver: after 10 min of no input while playing, drop to just the
         // drifting background + a small now-playing chip. Any key wakes it.
-        var screensaverOn by remember { mutableStateOf(false) }
-        var lastInteractionMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        // (screensaverOn / lastInteractionMs are declared above so the backdrop can read them.)
         LaunchedEffect(state.screensaverTimeoutMin, state.isPlaying) {
             if (state.screensaverTimeoutMin <= 0) { screensaverOn = false; return@LaunchedEffect }
             val thresholdMs = state.screensaverTimeoutMin * 60_000L
@@ -802,7 +809,14 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
  * Beat energy pulses blob radius and alpha.
  */
 @Composable
-private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f) {
+private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f, mode: NowPlayingBackground = NowPlayingBackground.DYNAMIC) {
+    // BLACK: plain black, no blobs, no beat. Nothing else to compute.
+    if (mode == NowPlayingBackground.BLACK) {
+        Box(Modifier.fillMaxSize().background(Color.Black))
+        return
+    }
+    val projector = mode == NowPlayingBackground.PROJECTOR
+
     val rawEnergy by beatAnalyzer.energy.collectAsState()
     val scaledRaw = (rawEnergy * beatMultiplier).coerceIn(0f, 1f)
     val energy by animateFloatAsState(scaledRaw, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
@@ -827,12 +841,17 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
         lerp(animated[(i * 2) % n], animated[(i * 2 + 1) % n], colorFracs[i])
     }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
+    // PROJECTOR uses TRUE black; a projector throws light on a wall, so the near-black #050505 lift
+    // that stops a panel crushing shadows becomes a visible grey rectangle instead.
+    Box(Modifier.fillMaxSize().background(if (projector) Color.Black else Color(0xFF050505))) {
         // Color blobs
         Box(Modifier.fillMaxSize().drawBehind {
             val w = size.width; val h = size.height
             val beatScale = 1f + energy * 0.25f
-            val beatAlpha = 0.66f + energy * 0.22f
+            // The halo's alpha must NOT ride the beat in projector mode: it covers most of the frame,
+            // so pulsing it lifts the whole picture a shade on every kick — the one thing an edgeless
+            // projected image must never do. Size (beatScale) carries the beat instead.
+            val beatAlpha = if (projector) 0.72f else 0.66f + energy * 0.22f
             val r = maxOf(w, h) * 0.62f * beatScale
             val nudge = energy * maxOf(w, h) * 0.02f
             val nudgeOffsets = listOf(
@@ -841,11 +860,17 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 Offset( nudge * 0.6f, -nudge),
                 Offset(-nudge * 0.4f,  nudge * 0.8f),
             )
+            // PROJECTOR compresses the blob centres toward the middle (bias < 1) so the composition
+            // sits inside the frame and the edge vignette below can dissolve it to black without ever
+            // clipping a blob against a boundary. Bias 1 leaves DYNAMIC exactly as it was.
+            val bias = if (projector) 0.62f else 1f
+            fun bx(f: Float) = (0.5f + (f - 0.5f) * bias) * w
+            fun by(f: Float) = (0.5f + (f - 0.5f) * bias) * h
             val centers = listOf(
-                Offset(lerp(0.02f, 0.28f, t1) * w, lerp(0.05f, 0.32f, t2) * h),
-                Offset(lerp(0.72f, 0.98f, t2) * w, lerp(0.05f, 0.35f, t3) * h),
-                Offset(lerp(0.05f, 0.30f, t3) * w, lerp(0.68f, 0.95f, t1) * h),
-                Offset(lerp(0.70f, 0.98f, t1) * w, lerp(0.65f, 0.95f, t3) * h),
+                Offset(bx(lerp(0.02f, 0.28f, t1)), by(lerp(0.05f, 0.32f, t2))),
+                Offset(bx(lerp(0.72f, 0.98f, t2)), by(lerp(0.05f, 0.35f, t3))),
+                Offset(bx(lerp(0.05f, 0.30f, t3)), by(lerp(0.68f, 0.95f, t1))),
+                Offset(bx(lerp(0.70f, 0.98f, t1)), by(lerp(0.65f, 0.95f, t3))),
             ).mapIndexed { i, c -> c + nudgeOffsets[i] }
             colors4.forEachIndexed { i, color ->
                 drawCircle(
@@ -857,24 +882,35 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                     blendMode = BlendMode.Screen,
                 )
             }
-            // Center darkening
-            drawCircle(
-                brush = Brush.radialGradient(
-                    listOf(Color(0x77000000), Color(0x00000000)),
-                    center = Offset(w * 0.5f, h * 0.5f), radius = maxOf(w, h) * 0.55f,
-                ),
-                radius = maxOf(w, h) * 0.55f, center = Offset(w * 0.5f, h * 0.5f),
-            )
-            // Right-side darkening for lyrics readability
+            if (projector) {
+                // Dissolve to TRUE black on every side. Per-dimension so the vignette is even at any
+                // aspect ratio — a single radial can't blacken 16:9's short axis without over-darkening
+                // the long one. This is the edge guarantee: the light runs out inside the frame.
+                val ev = h * 0.18f; val eh = w * 0.18f
+                drawRect(Brush.verticalGradient(listOf(Color.Black, Color(0x00000000)), startY = 0f, endY = ev))
+                drawRect(Brush.verticalGradient(listOf(Color(0x00000000), Color.Black), startY = h - ev, endY = h))
+                drawRect(Brush.horizontalGradient(listOf(Color.Black, Color(0x00000000)), startX = 0f, endX = eh))
+                drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color.Black), startX = w - eh, endX = w))
+            } else {
+                // Center darkening
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        listOf(Color(0x77000000), Color(0x00000000)),
+                        center = Offset(w * 0.5f, h * 0.5f), radius = maxOf(w, h) * 0.55f,
+                    ),
+                    radius = maxOf(w, h) * 0.55f, center = Offset(w * 0.5f, h * 0.5f),
+                )
+            }
+            // Right-side darkening for lyrics readability (a gradient, not an edge — kept in both looks).
             drawRect(
                 brush = Brush.horizontalGradient(
                     listOf(Color(0x00000000), Color(0x7A000000)),
                     startX = w * 0.35f, endX = w,
                 ),
             )
-            // Kept low: the flat veil mutes every hue equally, so readability comes
-            // from the right-side gradient above instead.
-            drawRect(Color(0x22000000))
+            // Flat veil is DYNAMIC-only: on a projector any non-zero black is light on the wall, and
+            // the vignette already carries readability.
+            if (!projector) drawRect(Color(0x22000000))
         })
     }
 }

@@ -70,6 +70,27 @@ private const val DECRYPT_IN_APP = true
 /** DIAGNOSTIC: capture decoded PCM of the first track to inspect the chop offline. */
 private const val CAPTURE_PCM = false
 
+/**
+ * What the Now Playing screen draws behind the card.
+ *
+ * - [DYNAMIC]: the drifting, album-coloured beat blobs (default).
+ * - [PROJECTOR]: the same blobs pulled to the centre on true black, dissolved to black on every
+ *   edge, so a projected image has no visible boundary. Halo brightness stays constant with the
+ *   beat — only size moves — so the black never pumps.
+ * - [BLACK]: plain black, no blobs, no beat.
+ */
+enum class NowPlayingBackground(val label: String) {
+    DYNAMIC("Dynamic"),
+    PROJECTOR("Projector"),
+    BLACK("Black"),
+    ;
+
+    companion object {
+        fun fromName(name: String?): NowPlayingBackground =
+            entries.firstOrNull { it.name == name } ?: DYNAMIC
+    }
+}
+
 data class PlayerState(
     val currentSong:      Song?           = null,
     val song:             Song?           = null,
@@ -92,6 +113,13 @@ data class PlayerState(
     val crossfadeEnabled: Boolean         = true,
     /** Idle minutes before the ambient screensaver; 0 = off. */
     val screensaverTimeoutMin: Int        = 10,
+    /** What's drawn behind the Now Playing card. */
+    val nowPlayingBackground: NowPlayingBackground = NowPlayingBackground.DYNAMIC,
+    /**
+     * When true, the beat blobs keep running once the screensaver kicks in. Off by default: the
+     * screensaver drops to plain black so the extra motion doesn't linger overnight.
+     */
+    val screensaverKeepBackground: Boolean = false,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
     val isLoading:        Boolean         = false,
     /** True while the current track is playing via on-device Widevine. */
@@ -485,7 +513,13 @@ class PlayerViewModel @Inject constructor(
             }).build()
 
     init {
-        _state.update { it.copy(lyricsOffsetMs = lyricsOffsetPrefs.getOffset()) }
+        // Load the lightweight display settings up front so they apply even on a cold launch with
+        // no track to restore (restoreState, which reads the rest, only runs when a song was saved).
+        _state.update { it.copy(
+            lyricsOffsetMs = lyricsOffsetPrefs.getOffset(),
+            nowPlayingBackground = NowPlayingBackground.fromName(prefs.getString("np_background", null)),
+            screensaverKeepBackground = prefs.getBoolean("screensaver_keep_bg", false),
+        ) }
         player.addListener(playerListener)
         mediaSession = buildMediaSession(player)
         // Confirm the bundled FFmpeg audio decoder loaded — when true, ExoPlayer
@@ -644,7 +678,9 @@ class PlayerViewModel @Inject constructor(
             val crossfade = prefs.getBoolean("crossfade_enabled", true)
             val screensaverMin = prefs.getInt("screensaver_min", 10)
             val bgPlay = prefs.getBoolean("background_play", true)
-            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, progressMs = posMs) }
+            val npBg = NowPlayingBackground.fromName(prefs.getString("np_background", null))
+            val keepBg = prefs.getBoolean("screensaver_keep_bg", false)
+            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, progressMs = posMs) }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
             val standalone = full && useStandalone()
             webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
@@ -763,6 +799,21 @@ class PlayerViewModel @Inject constructor(
         val next = !_state.value.crossfadeEnabled
         _state.update { it.copy(crossfadeEnabled = next) }
         prefs.edit { putBoolean("crossfade_enabled", next) }
+    }
+
+    /** Cycle the Now Playing backdrop: Dynamic → Projector → Black → Dynamic (dir = +1 / -1). */
+    fun stepNowPlayingBackground(dir: Int) {
+        val modes = NowPlayingBackground.entries
+        val cur = _state.value.nowPlayingBackground.ordinal
+        val next = modes[((cur + dir) % modes.size + modes.size) % modes.size]
+        _state.update { it.copy(nowPlayingBackground = next) }
+        prefs.edit { putString("np_background", next.name) }
+    }
+
+    fun toggleScreensaverKeepBackground() {
+        val next = !_state.value.screensaverKeepBackground
+        _state.update { it.copy(screensaverKeepBackground = next) }
+        prefs.edit { putBoolean("screensaver_keep_bg", next) }
     }
 
     private val screensaverSteps = listOf(0, 1, 2, 5, 10, 20, 30, 60, 120)
