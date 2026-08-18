@@ -170,6 +170,10 @@ class PlayerViewModel @Inject constructor(
     var nowPlayingVisible = false
     private var mediaSession: androidx.media3.session.MediaSession? = null
     private var lyricsJob: kotlinx.coroutines.Job? = null
+    // Small cache of already-fetched lyrics, keyed by song id. Lets a track change show its lyrics
+    // instantly (from the N+1 prefetch) instead of blanking to empty and re-fetching — which, in
+    // full-screen lyrics, flashed the view back to the player for a beat.
+    private val lyricsCache = java.util.concurrent.ConcurrentHashMap<String, List<LyricLine>>()
     private var motionJob: kotlinx.coroutines.Job? = null
     private var fadeJob: kotlinx.coroutines.Job? = null
     private var crossfadeInProgress = false
@@ -879,7 +883,7 @@ class PlayerViewModel @Inject constructor(
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}${if (standalone) " [standalone]" else ""}")
         awaitingSongStart = song.id
-        _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
+        _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = lyricsCache[song.id] ?: emptyList(), motionUrl = null, progressMs = 0L) }
         saveState()
         player.repeatMode = Player.REPEAT_MODE_OFF
         // Silence the outgoing track immediately on selection — building a standalone
@@ -938,6 +942,7 @@ class PlayerViewModel @Inject constructor(
         // crossfade partner was always cold and crossfade/skip felt broken — now
         // prefetchSong warms the in-app decrypt cache for the next song.
         if (full && nextSong != null) {
+            prefetchLyrics(nextSong)   // warm lyrics now — cheap, independent of the audio decrypt
             prefetchJob = viewModelScope.launch {
                 val deadline = System.currentTimeMillis() + 60_000
                 while (player.playbackState != Player.STATE_READY &&
@@ -1338,6 +1343,10 @@ class PlayerViewModel @Inject constructor(
 
     private fun loadLyrics(songId: String) {
         lyricsJob?.cancel()
+        lyricsCache[songId]?.let { cached ->
+            if (_state.value.currentSong?.id == songId) _state.update { it.copy(lyrics = cached) }
+            return
+        }
         val song = _state.value.currentSong
         lyricsJob = viewModelScope.launch {
             repo.getLyrics(
@@ -1346,9 +1355,19 @@ class PlayerViewModel @Inject constructor(
                 artist     = song?.artistName ?: "",
                 durationSec = (song?.durationMs ?: 0L) / 1000,
             ).onSuccess { lines ->
+                lyricsCache[songId] = lines
                 if (_state.value.currentSong?.id == songId)
                     _state.update { it.copy(lyrics = lines) }
             }
+        }
+    }
+
+    /** Warm the lyrics cache for an upcoming song so a track change shows them with no blank flash. */
+    private fun prefetchLyrics(song: Song) {
+        if (lyricsCache.containsKey(song.id)) return
+        viewModelScope.launch {
+            repo.getLyrics(song.id, song.title, song.artistName, song.durationMs / 1000)
+                .onSuccess { lyricsCache[song.id] = it }
         }
     }
 

@@ -494,19 +494,20 @@ private fun BoxScope.NextUpToast(progressState: androidx.compose.runtime.State<L
             nextTitle != null && durationMs > 0L && (durationMs - progressState.value) in 1_000L..15_000L
         }
     }
-    // Debounce, keyed on the track: at a track change queueIndex advances a frame before the new
-    // duration/position land, so the raw window briefly points one song too far ahead and flashes the
-    // "next next" title. Hard-hide on any song change and require the window to hold for 400 ms before
-    // showing, so only a genuine end-of-track approach ever appears.
-    var show by remember { mutableStateOf(false) }
-    LaunchedEffect(songKey) { show = false }
+    // Capture the "next" title ONCE, when the toast arms, and keep showing that. At a track boundary
+    // the queue advances a few frames before the current song does, so the live next-title briefly
+    // points one song too far ahead (the "next next"). Freezing the captured title ignores that
+    // transient; a real track change flips songKey and resets us.
+    var shownTitle by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(songKey) { shownTitle = null }
     LaunchedEffect(rawShow, songKey) {
-        if (!rawShow) { show = false; return@LaunchedEffect }
+        if (!rawShow) { shownTitle = null; return@LaunchedEffect }
         kotlinx.coroutines.delay(400)
-        show = true
+        if (rawShow) shownTitle = nextTitle
     }
-    val alpha by animateFloatAsState(if (show) 1f else 0f, tween(300), label = "nextToast")
-    if (alpha <= 0.01f || nextTitle == null) return
+    val alpha by animateFloatAsState(if (shownTitle != null) 1f else 0f, tween(300), label = "nextToast")
+    val title = shownTitle
+    if (alpha <= 0.01f || title == null) return
     Column(
         modifier = Modifier.align(Alignment.BottomEnd).padding(end = 30.dp, bottom = 52.dp)
             .graphicsLayer { this.alpha = alpha }
@@ -514,7 +515,7 @@ private fun BoxScope.NextUpToast(progressState: androidx.compose.runtime.State<L
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Text("NEXT", style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFA233B), letterSpacing = 1.5.sp))
-        Text(nextTitle, maxLines = 1, style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White))
+        Text(title, maxLines = 1, style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White))
     }
 }
 
@@ -926,9 +927,9 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     // same way as [energy] so the swell reads as motion, not stepping. Collected unconditionally
     // (composable rule) even in Dynamic/Black, where they're simply unused.
     val rawBands by beatAnalyzer.bands.collectAsState()
-    // Heavily damped so the orbs glide rather than jitter — the swell should read as slow breathing,
-    // not a twitch on every frame.
-    val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.95f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow)
+    // Damped enough not to jitter, loose enough to actually track the beat — the orb should snap up
+    // on the hit and ease back, not lag behind it.
+    val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)
     val band0 by animateFloatAsState((rawBands.getOrElse(0) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "bass")
     val band1 by animateFloatAsState((rawBands.getOrElse(1) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "vocal")
     val band2 by animateFloatAsState((rawBands.getOrElse(2) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "treble")
@@ -978,7 +979,11 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 val twoPi = (2.0 * Math.PI).toFloat()
                 // Smaller orbs than the full-screen blobs — a projector glow is a light source, not a
                 // wash. Wider drift so they still roam the frame at the smaller size.
-                val baseR = minOf(w, h) * 0.22f
+                // Per-band character so the three read as three: bass is the big slow one, treble the
+                // small snappy one, vocal in between. Each is DIM at rest and swells hard on its band,
+                // so the beat is the difference you see — not a constant wash.
+                val bandBaseR = floatArrayOf(minOf(w, h) * 0.26f, minOf(w, h) * 0.21f, minOf(w, h) * 0.16f)
+                val sizeRide  = floatArrayOf(0.75f, 0.85f, 1.05f)   // treble punches biggest relative to size
                 for (i in 0 until 3) {
                     val lvl = orbLevels[i]
                     // Gentler drift so the orbs roam slowly instead of swimming around the frame.
@@ -986,20 +991,20 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                     val cy = anchorY[i] * h + sin(drift[i] * twoPi + phase[i]) * 0.045f * h
                     val c = Offset(cx, cy)
                     val col = orbColors[i]
-                    // Halo: CONSTANT alpha, the beat rides size only — a halo that brightens on the
-                    // beat lifts the whole black frame, the one thing an edgeless image must not do.
-                    // Dimmed so the glow doesn't wash out the grey lyrics on the right half.
-                    val r = baseR * (1f + lvl * 0.5f)
+                    // Halo alpha now RIDES the beat: dim at rest (won't wash the lyrics), bright on the
+                    // hit. On true black under Screen blend that's exactly the expressive pulse we want.
+                    val r = bandBaseR[i] * (1f + lvl * sizeRide[i])
+                    val haloA = 0.24f + lvl * 0.42f
                     drawCircle(
-                        brush = Brush.radialGradient(listOf(col.copy(alpha = 0.42f), col.copy(alpha = 0f)), center = c, radius = r),
+                        brush = Brush.radialGradient(listOf(col.copy(alpha = haloA), col.copy(alpha = 0f)), center = c, radius = r),
                         radius = r, center = c, blendMode = BlendMode.Screen,
                     )
-                    // Core: small, whitened (a real glow's hottest point desaturates), alpha rides the
-                    // band — a tiny fraction of the area, so it can punch without lifting the black.
+                    // Core: small, whitened (a real glow's hottest point desaturates), punches hard on
+                    // the band — a tiny fraction of the area, so it can flare without lifting the black.
                     val cr = r * 0.34f
-                    val core = lerp(col, Color.White, 0.55f)
+                    val core = lerp(col, Color.White, 0.6f)
                     drawCircle(
-                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.18f + lvl * 0.4f).coerceAtMost(0.66f)), core.copy(alpha = 0f)), center = c, radius = cr),
+                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.12f + lvl * 0.62f).coerceAtMost(0.8f)), core.copy(alpha = 0f)), center = c, radius = cr),
                         radius = cr, center = c, blendMode = BlendMode.Screen,
                     )
                 }
