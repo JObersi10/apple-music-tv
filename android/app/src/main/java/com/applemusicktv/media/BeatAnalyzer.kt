@@ -144,8 +144,8 @@ class BeatProcessor internal constructor(
     // Per-band sensitivity. Bass reads great already so it keeps headroom (rarely pins); vocal and
     // especially treble are quieter/subtler, so they get a lower excess ceiling + gate to light up on
     // smaller swells. Index = [bass, vocal, treble].
-    private val bandExcessMax = floatArrayOf(1.15f, 0.62f, 0.5f)
-    private val bandGate      = floatArrayOf(0.06f, 0.045f, 0.035f)
+    private val bandExcessMax = floatArrayOf(1.15f, 0.85f, 0.62f)
+    private val bandGate      = floatArrayOf(0.06f, 0.05f, 0.04f)
 
     // --- fixed analysis window ---
     private var windowSamples = 441          // 10 ms @ 44.1 kHz

@@ -269,7 +269,7 @@ fun NowPlayingScreen(
                         // hair larger) so the artwork + title + artist settle into the visual centre.
                         val s = 1f + 0.03f * idle
                         scaleX = s; scaleY = s
-                        translationY = idle * 30f
+                        translationY = idle * 58f
                     },
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -825,7 +825,7 @@ private fun rotateHue(c: Color, newHue: Float): Color {
 // Pick up to n colors that are genuinely distinct in hue (>= minAngle apart). If the album doesn't
 // HAVE that many separated accents, synthesize the rest by rotating the dominant one around the wheel
 // — so the orbs are always visibly different colours, never three near-identical tints.
-private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 32f): List<Color> {
+private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 40f): List<Color> {
     val result = mutableListOf<Color>()
     val chosenHues = mutableListOf<Float>()
     for (c in colors) {
@@ -840,8 +840,9 @@ private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 32f): Lis
         val seedHue = seed.hsvHue()
         var k = 1
         while (result.size < n) {
-            // Golden-ish 47° steps spread the synthesized hues evenly around the wheel.
-            result.add(rotateHue(seed, seedHue + 47f * k)); k++
+            // Big ~78° steps so synthesized accents land far apart on the wheel — real colour variety,
+            // not three shades of the same hue.
+            result.add(rotateHue(seed, seedHue + 78f * k)); k++
         }
     }
     return result
@@ -943,9 +944,12 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     }
     val projector = mode == NowPlayingBackground.PROJECTOR
 
+    // Intensity (Calm 0.55 … Crazy 3.5) is applied as a render AMPLITUDE below, NOT by multiplying the
+    // level and clipping to 1 — that just pinned everything at max, so Strong and Crazy looked the same
+    // and the vocal orb sat maxed. Levels stay 0..1; the multiplier drives how big/bright they swell.
+    val amp = beatMultiplier
     val rawEnergy by beatAnalyzer.energy.collectAsState()
-    val scaledRaw = (rawEnergy * beatMultiplier).coerceIn(0f, 1f)
-    val energy by animateFloatAsState(scaledRaw, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
+    val energy by animateFloatAsState(rawEnergy.coerceIn(0f, 1f), androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
 
     // Per-band levels drive the three projector orbs (bass / vocal / treble). Spring-smoothed the
     // same way as [energy] so the swell reads as motion, not stepping. Collected unconditionally
@@ -954,9 +958,9 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     // Damped enough not to jitter, loose enough to actually track the beat — the orb should snap up
     // on the hit and ease back, not lag behind it.
     val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)
-    val band0 by animateFloatAsState((rawBands.getOrElse(0) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "bass")
-    val band1 by animateFloatAsState((rawBands.getOrElse(1) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "vocal")
-    val band2 by animateFloatAsState((rawBands.getOrElse(2) { 0f } * beatMultiplier).coerceIn(0f, 1f), bandSpring, label = "treble")
+    val band0 by animateFloatAsState(rawBands.getOrElse(0) { 0f }.coerceIn(0f, 1f), bandSpring, label = "bass")
+    val band1 by animateFloatAsState(rawBands.getOrElse(1) { 0f }.coerceIn(0f, 1f), bandSpring, label = "vocal")
+    val band2 by animateFloatAsState(rawBands.getOrElse(2) { 0f }.coerceIn(0f, 1f), bandSpring, label = "treble")
 
     // Palette derived from the full-res artwork for color accuracy
     val paletteUrl = artworkUrlTemplate?.replace("{w}", "1200")?.replace("{h}", "1200")?.replace("{f}", "jpg")
@@ -1019,8 +1023,10 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                     val col = orbColors[i]
                     // Halo alpha now RIDES the beat: dim at rest (won't wash the lyrics), bright on the
                     // hit. On true black under Screen blend that's exactly the expressive pulse we want.
-                    val r = bandBaseR[i] * (1f + lvl * sizeRide[i])
-                    val haloA = 0.24f + lvl * 0.42f
+                    // Intensity (amp) scales the SWELL, not the base: Calm barely moves, Crazy swings big
+                    // and bright. Generous caps so higher tiers stay visibly punchier instead of clipping.
+                    val r = bandBaseR[i] * (1f + (lvl * sizeRide[i] * amp).coerceAtMost(2.2f))
+                    val haloA = (0.24f + lvl * 0.42f * amp).coerceAtMost(0.9f)
                     drawCircle(
                         brush = Brush.radialGradient(listOf(col.copy(alpha = haloA), col.copy(alpha = 0f)), center = c, radius = r),
                         radius = r, center = c, blendMode = BlendMode.Screen,
@@ -1030,7 +1036,7 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                     val cr = r * 0.34f
                     val core = lerp(col, Color.White, 0.6f)
                     drawCircle(
-                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.12f + lvl * 0.62f).coerceAtMost(0.8f)), core.copy(alpha = 0f)), center = c, radius = cr),
+                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.12f + lvl * 0.62f * amp).coerceAtMost(0.92f)), core.copy(alpha = 0f)), center = c, radius = cr),
                         radius = cr, center = c, blendMode = BlendMode.Screen,
                     )
                 }
@@ -1047,11 +1053,12 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 return@drawBehind
             }
 
-            // DYNAMIC — four drifting album-colour blobs.
-            val beatScale = 1f + energy * 0.25f
-            val beatAlpha = 0.66f + energy * 0.22f
+            // DYNAMIC — four drifting album-colour blobs. Intensity (amp) scales the beat swing.
+            val eAmp = (energy * amp).coerceIn(0f, 2.2f)
+            val beatScale = 1f + eAmp * 0.25f
+            val beatAlpha = (0.60f + eAmp * 0.20f).coerceAtMost(0.95f)
             val r = maxOf(w, h) * 0.62f * beatScale
-            val nudge = energy * maxOf(w, h) * 0.02f
+            val nudge = eAmp * maxOf(w, h) * 0.02f
             val nudgeOffsets = listOf(
                 Offset( nudge,  nudge * 0.5f),
                 Offset(-nudge, -nudge * 0.7f),
@@ -1353,7 +1360,7 @@ private fun WordWipeLine(
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
     sungColor: Color = Color.White,
-    unsungColor: Color = Color(0xFF8E8E93),
+    unsungColor: Color = Color(0xFF76767C),
 ) {
     FlowRow(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         words.forEachIndexed { i, word ->
@@ -1393,7 +1400,7 @@ private fun WordWipe(
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
     sungColor: Color = Color.White,
-    unsungColor: Color = Color(0xFF8E8E93),
+    unsungColor: Color = Color(0xFF76767C),
 ) {
     val f = frac.coerceIn(0f, 1f)
     // Soft left→right sweep: a feathered gradient edge instead of a hard clip line,
@@ -1436,18 +1443,14 @@ private fun LyricLineRow(
         isPast   -> 0.18f
         else     -> 0.25f
     }
-    // Active line grows via font size (20→26sp), NOT a graphicsLayer scale. A left-anchored
-    // 1.08x scale used to push wide lines past the right edge and clip them.
-    val targetScale = if (isActive) 1.0f else 0.93f
+    // Active line grows via font size (20→26sp) only. The old 0.93→1.0 graphicsLayer scale tween made
+    // rows visibly stretch/"melt" for a frame as the active line changed during a scroll — dropped it;
+    // opacity alone carries the transition.
     val opacity by animateFloatAsState(targetOpacity, tween(200), label = "lineOpacity")
-    val scale   by animateFloatAsState(targetScale,   tween(200), label = "lineScale")
 
     Box(
         Modifier.fillMaxWidth().graphicsLayer {
             alpha = opacity
-            scaleX = scale
-            scaleY = scale
-            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
             clip = false
         }
     ) {
