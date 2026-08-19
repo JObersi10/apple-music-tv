@@ -146,6 +146,9 @@ class BeatProcessor internal constructor(
     // smaller swells. Index = [bass, vocal, treble].
     private val bandExcessMax = floatArrayOf(1.15f, 0.85f, 0.62f)
     private val bandGate      = floatArrayOf(0.06f, 0.05f, 0.04f)
+    // Decaying peak per band → an absolute "presence" figure (how loud a band is vs its own recent
+    // max). The vocal orb uses this so a sustained, un-rhythmic held note still lights it.
+    private val bandPeak = floatArrayOf(1e-4f, 1e-4f, 1e-4f)
 
     // --- fixed analysis window ---
     private var windowSamples = 441          // 10 ms @ 44.1 kHz
@@ -279,7 +282,14 @@ class BeatProcessor internal constructor(
             if (bandBase[b] < 1e-5f) bandBase[b] = raw[b]
             else bandBase[b] += BAND_BASE_RATE * (raw[b] - bandBase[b])
             val excess = (raw[b] / (bandBase[b] + 1e-5f) - 1f).coerceIn(0f, bandExcessMax[b]) / bandExcessMax[b]
-            val norm   = ((excess - bandGate[b]) / (1f - bandGate[b])).coerceIn(0f, 1f)
+            val swell  = ((excess - bandGate[b]) / (1f - bandGate[b])).coerceIn(0f, 1f)
+            // Absolute presence: how loud this band is vs its own decaying peak.
+            bandPeak[b] = maxOf(raw[b], bandPeak[b] * BAND_PEAK_DECAY, 1e-5f)
+            val presence = ((raw[b] / bandPeak[b] - BAND_PRESENCE_GATE) / (1f - BAND_PRESENCE_GATE)).coerceIn(0f, 1f)
+            // Vocals hold one tone with no beat, so swell alone leaves the orb dark mid-note. Drive the
+            // vocal orb (band 1) by PRESENCE — lit whenever centre-panned voice is there — and let a beat
+            // swell add on top. Bass/treble stay swell-driven so they read as hits, not a constant glow.
+            val norm = if (b == 1) maxOf(swell, presence * 0.9f) else swell
             // Asymmetric follow: a glow should arrive with the hit and fade after it, so attack is
             // quick and release slow. Symmetric smoothing just looks like breathing on a timer.
             val rate   = if (norm > bandLevel[b]) BAND_ATTACK else BAND_RELEASE
@@ -345,7 +355,7 @@ class BeatProcessor internal constructor(
         sBassMid = 0f; sTrebMid = 0f
         sVocLoMid = 0f; sVocHiMid = 0f; sVocLoSide = 0f; sVocHiSide = 0f
         bAccBass = 0f; bAccTreb = 0f; bAccVocMid = 0f; bAccVocSide = 0f; bandWinCount = 0
-        bandBase.fill(0f); bandLevel.fill(0f)
+        bandBase.fill(0f); bandLevel.fill(0f); bandPeak.fill(1e-4f)
         bus.publish(id, 0f)
         bus.publishBands(id, floatArrayOf(0f, 0f, 0f))
     }
@@ -374,6 +384,8 @@ class BeatProcessor internal constructor(
                                             // orb swells above. Slow enough to stay a "typical" level.
         // Rise-above-baseline mapping + noise gate are now PER-BAND (bandExcessMax / bandGate) so
         // treble and vocals can light on smaller swells than bass needs.
+        const val BAND_PEAK_DECAY = 0.9997f     // slow-decaying per-band peak for the presence figure
+        const val BAND_PRESENCE_GATE = 0.35f    // vocal orb lights only when the voice is ≥35% of peak
         const val BAND_ATTACK = 0.42f       // snap up on the hit…
         const val BAND_RELEASE = 0.11f      // …and fall back BETWEEN hits so it visibly pulses
     }

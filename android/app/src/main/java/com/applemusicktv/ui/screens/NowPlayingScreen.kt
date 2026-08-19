@@ -811,21 +811,23 @@ private fun hueDist(a: Float, b: Float): Float {
     val d = kotlin.math.abs(a - b); return minOf(d, 360f - d)
 }
 
-/** Recolour [c] to a new hue, keeping its saturation and value (so a synthesized accent still reads
- *  as belonging to the album — same richness, different hue). */
-private fun rotateHue(c: Color, newHue: Float): Color {
+/** Make a lighter/darker (and slightly de/re-saturated) shade of [c] — SAME hue. Used to fill orb
+ *  slots from an album that only has one colour family, so we never invent a hue (blue/green) the
+ *  artwork doesn't contain. step 0 = lighter, 1 = darker, 2 = lighter+, … */
+private fun varyShade(c: Color, step: Int): Color {
     val hsv = FloatArray(3)
     android.graphics.Color.colorToHSV(android.graphics.Color.rgb((c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt()), hsv)
-    hsv[0] = ((newHue % 360f) + 360f) % 360f
-    // Floor saturation so a rotated-from-greyish seed still shows as a colour.
-    hsv[1] = hsv[1].coerceAtLeast(0.5f)
+    val dir = if (step % 2 == 0) 1f else -1f
+    val mag = 0.18f + 0.12f * (step / 2)
+    hsv[2] = (hsv[2] + dir * mag).coerceIn(0.30f, 0.98f)
+    hsv[1] = (hsv[1] * (1f - dir * 0.12f)).coerceIn(0.35f, 1f)   // lighter reads a touch less saturated
     return Color(android.graphics.Color.HSVToColor(hsv))
 }
 
-// Pick up to n colors that are genuinely distinct in hue (>= minAngle apart). If the album doesn't
-// HAVE that many separated accents, synthesize the rest by rotating the dominant one around the wheel
-// — so the orbs are always visibly different colours, never three near-identical tints.
-private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 40f): List<Color> {
+// Pick up to n colors distinct in hue (>= minAngle apart). If the album doesn't HAVE that many
+// separated accents, fill the rest with lighter/darker SHADES of the accents we found — so every orb
+// colour still comes from the artwork (an orange cover gives orange shades, never a fake blue/green).
+private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 36f): List<Color> {
     val result = mutableListOf<Color>()
     val chosenHues = mutableListOf<Float>()
     for (c in colors) {
@@ -836,13 +838,10 @@ private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 40f): Lis
         }
     }
     if (result.size < n) {
-        val seed = result.firstOrNull() ?: colors.firstOrNull() ?: Color(0xFF888888)
-        val seedHue = seed.hsvHue()
-        var k = 1
+        val src = result.toList().ifEmpty { colors.take(1) }.ifEmpty { listOf(Color(0xFF888888)) }
+        var k = 0
         while (result.size < n) {
-            // Big ~78° steps so synthesized accents land far apart on the wheel — real colour variety,
-            // not three shades of the same hue.
-            result.add(rotateHue(seed, seedHue + 78f * k)); k++
+            result.add(varyShade(src[k % src.size], k / src.size)); k++
         }
     }
     return result
@@ -1048,8 +1047,9 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 drawRect(Brush.verticalGradient(listOf(Color(0x00000000), Color.Black), startY = h - ev, endY = h))
                 drawRect(Brush.horizontalGradient(listOf(Color.Black, Color(0x00000000)), startX = 0f, endX = eh))
                 drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color.Black), startX = w - eh, endX = w))
-                // Right-side darkening for lyrics readability (a gradient, not an edge).
-                drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color(0x6A000000)), startX = w * 0.35f, endX = w))
+                // Right-side darkening for lyrics readability (a gradient, not an edge). Stronger now —
+                // a bright orb drifting under the lyric column was washing out the dim inactive lines.
+                drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color(0x9E000000)), startX = w * 0.30f, endX = w))
                 return@drawBehind
             }
 
