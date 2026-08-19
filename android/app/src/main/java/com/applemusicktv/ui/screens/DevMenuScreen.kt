@@ -95,6 +95,13 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleNowPlayingInfo() },
             )
             Stepper(
+                label = "Intensity",
+                value = intensityLabel(pstate.beatIntensity),
+                sub = "How hard the background reacts to the beat",
+                onDec = { playerVm.stepBeatIntensity(-1) },
+                onInc = { playerVm.stepBeatIntensity(1) },
+            )
+            Stepper(
                 label = "Screensaver",
                 value = screensaverLabel(pstate.screensaverTimeoutMin),
                 sub = "How long to wait before dimming the screen",
@@ -325,6 +332,14 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
             }
         }
     }
+}
+
+/** Calm / Normal / Strong / Crazy for the beat-reaction multiplier. */
+internal fun intensityLabel(f: Float): String = when {
+    f < 0.8f -> "Calm"
+    f < 1.5f -> "Normal"
+    f < 2.5f -> "Strong"
+    else     -> "Crazy"
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

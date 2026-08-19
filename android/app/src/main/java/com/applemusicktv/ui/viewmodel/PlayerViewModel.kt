@@ -797,8 +797,15 @@ class PlayerViewModel @Inject constructor(
     fun setSleepAfterSong() { _state.update { it.copy(sleepAfterSong = true, sleepTimerEndsAt = null) } }
     fun cancelSleepTimer() { _state.update { it.copy(sleepTimerEndsAt = null, sleepAfterSong = false) } }
     fun dismissMutExpired() { _state.update { it.copy(mutExpired = false) } }
-    fun cycleBeatIntensity() {
-        val next = when (_state.value.beatIntensity) { 1.0f -> 2.0f; 2.0f -> 3.5f; else -> 1.0f }
+    // Calm / Normal / Strong / Crazy — the multiplier applied to beat energy AND the orb bands, so it
+    // drives how hard both Dynamic and Projector react.
+    private val intensitySteps = floatArrayOf(0.55f, 1.0f, 2.0f, 3.5f)
+
+    fun cycleBeatIntensity() = stepBeatIntensity(1)
+
+    fun stepBeatIntensity(dir: Int) {
+        val cur = intensitySteps.indexOfFirst { kotlin.math.abs(it - _state.value.beatIntensity) < 0.05f }.let { if (it < 0) 1 else it }
+        val next = intensitySteps[(cur + dir).coerceIn(0, intensitySteps.lastIndex)]
         _state.update { it.copy(beatIntensity = next) }
         prefs.edit { putFloat("beat_intensity", next) }
     }

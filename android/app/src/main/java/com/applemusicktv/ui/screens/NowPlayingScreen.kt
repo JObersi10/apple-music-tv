@@ -191,6 +191,14 @@ fun NowPlayingScreen(
         }
 
         val playFocus = remember { FocusRequester() }
+        // When the chrome hides for idle, park focus back on the play/pause button (after the fade), so
+        // the moment you wake it the centre control is the highlighted one — not wherever you'd left it.
+        LaunchedEffect(chromeVisible) {
+            if (!chromeVisible) {
+                kotlinx.coroutines.delay(1700)
+                if (!chromeVisible) runCatching { playFocus.requestFocus() }
+            }
+        }
         var fullScreenLyrics by remember { mutableStateOf(false) }
         // System Back exits full-screen lyrics (the 3-dots menu isn't reachable there).
         androidx.activity.compose.BackHandler(enabled = fullScreenLyrics) { fullScreenLyrics = false }
@@ -803,8 +811,21 @@ private fun hueDist(a: Float, b: Float): Float {
     val d = kotlin.math.abs(a - b); return minOf(d, 360f - d)
 }
 
-// Deduplicate colors that are too close in hue; keeps order (population-sorted input → dominant colors first)
-private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 28f): List<Color> {
+/** Recolour [c] to a new hue, keeping its saturation and value (so a synthesized accent still reads
+ *  as belonging to the album — same richness, different hue). */
+private fun rotateHue(c: Color, newHue: Float): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(android.graphics.Color.rgb((c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt()), hsv)
+    hsv[0] = ((newHue % 360f) + 360f) % 360f
+    // Floor saturation so a rotated-from-greyish seed still shows as a colour.
+    hsv[1] = hsv[1].coerceAtLeast(0.5f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
+
+// Pick up to n colors that are genuinely distinct in hue (>= minAngle apart). If the album doesn't
+// HAVE that many separated accents, synthesize the rest by rotating the dominant one around the wheel
+// — so the orbs are always visibly different colours, never three near-identical tints.
+private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 32f): List<Color> {
     val result = mutableListOf<Color>()
     val chosenHues = mutableListOf<Float>()
     for (c in colors) {
@@ -814,10 +835,13 @@ private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 28f): Lis
             if (result.size == n) break
         }
     }
-    // Fill remaining slots with closest non-duplicate if we didn't get n
     if (result.size < n) {
-        for (c in colors) {
-            if (c !in result) { result.add(c); if (result.size == n) break }
+        val seed = result.firstOrNull() ?: colors.firstOrNull() ?: Color(0xFF888888)
+        val seedHue = seed.hsvHue()
+        var k = 1
+        while (result.size < n) {
+            // Golden-ish 47° steps spread the synthesized hues evenly around the wheel.
+            result.add(rotateHue(seed, seedHue + 47f * k)); k++
         }
     }
     return result
@@ -958,7 +982,9 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     // losing its identity — bass orb stays roughly the first accent, and so on.
     val tt3 = listOf(t1, t2, t3)
     val orbColors = List(3) { i ->
-        lerp(animated[i % n], animated[(i + 1) % n], 0.10f + 0.18f * tt3[i])
+        // Small drift toward the next accent so colour evolves, but stays mostly its own so the three
+        // orbs read as three distinct colours.
+        lerp(animated[i % n], animated[(i + 1) % n], 0.05f + 0.10f * tt3[i])
     }
 
     // PROJECTOR uses TRUE black; a projector throws light on a wall, so the near-black #050505 lift

@@ -141,6 +141,11 @@ class BeatProcessor internal constructor(
     // pinning at max forever. See PROJECTOR_MODE.md §normalise.
     private val bandBase = floatArrayOf(0f, 0f, 0f)
     private val bandLevel = floatArrayOf(0f, 0f, 0f)
+    // Per-band sensitivity. Bass reads great already so it keeps headroom (rarely pins); vocal and
+    // especially treble are quieter/subtler, so they get a lower excess ceiling + gate to light up on
+    // smaller swells. Index = [bass, vocal, treble].
+    private val bandExcessMax = floatArrayOf(1.15f, 0.62f, 0.5f)
+    private val bandGate      = floatArrayOf(0.06f, 0.045f, 0.035f)
 
     // --- fixed analysis window ---
     private var windowSamples = 441          // 10 ms @ 44.1 kHz
@@ -273,8 +278,8 @@ class BeatProcessor internal constructor(
             // first window so the opening seconds aren't a blast while it converges from zero.
             if (bandBase[b] < 1e-5f) bandBase[b] = raw[b]
             else bandBase[b] += BAND_BASE_RATE * (raw[b] - bandBase[b])
-            val excess = (raw[b] / (bandBase[b] + 1e-5f) - 1f).coerceIn(0f, BAND_EXCESS_MAX) / BAND_EXCESS_MAX
-            val norm   = ((excess - BAND_GATE) / (1f - BAND_GATE)).coerceIn(0f, 1f)
+            val excess = (raw[b] / (bandBase[b] + 1e-5f) - 1f).coerceIn(0f, bandExcessMax[b]) / bandExcessMax[b]
+            val norm   = ((excess - bandGate[b]) / (1f - bandGate[b])).coerceIn(0f, 1f)
             // Asymmetric follow: a glow should arrive with the hit and fade after it, so attack is
             // quick and release slow. Symmetric smoothing just looks like breathing on a timer.
             val rate   = if (norm > bandLevel[b]) BAND_ATTACK else BAND_RELEASE
@@ -367,10 +372,8 @@ class BeatProcessor internal constructor(
         const val BAND_EMIT_EVERY = 3       // windows per band emit → ~33 updates/sec (10 ms × 3)
         const val BAND_BASE_RATE = 0.02f    // per-emission baseline follow (~1.5 s) — the reference the
                                             // orb swells above. Slow enough to stay a "typical" level.
-        const val BAND_EXCESS_MAX = 1.1f    // rise-above-baseline mapping to a fully lit orb. Headroom
-                                            // so hits land mid-range and only the biggest peak, so the
-                                            // orb doesn't clip flat at 1 (the "maxed out" look).
-        const val BAND_GATE = 0.05f         // ignore swells under 5 % of full — kills idle shimmer
+        // Rise-above-baseline mapping + noise gate are now PER-BAND (bandExcessMax / bandGate) so
+        // treble and vocals can light on smaller swells than bass needs.
         const val BAND_ATTACK = 0.42f       // snap up on the hit…
         const val BAND_RELEASE = 0.11f      // …and fall back BETWEEN hits so it visibly pulses
     }
