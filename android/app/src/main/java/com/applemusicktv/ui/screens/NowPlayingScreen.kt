@@ -28,6 +28,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -77,6 +79,7 @@ import coil.request.ImageRequest
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.data.network.LyricWord
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
+import com.applemusicktv.ui.viewmodel.NowPlayingBackground
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import com.applemusicktv.ui.viewmodel.RepeatMode
 import androidx.lifecycle.Lifecycle
@@ -116,7 +119,38 @@ fun NowPlayingScreen(
     val artistFocusHolder = remember { FocusRequester() }
 
     Box(modifier = modifier.fillMaxSize()) {
-        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity)
+        // Screensaver state is declared here (not lower down) so the backdrop can react to it: when
+        // idle mode kicks in and the user hasn't opted to keep the beat, the backdrop drops to plain
+        // black regardless of the chosen mode.
+        var screensaverOn by remember { mutableStateOf(false) }
+        var lastInteractionMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        // Auto-hide chrome (clock, controls, queue) after a short idle so a steady state is just
+        // artwork + orbs. Only D-pad NAVIGATION brings it back — the media transport keys deliberately
+        // don't, so play/pause/skip from across the room leaves the clean view alone.
+        var chromeVisible by remember { mutableStateOf(true) }
+        var lastNavMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(chromeVisible, lastNavMs) {
+            if (!chromeVisible) return@LaunchedEffect
+            while (isActive) {
+                kotlinx.coroutines.delay(500)
+                if (System.currentTimeMillis() - lastNavMs > CHROME_HIDE_MS) { chromeVisible = false; break }
+            }
+        }
+        // Asymmetric transition: dropping INTO idle is a slow ~1.6 s eased settle (chrome fades, art
+        // eases into place) so it reads as one deliberate move; coming BACK is a fast ~240 ms punch so
+        // the controls snap to attention the instant you touch the D-pad — no waiting for a fade.
+        val idle by animateFloatAsState(
+            if (chromeVisible) 0f else 1f,
+            animationSpec = if (chromeVisible)
+                tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+            else
+                tween(1600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            label = "idle",
+        )
+        val chromeAlpha = 1f - idle
+        val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
+            NowPlayingBackground.BLACK else state.nowPlayingBackground
+        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying, orbSpeed = state.orbSpeed, reduceMotion = state.reduceMotion, lowPower = state.lowPowerMode)
 
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -144,8 +178,9 @@ fun NowPlayingScreen(
             }
             else -> null
         }
-        Row(
-            modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 10.dp),
+        if (state.showNowPlayingInfo) Row(
+            modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 10.dp)
+                .graphicsLayer { alpha = chromeAlpha },
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -156,14 +191,21 @@ fun NowPlayingScreen(
         }
 
         val playFocus = remember { FocusRequester() }
+        // When the chrome hides for idle, park focus back on the play/pause button (after the fade), so
+        // the moment you wake it the centre control is the highlighted one — not wherever you'd left it.
+        LaunchedEffect(chromeVisible) {
+            if (!chromeVisible) {
+                kotlinx.coroutines.delay(1700)
+                if (!chromeVisible) runCatching { playFocus.requestFocus() }
+            }
+        }
         var fullScreenLyrics by remember { mutableStateOf(false) }
         // System Back exits full-screen lyrics (the 3-dots menu isn't reachable there).
         androidx.activity.compose.BackHandler(enabled = fullScreenLyrics) { fullScreenLyrics = false }
 
         // Ambient screensaver: after 10 min of no input while playing, drop to just the
         // drifting background + a small now-playing chip. Any key wakes it.
-        var screensaverOn by remember { mutableStateOf(false) }
-        var lastInteractionMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        // (screensaverOn / lastInteractionMs are declared above so the backdrop can read them.)
         LaunchedEffect(state.screensaverTimeoutMin, state.isPlaying) {
             if (state.screensaverTimeoutMin <= 0) { screensaverOn = false; return@LaunchedEffect }
             val thresholdMs = state.screensaverTimeoutMin * 60_000L
@@ -198,23 +240,45 @@ fun NowPlayingScreen(
                 onPrev = playerVm::prev,
                 onPlayPause = playerVm::togglePlayPause,
                 onNext = playerVm::next,
+                lyricsScale = state.lyricsScale,
             )
             else -> {
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 72.dp, vertical = 40.dp)
-                .onPreviewKeyEvent { lastInteractionMs = System.currentTimeMillis(); false },
+                .onPreviewKeyEvent { e ->
+                    // Navigation only: media keys don't count as activity, so they neither wake the
+                    // chrome nor postpone the screensaver.
+                    if (e.type == KeyEventType.KeyDown && isNavKey(e.key)) {
+                        val now = System.currentTimeMillis()
+                        lastInteractionMs = now
+                        lastNavMs = now
+                        // First nav press just reveals the chrome — consume it so focus doesn't also
+                        // jump while everything's still invisible.
+                        if (!chromeVisible) { chromeVisible = true; return@onPreviewKeyEvent true }
+                    }
+                    false
+                },
             horizontalArrangement = Arrangement.spacedBy(56.dp),
         ) {
-            // Left — artwork + info + controls, spread flush over the full column height.
+            // Left — artwork + info + controls, grouped and vertically centred so idle (controls
+            // hidden) doesn't leave an awkward void. Eases up slightly as it settles into idle.
             Column(
-                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp)
+                    .graphicsLayer {
+                        // On idle the controls + progress bar fade but still hold their layout space,
+                        // which leaves the art sitting high. Ease the whole group DOWN a touch (and a
+                        // hair larger) so the artwork + title + artist settle into the visual centre.
+                        val s = 1f + 0.03f * idle
+                        scaleX = s; scaleY = s
+                        translationY = idle * 58f
+                    },
+                verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
                     modifier = Modifier
                         .size(240.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(if (state.artworkRounded) 16.dp else 0.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
                     // Cross-fade the cover instead of hard-swapping it on song change.
@@ -236,8 +300,11 @@ fun NowPlayingScreen(
                     // DIAGNOSTIC: motion artwork spins up a SECOND ExoPlayer/video
                     // decoder. Gated off to test whether it starves the audio decoder
                     // (standalone frame-drop chop) on the weak Fire TV.
+                    // In PiP, drop the motion decoder entirely: it's a whole second ExoPlayer/video
+                    // decoder, and holding it alive through the PiP transition is a memory spike that
+                    // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
                     @Suppress("ConstantConditionIf")
-                    if (MOTION_ENABLED && state.motionUrl != null) {
+                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
                 }
@@ -253,14 +320,16 @@ fun NowPlayingScreen(
                         letterSpacing = (-0.5).sp,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 38.dp),
                     )
-                    Surface(
+                    // The ⋯ options button is chrome: it fades out with the controls on idle so the
+                    // steady-state view is just artwork + text.
+                    if (chromeAlpha > 0.02f) Surface(
                         onClick = { showOptionsMenu = true; showSleepSubmenu = false },
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                         colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), focusedContainerColor = Color(0x33FFFFFF)),
-                        modifier = Modifier.align(Alignment.CenterEnd).size(32.dp),
+                        modifier = Modifier.align(Alignment.CenterEnd).size(32.dp).graphicsLayer { alpha = chromeAlpha },
                     ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("···", fontSize = 13.sp, color = Color.White) } }
                 }
-                Spacer(Modifier.height(5.dp))
+                Spacer(Modifier.height(3.dp))
                 if (song.artistId != null) {
                     Surface(
                         onClick = { onArtistClick(song.artistId) },
@@ -276,15 +345,13 @@ fun NowPlayingScreen(
                     MarqueeText(song.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
                         modifier = Modifier.fillMaxWidth())
                 }
-                MarqueeText(song.albumName, fontSize = 12.sp, color = Color(0xFF888888),
-                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp))
-
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(14.dp))
 
                 LaunchedEffect(song.id) {
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
                 Row(
+                    modifier = Modifier.graphicsLayer { alpha = chromeAlpha },
                     horizontalArrangement = Arrangement.spacedBy(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -351,16 +418,28 @@ fun NowPlayingScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                PlayerProgressBar(
-                    progressState = smoothProgress,
-                    song = song,
-                    playFocus = playFocus,
-                    player = playerVm.player,
-                )
+                // Column, not Box: PlayerProgressBar emits the bar AND a time row, which a Box would
+                // overlap (the elapsed/duration text clipped over the bar).
+                Column(Modifier.graphicsLayer { alpha = chromeAlpha }) {
+                    PlayerProgressBar(
+                        progressState = smoothProgress,
+                        song = song,
+                        playFocus = playFocus,
+                        player = playerVm.player,
+                    )
+                }
             }
 
-            // Right — lyrics or queue
-            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            // Right — lyrics or queue. Lyrics are content, not chrome, so they stay put on idle;
+            // only the queue fades out with the rest of the controls.
+            val rightIsLyrics = !showQueue && state.lyrics.isNotEmpty()
+            // The "Lyrics • Menu = Queue" hint is a teaching aid, not permanent chrome. Show it only
+            // while you're actually working with the panel (it has focus) — and only if the Now Playing
+            // info setting is on — then fade it away. It still reserves its row so nothing jumps.
+            var rightFocused by remember { mutableStateOf(false) }
+            val hintAlpha by animateFloatAsState(
+                if (state.showNowPlayingInfo && rightFocused) 1f else 0f, tween(250), label = "panelHint")
+            Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (rightIsLyrics) 1f else chromeAlpha }) {
                 val label = when {
                     showQueue -> "Queue  •  Menu = Lyrics"
                     state.lyrics.isNotEmpty() -> "Lyrics  •  Menu = Queue"
@@ -370,9 +449,9 @@ fun NowPlayingScreen(
                     label,
                     fontSize = 10.sp,
                     color = Color(0x99FFFFFF),
-                    modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp),
+                    modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp).graphicsLayer { alpha = hintAlpha },
                 )
-                Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight().onFocusChanged { rightFocused = it.hasFocus }) {
                     if (showQueue) {
                         QueuePanel(
                             queue = state.queue,
@@ -390,6 +469,7 @@ fun NowPlayingScreen(
                             offsetMs = state.lyricsOffsetMs,
                             onSeek = { ms -> playerVm.player.seekTo(ms) },
                             playFocus = playFocus,
+                            fontScale = state.lyricsScale,
                         )
                     } else {
                         QueuePanel(
@@ -411,6 +491,7 @@ fun NowPlayingScreen(
             progressState = smoothProgress,
             durationMs = song.durationMs,
             nextTitle = (state.userQueue.firstOrNull() ?: state.queue.getOrNull(state.queueIndex + 1))?.title,
+            songKey = song.id,
         )
     }
 }
@@ -420,14 +501,26 @@ fun NowPlayingScreen(
  * Reads the per-frame clock via derivedStateOf so only the boolean flip recomposes it.
  */
 @Composable
-private fun BoxScope.NextUpToast(progressState: androidx.compose.runtime.State<Long>, durationMs: Long, nextTitle: String?) {
-    val show by remember(durationMs, nextTitle) {
+private fun BoxScope.NextUpToast(progressState: androidx.compose.runtime.State<Long>, durationMs: Long, nextTitle: String?, songKey: String) {
+    val rawShow by remember(durationMs, nextTitle) {
         androidx.compose.runtime.derivedStateOf {
             nextTitle != null && durationMs > 0L && (durationMs - progressState.value) in 1_000L..15_000L
         }
     }
-    val alpha by animateFloatAsState(if (show) 1f else 0f, tween(300), label = "nextToast")
-    if (alpha <= 0.01f || nextTitle == null) return
+    // Capture the "next" title ONCE, when the toast arms, and keep showing that. At a track boundary
+    // the queue advances a few frames before the current song does, so the live next-title briefly
+    // points one song too far ahead (the "next next"). Freezing the captured title ignores that
+    // transient; a real track change flips songKey and resets us.
+    var shownTitle by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(songKey) { shownTitle = null }
+    LaunchedEffect(rawShow, songKey) {
+        if (!rawShow) { shownTitle = null; return@LaunchedEffect }
+        kotlinx.coroutines.delay(400)
+        if (rawShow) shownTitle = nextTitle
+    }
+    val alpha by animateFloatAsState(if (shownTitle != null) 1f else 0f, tween(300), label = "nextToast")
+    val title = shownTitle
+    if (alpha <= 0.01f || title == null) return
     Column(
         modifier = Modifier.align(Alignment.BottomEnd).padding(end = 30.dp, bottom = 52.dp)
             .graphicsLayer { this.alpha = alpha }
@@ -435,7 +528,7 @@ private fun BoxScope.NextUpToast(progressState: androidx.compose.runtime.State<L
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Text("NEXT", style = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFA233B), letterSpacing = 1.5.sp))
-        Text(nextTitle, maxLines = 1, style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White))
+        Text(title, maxLines = 1, style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color.White))
     }
 }
 
@@ -491,6 +584,7 @@ private fun FullScreenLyrics(
     onPrev: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    lyricsScale: Float = 1f,
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
@@ -516,7 +610,7 @@ private fun FullScreenLyrics(
                 offsetMs = offsetMs,
                 onSeek = onSeek,
                 playFocus = playFocus,
-                fontScale = 1.3f,
+                fontScale = 1.3f * lyricsScale,
                 autoReturnMs = 5_000L,
             )
         }
@@ -723,18 +817,60 @@ private fun hueDist(a: Float, b: Float): Float {
     val d = kotlin.math.abs(a - b); return minOf(d, 360f - d)
 }
 
-// Deduplicate colors that are too close in hue; keeps order (population-sorted input → dominant colors first)
-private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 28f): List<Color> {
+/** Make a lighter/darker (and slightly de/re-saturated) shade of [c] — SAME hue. Used to fill orb
+ *  slots from an album that only has one colour family, so we never invent a hue (blue/green) the
+ *  artwork doesn't contain. step 0 = lighter, 1 = darker, 2 = lighter+, … */
+private fun varyShade(c: Color, step: Int): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(android.graphics.Color.rgb((c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt()), hsv)
+    val dir = if (step % 2 == 0) 1f else -1f
+    val mag = 0.18f + 0.12f * (step / 2)
+    hsv[2] = (hsv[2] + dir * mag).coerceIn(0.30f, 0.98f)
+    hsv[1] = (hsv[1] * (1f - dir * 0.12f)).coerceIn(0.35f, 1f)   // lighter reads a touch less saturated
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
+
+// Pick up to n colors distinct in hue (>= minAngle apart). If the album doesn't HAVE that many
+// separated accents, fill the rest with lighter/darker SHADES of the accents we found — so every orb
+// colour still comes from the artwork (an orange cover gives orange shades, never a fake blue/green).
+private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 20f): List<Color> {
     val result = mutableListOf<Color>()
-    val chosenHues = mutableListOf<Float>()
+    val chosen = mutableListOf<Pair<Float, Float>>()   // (hue, value)
+    // Keep a swatch if it adds EITHER hue variety OR tonal variety. An album that is one
+    // colour family (most are) still yields several real orbs — vibrant / muted / dark /
+    // light variants of that family — instead of collapsing to one hue and then padding
+    // with computed shades. This is what gives the Apple "oil painting" spread. We only
+    // drop a swatch that is near-identical in BOTH hue and brightness to one already kept.
     for (c in colors) {
         val h = c.hsvHue()
-        if (chosenHues.all { hueDist(h, it) >= minAngle }) {
-            result.add(c); chosenHues.add(h)
+        val v = maxOf(c.red, c.green, c.blue)
+        if (chosen.all { (ch, cv) -> hueDist(h, ch) >= minAngle || kotlin.math.abs(v - cv) >= 0.16f }) {
+            result.add(c); chosen.add(h to v)
             if (result.size == n) break
         }
     }
-    // Fill remaining slots with closest non-duplicate if we didn't get n
+    if (result.size < n) {
+        val src = result.toList().ifEmpty { colors.take(1) }.ifEmpty { listOf(Color(0xFF888888)) }
+        var k = 0
+        while (result.size < n) {
+            result.add(varyShade(src[k % src.size], k / src.size)); k++
+        }
+    }
+    return result
+}
+
+// Monochrome equivalent of spreadByHue: separate greys by BRIGHTNESS (hue is meaningless when
+// every swatch is grey, so spreadByHue would collapse them all onto the first one).
+private fun spreadByValue(colors: List<Color>, n: Int, minGap: Float = 0.13f): List<Color> {
+    val result = mutableListOf<Color>()
+    val chosen = mutableListOf<Float>()
+    for (c in colors) {
+        val v = maxOf(c.red, c.green, c.blue)
+        if (chosen.all { kotlin.math.abs(v - it) >= minGap }) {
+            result.add(c); chosen.add(v)
+            if (result.size == n) break
+        }
+    }
     if (result.size < n) {
         for (c in colors) {
             if (c !in result) { result.add(c); if (result.size == n) break }
@@ -759,37 +895,53 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
     LaunchedEffect(artworkUrl) {
         if (artworkUrl == null) return@LaunchedEffect
         try {
-            val loader = ImageLoader(context)
-            val request = ImageRequest.Builder(context).data(artworkUrl).allowHardware(false).build()
+            // Decode a SMALL bitmap for the palette — Palette downsamples internally anyway, so a
+            // 1200² ARGB bitmap (~5.7 MB, kept in RAM with allowHardware off) was pure waste on a
+            // memory-starved Fire TV. 256² is ~256 KB and gives an identical palette. Reuse Coil's
+            // shared loader instead of spinning up a new ImageLoader per song.
+            val loader = context.applicationContext.let { coil.Coil.imageLoader(it) }
+            // Don't let the palette's small ARGB bitmap sit in Coil's memory cache — it's used once,
+            // right here, then thrown away. (The displayed artwork is a separate, cached request.)
+            val request = ImageRequest.Builder(context).data(artworkUrl).size(256).allowHardware(false)
+                .memoryCachePolicy(coil.request.CachePolicy.DISABLED).build()
             val result = loader.execute(request)
             val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
-            val p = Palette.from(bitmap).generate()
-            val picked = listOfNotNull(
+            val p = Palette.from(bitmap).maximumColorCount(16).generate()
+            val swatches = listOfNotNull(
                 p.vibrantSwatch, p.lightVibrantSwatch, p.darkVibrantSwatch,
                 p.mutedSwatch, p.lightMutedSwatch, p.darkMutedSwatch, p.dominantSwatch,
-            ).sortedByDescending { it.population }.map { swatch ->
-                // Push toward vivid, and away from white. A pale high-value swatch is
-                // what makes the backdrop compete with the white lyrics — so floor the
-                // saturation and cap the value instead of just clipping near-white.
-                // Deep saturated colors read as color; pastels read as light grey.
-                val hsv = FloatArray(3)
+            ).sortedByDescending { it.population }
+            // Detect a grey / black-and-white cover from the ORIGINAL saturations, BEFORE the boost:
+            // once every swatch is floored to SAT_FLOOR they all look colourful and the test can't
+            // tell. A monochrome sleeve keeps its greys (and can go near-white), separated by
+            // brightness instead of hue, so the orbs read as three shades of grey — not invented colour.
+            val hsv = FloatArray(3)
+            val maxSat = swatches.maxOfOrNull { android.graphics.Color.colorToHSV(it.rgb, hsv); hsv[1] } ?: 0f
+            val monochrome = maxSat < 0.18f
+            val picked = swatches.map { swatch ->
                 android.graphics.Color.colorToHSV(swatch.rgb, hsv)
-                hsv[1] = (hsv[1] * SAT_BOOST).coerceIn(SAT_FLOOR, 1f)
-                hsv[2] = hsv[2].coerceAtMost(VALUE_CEILING)
+                if (monochrome) {
+                    hsv[1] = 0f                                              // true grey, no invented hue
+                    hsv[2] = (0.45f + hsv[2] * 0.55f).coerceIn(0.42f, 0.96f) // keep the spread, stay glow-visible
+                } else {
+                    // Deep saturated colours read as colour; pastels read as light grey. Floor the
+                    // saturation and cap the value so a pale swatch doesn't wash out the lyrics.
+                    hsv[1] = (hsv[1] * SAT_BOOST).coerceIn(SAT_FLOOR, 1f)
+                    hsv[2] = hsv[2].coerceAtMost(VALUE_CEILING)
+                }
                 Color(android.graphics.Color.HSVToColor(hsv))
             }.distinct()
             val dom = Color(p.getDominantColor(0xFF050505.toInt()))
             val domLum = 0.2126f * dom.red + 0.7152f * dom.green + 0.0722f * dom.blue
 
-            if (domLum < 0.06f) {
-                // Truly black artwork — nothing to extract
-                colors = fallback
-            } else if (picked.size >= 2) {
-                colors = spreadByHue(picked, 6)
-            } else {
-                val dark  = Color(dom.red * 0.4f, dom.green * 0.4f, dom.blue * 0.4f)
-                val light = Color((dom.red + 0.3f).coerceAtMost(1f), (dom.green + 0.3f).coerceAtMost(1f), (dom.blue + 0.3f).coerceAtMost(1f))
-                colors = listOf(dom, light, dark, dom, light, dark)
+            colors = when {
+                domLum < 0.06f && !monochrome -> fallback   // truly black colour art — nothing to extract
+                picked.size >= 2 -> if (monochrome) spreadByValue(picked, 6) else spreadByHue(picked, 6)
+                else -> {
+                    val dark  = Color(dom.red * 0.4f, dom.green * 0.4f, dom.blue * 0.4f)
+                    val light = Color((dom.red + 0.3f).coerceAtMost(1f), (dom.green + 0.3f).coerceAtMost(1f), (dom.blue + 0.3f).coerceAtMost(1f))
+                    listOf(dom, light, dark, dom, light, dark)
+                }
             }
         } catch (_: Exception) {}
     }
@@ -802,39 +954,151 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
  * Beat energy pulses blob radius and alpha.
  */
 @Composable
-private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f) {
+private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f, mode: NowPlayingBackground = NowPlayingBackground.DYNAMIC, playing: Boolean = true, orbSpeed: Float = 1f, reduceMotion: Boolean = false, lowPower: Boolean = false) {
+    // BLACK: plain black, no blobs, no beat. Nothing else to compute.
+    if (mode == NowPlayingBackground.BLACK) {
+        Box(Modifier.fillMaxSize().background(Color.Black))
+        return
+    }
+    val projector = mode == NowPlayingBackground.PROJECTOR
+
+    // Intensity (Calm 0.55 … Crazy 3.5) is applied as a render AMPLITUDE below, NOT by multiplying the
+    // level and clipping to 1 — that just pinned everything at max, so Strong and Crazy looked the same
+    // and the vocal orb sat maxed. Levels stay 0..1; the multiplier drives how big/bright they swell.
+    val amp = beatMultiplier
+    // PERF: everything animated below is kept as State and read INSIDE drawBehind, never with `by` at
+    // composable scope. Reading them here made DynamicBackground recompose ~60×/sec — rebuilding colour
+    // lists and brushes every frame, which was the app's main GC-churn source. Read in the draw lambda,
+    // only the draw phase re-runs each frame; the composable recomposes only on song/palette change.
     val rawEnergy by beatAnalyzer.energy.collectAsState()
-    val scaledRaw = (rawEnergy * beatMultiplier).coerceIn(0f, 1f)
-    val energy by animateFloatAsState(scaledRaw, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
+    // Critically damped (dampingRatio 1.0), not the old 0.5: an underdamped spring overshoots and
+    // rings after every hit, which read as the punch "bouncing all over the place". 1.0 gives a snappy
+    // attack that settles cleanly with no wobble, so each beat lands once and decays.
+    val energyState = animateFloatAsState(rawEnergy.coerceIn(0f, 1f), androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow), label = "beat")
 
-    // Palette derived from the full-res artwork for color accuracy
-    val paletteUrl = artworkUrlTemplate?.replace("{w}", "1200")?.replace("{h}", "1200")?.replace("{f}", "jpg")
+    val rawBands by beatAnalyzer.bands.collectAsState()
+    val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)
+    val band0State = animateFloatAsState(rawBands.getOrElse(0) { 0f }.coerceIn(0f, 1f), bandSpring, label = "bass")
+    val band1State = animateFloatAsState(rawBands.getOrElse(1) { 0f }.coerceIn(0f, 1f), bandSpring, label = "vocal")
+    val band2State = animateFloatAsState(rawBands.getOrElse(2) { 0f }.coerceIn(0f, 1f), bandSpring, label = "treble")
+
+    val paletteUrl = artworkUrlTemplate?.replace("{w}", "300")?.replace("{h}", "300")?.replace("{f}", "jpg")
     val palette = rememberArtworkPalette(paletteUrl)
-    val animated = palette.mapIndexed { i, c ->
-        animateColorAsState(c, tween(1500), label = "blob$i").value
+    val animatedStates = palette.mapIndexed { i, c ->
+        animateColorAsState(c, tween(1500), label = "blob$i")
     }
 
+    // Orb speed scales the drift periods (faster speed → shorter tween).
+    val sp = orbSpeed.coerceIn(0.4f, 2.0f)
     val infinite = rememberInfiniteTransition(label = "pool")
-    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
-    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
-    val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
-    val t4 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(15_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
+    val t1s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween((20_000 / sp).toInt(), easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
+    val t2s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween((27_000 / sp).toInt(), easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
+    val t3s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween((34_000 / sp).toInt(), easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
+    val t4s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween((15_000 / sp).toInt(), easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
 
-    // Each blob slowly cycles between two palette colors for a "vibing" effect
-    val n = animated.size
-    val colorFracs = listOf(t4, 1f - t3, t1, 1f - t2)
-    val colors4 = List(4) { i ->
-        lerp(animated[(i * 2) % n], animated[(i * 2 + 1) % n], colorFracs[i])
+    // PERF + accessibility: freeze the perpetual drift while paused OR when Reduce Motion is on. We
+    // snapshot the drift phase and read that in the draw instead of the live State, so the draw phase
+    // isn't invalidated 60×/sec. Beat energy/bands settle to 0 on their own (and Reduce Motion zeroes
+    // them below, so the orbs hold completely still).
+    val moving = playing && !reduceMotion
+    val frozen = remember { floatArrayOf(0f, 0f, 0f, 0f) }
+    LaunchedEffect(moving) {
+        if (!moving) { frozen[0] = t1s.value; frozen[1] = t2s.value; frozen[2] = t3s.value; frozen[3] = t4s.value }
     }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
-        // Color blobs
+    // PROJECTOR uses TRUE black; a projector throws light on a wall, so the near-black #050505 lift
+    // that stops a panel crushing shadows becomes a visible grey rectangle instead.
+    Box(Modifier.fillMaxSize().background(if (projector) Color.Black else Color(0xFF050505))) {
         Box(Modifier.fillMaxSize().drawBehind {
             val w = size.width; val h = size.height
-            val beatScale = 1f + energy * 0.25f
-            val beatAlpha = 0.66f + energy * 0.22f
-            val r = maxOf(w, h) * 0.62f * beatScale
-            val nudge = energy * maxOf(w, h) * 0.02f
+            // Deferred reads — this is the draw phase, so these re-run per frame without recomposing.
+            // While paused we read the frozen snapshot (not the live State) so the draw stops updating.
+            val t1 = if (moving) t1s.value else frozen[0]
+            val t2 = if (moving) t2s.value else frozen[1]
+            val t3 = if (moving) t3s.value else frozen[2]
+            val t4 = if (moving) t4s.value else frozen[3]
+            val n = animatedStates.size
+            val motionAmp = if (reduceMotion) 0f else 1f   // Reduce Motion → orbs hold at base, no pulse
+
+            if (projector) {
+                // THREE ORBS, ONE PER BAND — bass (slow, low), vocal (centre-panned, mid), treble
+                // (fast, high). Each rides an ellipse on its own animator+phase so the composition
+                // never repeats, swells on its band, and glows from a palette colour.
+                // Small drift toward the next accent so colour evolves but each orb keeps its identity.
+                val orbColors = List(3) { i -> lerp(animatedStates[i % n].value, animatedStates[(i + 1) % n].value, 0.05f + 0.10f * floatArrayOf(t1, t2, t3)[i]) }
+                val orbLevels = floatArrayOf(band0State.value * motionAmp, band1State.value * motionAmp, band2State.value * motionAmp)
+                // Pushed right of the album art (which sits in the left column) so no orb hides behind it.
+                val anchorX = floatArrayOf(0.52f, 0.62f, 0.72f)
+                val anchorY = floatArrayOf(0.44f, 0.56f, 0.46f)
+                val phase   = floatArrayOf(0f, 2.1f, 4.2f)
+                val drift   = floatArrayOf(t1, t2, t3)
+                val twoPi = (2.0 * Math.PI).toFloat()
+                // Smaller orbs than the full-screen blobs — a projector glow is a light source, not a
+                // wash. Wider drift so they still roam the frame at the smaller size.
+                // Per-band character so the three read as three: bass is the big slow one, treble the
+                // small snappy one, vocal in between. Each is DIM at rest and swells hard on its band,
+                // so the beat is the difference you see — not a constant wash.
+                val bandBaseR = floatArrayOf(minOf(w, h) * 0.26f, minOf(w, h) * 0.21f, minOf(w, h) * 0.16f)
+                val sizeRide  = floatArrayOf(0.75f, 0.85f, 1.05f)   // treble punches biggest relative to size
+                for (i in 0 until 3) {
+                    val lvl = orbLevels[i]
+                    // Gentler drift so the orbs roam slowly instead of swimming around the frame.
+                    val cx = anchorX[i] * w + cos(drift[i] * twoPi + phase[i]) * 0.08f * w
+                    val cy = anchorY[i] * h + sin(drift[i] * twoPi + phase[i]) * 0.045f * h
+                    val c = Offset(cx, cy)
+                    val col = orbColors[i]
+                    // Halo alpha now RIDES the beat: dim at rest (won't wash the lyrics), bright on the
+                    // hit. On true black under Screen blend that's exactly the expressive pulse we want.
+                    // Intensity (amp) scales the SWELL, not the base: Calm barely moves, Crazy swings big
+                    // and bright. Generous caps so higher tiers stay visibly punchier instead of clipping.
+                    val r = bandBaseR[i] * (1f + (lvl * sizeRide[i] * amp).coerceAtMost(2.2f))
+                    val haloA = (0.24f + lvl * 0.42f * amp).coerceAtMost(0.9f)
+                    drawCircle(
+                        brush = Brush.radialGradient(listOf(col.copy(alpha = haloA), col.copy(alpha = 0f)), center = c, radius = r),
+                        radius = r, center = c, blendMode = BlendMode.Screen,
+                    )
+                    // Core: small, whitened (a real glow's hottest point desaturates), punches hard on
+                    // the band — a tiny fraction of the area, so it can flare without lifting the black.
+                    // Low Power skips the core (a second gradient per orb per frame) — the halo carries it.
+                    if (!lowPower) {
+                        val cr = r * 0.34f
+                        val core = lerp(col, Color.White, 0.6f)
+                        drawCircle(
+                            brush = Brush.radialGradient(listOf(core.copy(alpha = (0.12f + lvl * 0.62f * amp).coerceAtMost(0.92f)), core.copy(alpha = 0f)), center = c, radius = cr),
+                            radius = cr, center = c, blendMode = BlendMode.Screen,
+                        )
+                    }
+                }
+                // A LIGHT edge fade only — just enough to guarantee no lit rectangle at the frame edge.
+                // The orbs are small and pulled inward, so they never reach the edge anyway; a heavy
+                // vignette here was painting black back over the glow and killing it.
+                val ev = h * 0.10f; val eh = w * 0.10f
+                drawRect(Brush.verticalGradient(listOf(Color.Black, Color(0x00000000)), startY = 0f, endY = ev))
+                drawRect(Brush.verticalGradient(listOf(Color(0x00000000), Color.Black), startY = h - ev, endY = h))
+                drawRect(Brush.horizontalGradient(listOf(Color.Black, Color(0x00000000)), startX = 0f, endX = eh))
+                drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color.Black), startX = w - eh, endX = w))
+                // Right-side darkening for lyrics readability (a gradient, not an edge). Stronger now —
+                // a bright orb drifting under the lyric column was washing out the dim inactive lines.
+                drawRect(Brush.horizontalGradient(listOf(Color(0x00000000), Color(0x9E000000)), startX = w * 0.30f, endX = w))
+                return@drawBehind
+            }
+
+            // DYNAMIC — four drifting album-colour blobs. Intensity (amp) scales the beat swing;
+            // Reduce Motion (motionAmp=0) holds them still.
+            val energy = energyState.value * motionAmp
+            val blobCount = if (lowPower) 2 else 4   // Low Power halves the blob count
+            // Each blob is PINNED to its own distinct palette colour — no pair-crossfade. The old
+            // lerp blended two colours per blob and, with big overlapping blobs under Screen, merged
+            // the whole thing into one moving gradient wash. One colour per blob + smaller radius
+            // (below) lets the separate colours read as distinct pools, like Apple's oil-painting
+            // patches, instead of averaging into a single tint.
+            val colors4 = List(4) { i -> animatedStates[i % n].value }
+            val eAmp = (energy * amp).coerceIn(0f, 2.2f)
+            val beatScale = 1f + eAmp * 0.25f
+            val beatAlpha = (0.60f + eAmp * 0.20f).coerceAtMost(0.95f)
+            // Smaller than the old 0.62 so blobs overlap less and stay recognisably separate colours.
+            val r = maxOf(w, h) * 0.42f * beatScale
+            val nudge = eAmp * maxOf(w, h) * 0.02f
             val nudgeOffsets = listOf(
                 Offset( nudge,  nudge * 0.5f),
                 Offset(-nudge, -nudge * 0.7f),
@@ -847,7 +1111,7 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 Offset(lerp(0.05f, 0.30f, t3) * w, lerp(0.68f, 0.95f, t1) * h),
                 Offset(lerp(0.70f, 0.98f, t1) * w, lerp(0.65f, 0.95f, t3) * h),
             ).mapIndexed { i, c -> c + nudgeOffsets[i] }
-            colors4.forEachIndexed { i, color ->
+            colors4.take(blobCount).forEachIndexed { i, color ->
                 drawCircle(
                     brush = Brush.radialGradient(
                         listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0f)),
@@ -878,6 +1142,16 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
         })
     }
 }
+
+/** Idle time (no D-pad navigation) before the Now Playing chrome auto-hides (then a 2 s settle). */
+private const val CHROME_HIDE_MS = 7000L
+
+/** D-pad navigation / select keys — the ones allowed to wake the auto-hidden chrome. Media transport
+ *  keys are deliberately excluded so play/pause/skip don't bring the controls back. */
+private fun isNavKey(key: Key): Boolean =
+    key == Key.DirectionUp || key == Key.DirectionDown ||
+        key == Key.DirectionLeft || key == Key.DirectionRight ||
+        key == Key.DirectionCenter || key == Key.Enter || key == Key.NumPadEnter
 
 /** How many lines of already-sung context stay above the active line after a scroll. */
 private const val LYRIC_LEAD_LINES = 2
@@ -1021,7 +1295,14 @@ private fun LyricsPanel(
                 right = playFocus
                 // Entering the list (e.g. LEFT from the play button) lands on the current
                 // line, not whichever line happens to sit nearest the button.
-                enter = { if (activeIndex >= 0) activeLineFocus else androidx.compose.ui.focus.FocusRequester.Default }
+                // Only steer focus to the active line if it is actually laid out right now.
+                // Requesting focus on a detached FocusRequester leaves the window with no
+                // focused view → input dispatch times out → ANR. Fall back to Default.
+                enter = {
+                    val activeVisible = activeIndex >= 0 &&
+                        listState.layoutInfo.visibleItemsInfo.any { it.index == activeIndex }
+                    if (activeVisible) activeLineFocus else androidx.compose.ui.focus.FocusRequester.Default
+                }
             } else Modifier)
             .onPreviewKeyEvent { ev: androidx.compose.ui.input.key.KeyEvent ->
                 // Block upward D-pad escape to top nav bar from lyrics
@@ -1067,7 +1348,7 @@ private fun LyricsPanel(
             if (unsynced) {
                 Text(
                     line.text,
-                    style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Medium, color = Color(0x66FFFFFF)),
+                    style = TextStyle(fontSize = (22f * fontScale).sp, lineHeight = (28f * fontScale).sp, fontWeight = FontWeight.Medium, color = Color(0x66FFFFFF)),
                     modifier = Modifier.fillMaxWidth().padding(end = 16.dp),
                 )
             } else {
@@ -1126,7 +1407,7 @@ private fun WordWipeLine(
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
     sungColor: Color = Color.White,
-    unsungColor: Color = Color(0xFF8E8E93),
+    unsungColor: Color = Color(0xFF76767C),
 ) {
     FlowRow(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         words.forEachIndexed { i, word ->
@@ -1166,7 +1447,7 @@ private fun WordWipe(
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
     sungColor: Color = Color.White,
-    unsungColor: Color = Color(0xFF8E8E93),
+    unsungColor: Color = Color(0xFF76767C),
 ) {
     val f = frac.coerceIn(0f, 1f)
     // Soft left→right sweep: a feathered gradient edge instead of a hard clip line,
@@ -1209,18 +1490,14 @@ private fun LyricLineRow(
         isPast   -> 0.18f
         else     -> 0.25f
     }
-    // Active line grows via font size (20→26sp), NOT a graphicsLayer scale. A left-anchored
-    // 1.08x scale used to push wide lines past the right edge and clip them.
-    val targetScale = if (isActive) 1.0f else 0.93f
+    // Active line grows via font size (20→26sp) only. The old 0.93→1.0 graphicsLayer scale tween made
+    // rows visibly stretch/"melt" for a frame as the active line changed during a scroll — dropped it;
+    // opacity alone carries the transition.
     val opacity by animateFloatAsState(targetOpacity, tween(200), label = "lineOpacity")
-    val scale   by animateFloatAsState(targetScale,   tween(200), label = "lineScale")
 
     Box(
         Modifier.fillMaxWidth().graphicsLayer {
             alpha = opacity
-            scaleX = scale
-            scaleY = scale
-            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
             clip = false
         }
     ) {

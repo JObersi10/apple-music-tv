@@ -111,9 +111,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Keep playing in the background when the user has enabled it (or when we're in PiP);
-        // otherwise pause as before. The MediaSessionService keeps audio alive either way.
-        if (!playerVm.backgroundPlayEnabled && !isInPictureInPictureMode) playerVm.pause()
+        // Background audio is for Picture-in-Picture only: leaving the app any other way pauses.
+        if (!isInPictureInPictureMode) playerVm.pause()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

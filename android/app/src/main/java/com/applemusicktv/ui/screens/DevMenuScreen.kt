@@ -70,26 +70,89 @@ fun DevMenuScreen(
             SectionLabel("Playback")
             Stepper(
                 label = "Crossfade", value = "%.1fs".format(state.crossfadeMs / 1000f),
-                sub = "Blend between songs · applies next song",
+                sub = "Overlap the end of one song into the next",
                 onDec = { vm.setCrossfade(state.crossfadeMs - 500) },
                 onInc = { vm.setCrossfade(state.crossfadeMs + 500) },
             )
             Toggle(
-                label = "Standalone mode", on = state.standaloneOn,
-                sub = if (state.standaloneOn) "On-device decrypt · no PC needed" else "Route through PC server",
+                label = "Standalone playback", on = state.standaloneOn,
+                sub = if (state.standaloneOn) "Decode on this device — no PC required" else "Stream through the PC server",
                 onToggle = { vm.toggleStandalone() },
+            )
+            Toggle(
+                label = "Volume leveling", on = pstate.volumeLeveling,
+                sub = if (pstate.volumeLeveling) "Even out loudness across tracks" else "Play each track at its own level",
+                onToggle = { playerVm.toggleVolumeLeveling() },
+            )
+
+            // ── NOW PLAYING ───────────────────────────────────────────────
+            SectionLabel("Now Playing")
+            Stepper(
+                label = "Background",
+                value = pstate.nowPlayingBackground.label,
+                sub = "Colour orbs, projector glow, or solid black",
+                onDec = { playerVm.stepNowPlayingBackground(-1) },
+                onInc = { playerVm.stepNowPlayingBackground(1) },
+            )
+            Toggle(
+                label = "Show info", on = pstate.showNowPlayingInfo,
+                sub = if (pstate.showNowPlayingInfo) "Display the clock and panel hints" else "Hide them for an art-only view",
+                onToggle = { playerVm.toggleNowPlayingInfo() },
+            )
+            // Intensity is the orb SIZE/reactivity; hidden on Black (no orbs). Remembered per mode.
+            if (pstate.nowPlayingBackground.label != "Black") Stepper(
+                label = "Intensity",
+                value = intensityLabel(pstate.beatIntensity),
+                sub = "How hard the background reacts to the beat",
+                onDec = { playerVm.stepBeatIntensity(-1) },
+                onInc = { playerVm.stepBeatIntensity(1) },
+            )
+            // Orb drift speed — only meaningful in Projector.
+            if (pstate.nowPlayingBackground.label == "Projector") Stepper(
+                label = "Orb speed",
+                value = orbSpeedLabel(pstate.orbSpeed),
+                sub = "How fast the orbs drift around",
+                onDec = { playerVm.stepOrbSpeed(-1) },
+                onInc = { playerVm.stepOrbSpeed(1) },
+            )
+            Stepper(
+                label = "Lyrics size",
+                value = lyricsScaleLabel(pstate.lyricsScale),
+                sub = "Text size in the lyrics panel",
+                onDec = { playerVm.stepLyricsScale(-1) },
+                onInc = { playerVm.stepLyricsScale(1) },
+            )
+            Toggle(
+                label = "Rounded artwork", on = pstate.artworkRounded,
+                sub = if (pstate.artworkRounded) "Soft rounded album-art corners" else "Square album-art corners",
+                onToggle = { playerVm.toggleArtworkRounded() },
+            )
+            Toggle(
+                label = "Motion artwork", on = pstate.motionArtworkEnabled,
+                sub = if (pstate.motionArtworkEnabled) "Play animated album art when available" else "Off — lighter on the device",
+                onToggle = { playerVm.toggleMotionArtwork() },
+            )
+            Toggle(
+                label = "Reduce motion", on = pstate.reduceMotion,
+                sub = if (pstate.reduceMotion) "Background holds still" else "Background drifts and pulses",
+                onToggle = { playerVm.toggleReduceMotion() },
+            )
+            Toggle(
+                label = "Low Power Mode", on = pstate.lowPowerMode,
+                sub = if (pstate.lowPowerMode) "Simpler visuals, less work for the device" else "Full-quality visuals",
+                onToggle = { playerVm.toggleLowPowerMode() },
             )
             Stepper(
                 label = "Screensaver",
                 value = screensaverLabel(pstate.screensaverTimeoutMin),
-                sub = "Idle time before ambient mode",
+                sub = "How long to wait before dimming the screen",
                 onDec = { playerVm.stepScreensaverTimeout(-1) },
                 onInc = { playerVm.stepScreensaverTimeout(1) },
             )
             Toggle(
-                label = "Background play", on = pstate.backgroundPlayEnabled,
-                sub = if (pstate.backgroundPlayEnabled) "Keeps playing when you leave the app" else "Pauses when you leave the app",
-                onToggle = { playerVm.toggleBackgroundPlay() },
+                label = "Ambient screensaver", on = pstate.screensaverKeepBackground,
+                sub = if (pstate.screensaverKeepBackground) "Keep the moving background while dimmed" else "Fade to plain black while dimmed",
+                onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
 
             // ── LYRICS ────────────────────────────────────────────────────
@@ -243,6 +306,52 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
     var progress by remember { mutableStateOf(-1f) } // -1 = not downloading
     var beta by remember { mutableStateOf(com.applemusicktv.util.UpdatePreferences.betaEnabled(ctx)) }
 
+    // Fire OS often RECREATES MainActivity when the unknown-sources settings screen returns, which
+    // wipes all Compose state (the old in-memory parked file was lost, forcing a re-check + re-download).
+    // Survive that: the downloaded APK already lives at cacheDir/updates/update.apk, and a persisted
+    // flag records that an install is waiting on the grant. On resume we re-fire from disk, so
+    // recreation costs nothing.
+    fun prefs() = ctx.getSharedPreferences("update_state", android.content.Context.MODE_PRIVATE)
+    fun cachedApk() = java.io.File(java.io.File(ctx.cacheDir, "updates"), "update.apk")
+    fun hasGrant() = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
+        ctx.packageManager.canRequestPackageInstalls()
+
+    fun installOrRequestGrant(apk: java.io.File) {
+        if (hasGrant()) {
+            prefs().edit().putBoolean("pending_install", false).apply()
+            UpdateChecker.install(ctx, apk); return
+        }
+        // Park across a possible recreation: remember we owe an install, keep the APK on disk.
+        prefs().edit().putBoolean("pending_install", true).apply()
+        status = "Allow installs from this app, then come back"
+        val pkgUri = android.net.Uri.parse("package:${ctx.packageName}")
+        // The per-app screen isn't always present on Fire OS; fall back to the generic intent rather
+        // than throwing ActivityNotFoundException at someone who was only trying to update.
+        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, pkgUri)
+        runCatching { ctx.startActivity(intent) }.onFailure {
+            runCatching { ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)) }
+        }
+    }
+
+    // On resume (including after a full recreation), if an install is owed, the grant is now held, and
+    // the downloaded APK is still cached → install it. No re-check, no re-download.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME &&
+                prefs().getBoolean("pending_install", false) && hasGrant()) {
+                val apk = cachedApk()
+                if (apk.exists() && apk.length() > 0) {
+                    prefs().edit().putBoolean("pending_install", false).apply()
+                    status = null
+                    UpdateChecker.install(ctx, apk)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     fun runCheck() {
         if (checking) return
         checking = true; status = "Checking GitHub…"; update = null
@@ -296,7 +405,7 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
                         progress = 0f
                         scope.launch {
                             UpdateChecker.download(ctx, info) { progress = it }
-                                .onSuccess { apk -> UpdateChecker.install(ctx, apk); progress = -1f }
+                                .onSuccess { apk -> progress = -1f; installOrRequestGrant(apk) }
                                 .onFailure { progress = -1f; status = "Download failed"; update = null }
                         }
                     }
@@ -310,6 +419,26 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
             }
         }
     }
+}
+
+/** Calm / Normal / Strong / Crazy for the beat-reaction multiplier. */
+internal fun intensityLabel(f: Float): String = when {
+    f < 0.8f -> "Calm"
+    f < 1.5f -> "Normal"
+    f < 2.5f -> "Strong"
+    else     -> "Crazy"
+}
+
+internal fun orbSpeedLabel(f: Float): String = when {
+    f < 0.85f -> "Slow"
+    f < 1.3f  -> "Normal"
+    else      -> "Fast"
+}
+
+internal fun lyricsScaleLabel(f: Float): String = when {
+    f < 0.95f -> "Small"
+    f < 1.1f  -> "Normal"
+    else      -> "Large"
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
