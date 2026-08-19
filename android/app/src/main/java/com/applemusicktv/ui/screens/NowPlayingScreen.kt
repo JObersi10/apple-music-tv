@@ -833,13 +833,19 @@ private fun varyShade(c: Color, step: Int): Color {
 // Pick up to n colors distinct in hue (>= minAngle apart). If the album doesn't HAVE that many
 // separated accents, fill the rest with lighter/darker SHADES of the accents we found — so every orb
 // colour still comes from the artwork (an orange cover gives orange shades, never a fake blue/green).
-private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 36f): List<Color> {
+private fun spreadByHue(colors: List<Color>, n: Int, minAngle: Float = 20f): List<Color> {
     val result = mutableListOf<Color>()
-    val chosenHues = mutableListOf<Float>()
+    val chosen = mutableListOf<Pair<Float, Float>>()   // (hue, value)
+    // Keep a swatch if it adds EITHER hue variety OR tonal variety. An album that is one
+    // colour family (most are) still yields several real orbs — vibrant / muted / dark /
+    // light variants of that family — instead of collapsing to one hue and then padding
+    // with computed shades. This is what gives the Apple "oil painting" spread. We only
+    // drop a swatch that is near-identical in BOTH hue and brightness to one already kept.
     for (c in colors) {
         val h = c.hsvHue()
-        if (chosenHues.all { hueDist(h, it) >= minAngle }) {
-            result.add(c); chosenHues.add(h)
+        val v = maxOf(c.red, c.green, c.blue)
+        if (chosen.all { (ch, cv) -> hueDist(h, ch) >= minAngle || kotlin.math.abs(v - cv) >= 0.16f }) {
+            result.add(c); chosen.add(h to v)
             if (result.size == n) break
         }
     }
@@ -965,7 +971,10 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     // lists and brushes every frame, which was the app's main GC-churn source. Read in the draw lambda,
     // only the draw phase re-runs each frame; the composable recomposes only on song/palette change.
     val rawEnergy by beatAnalyzer.energy.collectAsState()
-    val energyState = animateFloatAsState(rawEnergy.coerceIn(0f, 1f), androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
+    // Critically damped (dampingRatio 1.0), not the old 0.5: an underdamped spring overshoots and
+    // rings after every hit, which read as the punch "bouncing all over the place". 1.0 gives a snappy
+    // attack that settles cleanly with no wobble, so each beat lands once and decays.
+    val energyState = animateFloatAsState(rawEnergy.coerceIn(0f, 1f), androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow), label = "beat")
 
     val rawBands by beatAnalyzer.bands.collectAsState()
     val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)
@@ -1283,7 +1292,14 @@ private fun LyricsPanel(
                 right = playFocus
                 // Entering the list (e.g. LEFT from the play button) lands on the current
                 // line, not whichever line happens to sit nearest the button.
-                enter = { if (activeIndex >= 0) activeLineFocus else androidx.compose.ui.focus.FocusRequester.Default }
+                // Only steer focus to the active line if it is actually laid out right now.
+                // Requesting focus on a detached FocusRequester leaves the window with no
+                // focused view → input dispatch times out → ANR. Fall back to Default.
+                enter = {
+                    val activeVisible = activeIndex >= 0 &&
+                        listState.layoutInfo.visibleItemsInfo.any { it.index == activeIndex }
+                    if (activeVisible) activeLineFocus else androidx.compose.ui.focus.FocusRequester.Default
+                }
             } else Modifier)
             .onPreviewKeyEvent { ev: androidx.compose.ui.input.key.KeyEvent ->
                 // Block upward D-pad escape to top nav bar from lyrics
@@ -1329,7 +1345,7 @@ private fun LyricsPanel(
             if (unsynced) {
                 Text(
                     line.text,
-                    style = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Medium, color = Color(0x66FFFFFF)),
+                    style = TextStyle(fontSize = (22f * fontScale).sp, lineHeight = (28f * fontScale).sp, fontWeight = FontWeight.Medium, color = Color(0x66FFFFFF)),
                     modifier = Modifier.fillMaxWidth().padding(end = 16.dp),
                 )
             } else {
