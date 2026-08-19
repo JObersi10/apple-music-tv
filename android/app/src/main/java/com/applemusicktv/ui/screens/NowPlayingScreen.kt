@@ -954,60 +954,47 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     // level and clipping to 1 — that just pinned everything at max, so Strong and Crazy looked the same
     // and the vocal orb sat maxed. Levels stay 0..1; the multiplier drives how big/bright they swell.
     val amp = beatMultiplier
+    // PERF: everything animated below is kept as State and read INSIDE drawBehind, never with `by` at
+    // composable scope. Reading them here made DynamicBackground recompose ~60×/sec — rebuilding colour
+    // lists and brushes every frame, which was the app's main GC-churn source. Read in the draw lambda,
+    // only the draw phase re-runs each frame; the composable recomposes only on song/palette change.
     val rawEnergy by beatAnalyzer.energy.collectAsState()
-    val energy by animateFloatAsState(rawEnergy.coerceIn(0f, 1f), androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
+    val energyState = animateFloatAsState(rawEnergy.coerceIn(0f, 1f), androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = androidx.compose.animation.core.Spring.StiffnessLow), label = "beat")
 
-    // Per-band levels drive the three projector orbs (bass / vocal / treble). Spring-smoothed the
-    // same way as [energy] so the swell reads as motion, not stepping. Collected unconditionally
-    // (composable rule) even in Dynamic/Black, where they're simply unused.
     val rawBands by beatAnalyzer.bands.collectAsState()
-    // Damped enough not to jitter, loose enough to actually track the beat — the orb should snap up
-    // on the hit and ease back, not lag behind it.
     val bandSpring = androidx.compose.animation.core.spring<Float>(dampingRatio = 0.6f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)
-    val band0 by animateFloatAsState(rawBands.getOrElse(0) { 0f }.coerceIn(0f, 1f), bandSpring, label = "bass")
-    val band1 by animateFloatAsState(rawBands.getOrElse(1) { 0f }.coerceIn(0f, 1f), bandSpring, label = "vocal")
-    val band2 by animateFloatAsState(rawBands.getOrElse(2) { 0f }.coerceIn(0f, 1f), bandSpring, label = "treble")
+    val band0State = animateFloatAsState(rawBands.getOrElse(0) { 0f }.coerceIn(0f, 1f), bandSpring, label = "bass")
+    val band1State = animateFloatAsState(rawBands.getOrElse(1) { 0f }.coerceIn(0f, 1f), bandSpring, label = "vocal")
+    val band2State = animateFloatAsState(rawBands.getOrElse(2) { 0f }.coerceIn(0f, 1f), bandSpring, label = "treble")
 
-    // Palette derived from the full-res artwork for color accuracy
     val paletteUrl = artworkUrlTemplate?.replace("{w}", "300")?.replace("{h}", "300")?.replace("{f}", "jpg")
     val palette = rememberArtworkPalette(paletteUrl)
-    val animated = palette.mapIndexed { i, c ->
-        animateColorAsState(c, tween(1500), label = "blob$i").value
+    val animatedStates = palette.mapIndexed { i, c ->
+        animateColorAsState(c, tween(1500), label = "blob$i")
     }
 
     val infinite = rememberInfiniteTransition(label = "pool")
-    val t1 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
-    val t2 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
-    val t3 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
-    val t4 by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(15_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
-
-    // Each blob slowly cycles between two palette colors for a "vibing" effect
-    val n = animated.size
-    val colorFracs = listOf(t4, 1f - t3, t1, 1f - t2)
-    val colors4 = List(4) { i ->
-        lerp(animated[(i * 2) % n], animated[(i * 2 + 1) % n], colorFracs[i])
-    }
-    // Projector orbs: THREE distinct accents from the cover (slots 0/1/2 = the three most-separated
-    // colours). Each drifts a *little* toward the next accent so it changes over time without ever
-    // losing its identity — bass orb stays roughly the first accent, and so on.
-    val tt3 = listOf(t1, t2, t3)
-    val orbColors = List(3) { i ->
-        // Small drift toward the next accent so colour evolves, but stays mostly its own so the three
-        // orbs read as three distinct colours.
-        lerp(animated[i % n], animated[(i + 1) % n], 0.05f + 0.10f * tt3[i])
-    }
+    val t1s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
+    val t2s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
+    val t3s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
+    val t4s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(15_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
 
     // PROJECTOR uses TRUE black; a projector throws light on a wall, so the near-black #050505 lift
     // that stops a panel crushing shadows becomes a visible grey rectangle instead.
     Box(Modifier.fillMaxSize().background(if (projector) Color.Black else Color(0xFF050505))) {
         Box(Modifier.fillMaxSize().drawBehind {
             val w = size.width; val h = size.height
+            // Deferred reads — this is the draw phase, so these re-run per frame without recomposing.
+            val t1 = t1s.value; val t2 = t2s.value; val t3 = t3s.value; val t4 = t4s.value
+            val n = animatedStates.size
 
             if (projector) {
                 // THREE ORBS, ONE PER BAND — bass (slow, low), vocal (centre-panned, mid), treble
                 // (fast, high). Each rides an ellipse on its own animator+phase so the composition
                 // never repeats, swells on its band, and glows from a palette colour.
-                val orbLevels = floatArrayOf(band0, band1, band2)
+                // Small drift toward the next accent so colour evolves but each orb keeps its identity.
+                val orbColors = List(3) { i -> lerp(animatedStates[i % n].value, animatedStates[(i + 1) % n].value, 0.05f + 0.10f * floatArrayOf(t1, t2, t3)[i]) }
+                val orbLevels = floatArrayOf(band0State.value, band1State.value, band2State.value)
                 // Pushed right of the album art (which sits in the left column) so no orb hides behind it.
                 val anchorX = floatArrayOf(0.52f, 0.62f, 0.72f)
                 val anchorY = floatArrayOf(0.44f, 0.56f, 0.46f)
@@ -1062,6 +1049,11 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
             }
 
             // DYNAMIC — four drifting album-colour blobs. Intensity (amp) scales the beat swing.
+            val energy = energyState.value
+            // Each blob slowly cycles between two palette colours for a "vibing" effect.
+            val colors4 = List(4) { i ->
+                lerp(animatedStates[(i * 2) % n].value, animatedStates[(i * 2 + 1) % n].value, floatArrayOf(t4, 1f - t3, t1, 1f - t2)[i])
+            }
             val eAmp = (energy * amp).coerceIn(0f, 2.2f)
             val beatScale = 1f + eAmp * 0.25f
             val beatAlpha = (0.60f + eAmp * 0.20f).coerceAtMost(0.95f)
