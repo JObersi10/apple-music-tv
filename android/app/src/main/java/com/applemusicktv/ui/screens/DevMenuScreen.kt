@@ -305,21 +305,24 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
     var update by remember { mutableStateOf(initialUpdate) }
     var progress by remember { mutableStateOf(-1f) } // -1 = not downloading
     var beta by remember { mutableStateOf(com.applemusicktv.util.UpdatePreferences.betaEnabled(ctx)) }
-    // The APK is downloaded and ready, but the unknown-sources grant isn't held yet. Parked here so
-    // onResume can fire the install the moment the user comes back from the settings screen.
-    var pendingApk by remember { mutableStateOf<java.io.File?>(null) }
 
-    // REQUEST_INSTALL_PACKAGES only makes the grant available to ASK for — nothing requests it, and
-    // since Android 8 the installer silently drops an install intent from an app without it (no
-    // dialog, nothing in the log). So check first; if missing, send the user to their own toggle and
-    // re-fire the parked install from onResume.
+    // Fire OS often RECREATES MainActivity when the unknown-sources settings screen returns, which
+    // wipes all Compose state (the old in-memory parked file was lost, forcing a re-check + re-download).
+    // Survive that: the downloaded APK already lives at cacheDir/updates/update.apk, and a persisted
+    // flag records that an install is waiting on the grant. On resume we re-fire from disk, so
+    // recreation costs nothing.
+    fun prefs() = ctx.getSharedPreferences("update_state", android.content.Context.MODE_PRIVATE)
+    fun cachedApk() = java.io.File(java.io.File(ctx.cacheDir, "updates"), "update.apk")
+    fun hasGrant() = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
+        ctx.packageManager.canRequestPackageInstalls()
+
     fun installOrRequestGrant(apk: java.io.File) {
-        val canInstall = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
-            ctx.packageManager.canRequestPackageInstalls()
-        if (canInstall) {
-            UpdateChecker.install(ctx, apk); pendingApk = null; return
+        if (hasGrant()) {
+            prefs().edit().putBoolean("pending_install", false).apply()
+            UpdateChecker.install(ctx, apk); return
         }
-        pendingApk = apk
+        // Park across a possible recreation: remember we owe an install, keep the APK on disk.
+        prefs().edit().putBoolean("pending_install", true).apply()
         status = "Allow installs from this app, then come back"
         val pkgUri = android.net.Uri.parse("package:${ctx.packageName}")
         // The per-app screen isn't always present on Fire OS; fall back to the generic intent rather
@@ -330,15 +333,18 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
         }
     }
 
-    // Coming back from the unknown-sources screen with the grant now held → fire the parked install.
+    // On resume (including after a full recreation), if an install is owed, the grant is now held, and
+    // the downloaded APK is still cached → install it. No re-check, no re-download.
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                pendingApk?.let { apk ->
-                    val ok = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
-                        ctx.packageManager.canRequestPackageInstalls()
-                    if (ok) { UpdateChecker.install(ctx, apk); pendingApk = null; status = null }
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME &&
+                prefs().getBoolean("pending_install", false) && hasGrant()) {
+                val apk = cachedApk()
+                if (apk.exists() && apk.length() > 0) {
+                    prefs().edit().putBoolean("pending_install", false).apply()
+                    status = null
+                    UpdateChecker.install(ctx, apk)
                 }
             }
         }
