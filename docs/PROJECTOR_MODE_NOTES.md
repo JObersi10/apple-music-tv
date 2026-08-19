@@ -106,3 +106,52 @@ Over-damp it (0.95) and it stops tracking the beat; under-damp and it jitters. 0
 
 Positional drift is kept **gentle** (`0.08·w`, `0.045·h`) — "move less" is about the orbs not
 swimming around the frame; the *pulse* (size/brightness) is where the energy goes.
+
+Orb anchors are pushed to the **right half** (`anchorX = 0.52 / 0.62 / 0.72`) so none hide behind
+the album art in the left column.
+
+---
+
+## Updates after on-device tuning (read these too)
+
+### 9. Vocals need PRESENCE, not just swell (§2 wasn't enough)
+
+Swell-above-baseline (§2) is right for bass/treble — they read as *hits*. But a vocal holds one
+sustained tone with no beat, so its swell is ~0 mid-note and the orb went dark exactly when someone
+was singing. So the **vocal band (only)** also computes an absolute **presence** = `raw / decayingPeak`,
+and `norm = max(swell, presence·0.9)`. Now the vocal orb is lit whenever centre-panned voice is
+present, and a beat swell still adds on top. Bass/treble stay pure-swell so they don't become a
+constant glow. Per-band sensitivity lives in `bandExcessMax` / `bandGate` / `BAND_PRESENCE_GATE`.
+
+### 10. Intensity is a render AMPLITUDE, never a pre-clip multiplier
+
+The Calm/Normal/Strong/Crazy control (`beatIntensity`, 0.55…3.5) must NOT multiply the 0..1 level and
+re-clamp to 1 — that pins everything at max, so Strong and Crazy look identical and the vocal orb sits
+maxed. Keep levels 0..1 and apply `amp` to the **render**: `r = baseR·(1 + lvl·ride·amp)`,
+`haloAlpha = 0.24 + lvl·0.42·amp` (with generous caps). Now the tiers actually differ. Same idea for
+the Dynamic blobs (`eAmp = energy·amp`).
+
+### 11. Colour comes from the ALBUM — never invent a hue
+
+First attempt synthesized "variety" by **rotating hue** around the wheel — which painted blue/green
+orbs on an all-orange cover. Wrong. When the artwork doesn't have N hue-separated accents, fill the
+remaining orb slots with lighter/darker **shades of the accents it DOES have** (`varyShade`, same
+hue, ±value/sat). An orange album gives orange shades; it never manufactures a colour the art lacks.
+Monochrome still uses `spreadByValue` (§6).
+
+### 12. Lyrics readability
+
+A bright orb drifting under the lyric column washes out the dim inactive lines. The right-side
+darkening gradient was strengthened (`0x9E` alpha from `0.30·w`). Cheaper and better than dimming the
+orbs, which would cost the expressive pulse.
+
+### 13. Performance / memory (Fire TV is RAM-starved)
+
+The Fire TV 4K Max thrashes its low-memory killer under load; the app was being **OOM-killed on the
+PiP transition**, not crashing in code. Two fixes that matter:
+- **Palette from a small bitmap.** Decoding the 1200² artwork (`allowHardware(false)` → ~5.7 MB kept
+  in RAM) per song was waste — Palette downsamples anyway. Request `size(256)` off a 300px source and
+  reuse Coil's shared loader. ~20× less memory per song, identical palette.
+- **Drop the motion-artwork decoder in PiP.** Motion artwork is a whole *second* ExoPlayer/video
+  decoder; holding it through the PiP transition is the spike the OOM killer answers. Gate it with
+  `&& !state.isInPip` so it releases on the way into PiP.

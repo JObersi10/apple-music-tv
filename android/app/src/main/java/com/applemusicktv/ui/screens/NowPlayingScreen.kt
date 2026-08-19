@@ -299,8 +299,11 @@ fun NowPlayingScreen(
                     // DIAGNOSTIC: motion artwork spins up a SECOND ExoPlayer/video
                     // decoder. Gated off to test whether it starves the audio decoder
                     // (standalone frame-drop chop) on the weak Fire TV.
+                    // In PiP, drop the motion decoder entirely: it's a whole second ExoPlayer/video
+                    // decoder, and holding it alive through the PiP transition is a memory spike that
+                    // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
                     @Suppress("ConstantConditionIf")
-                    if (MOTION_ENABLED && state.motionUrl != null) {
+                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
                 }
@@ -883,11 +886,15 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
     LaunchedEffect(artworkUrl) {
         if (artworkUrl == null) return@LaunchedEffect
         try {
-            val loader = ImageLoader(context)
-            val request = ImageRequest.Builder(context).data(artworkUrl).allowHardware(false).build()
+            // Decode a SMALL bitmap for the palette — Palette downsamples internally anyway, so a
+            // 1200² ARGB bitmap (~5.7 MB, kept in RAM with allowHardware off) was pure waste on a
+            // memory-starved Fire TV. 256² is ~256 KB and gives an identical palette. Reuse Coil's
+            // shared loader instead of spinning up a new ImageLoader per song.
+            val loader = context.applicationContext.let { coil.Coil.imageLoader(it) }
+            val request = ImageRequest.Builder(context).data(artworkUrl).size(256).allowHardware(false).build()
             val result = loader.execute(request)
             val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
-            val p = Palette.from(bitmap).generate()
+            val p = Palette.from(bitmap).maximumColorCount(16).generate()
             val swatches = listOfNotNull(
                 p.vibrantSwatch, p.lightVibrantSwatch, p.darkVibrantSwatch,
                 p.mutedSwatch, p.lightMutedSwatch, p.darkMutedSwatch, p.dominantSwatch,
@@ -962,7 +969,7 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     val band2 by animateFloatAsState(rawBands.getOrElse(2) { 0f }.coerceIn(0f, 1f), bandSpring, label = "treble")
 
     // Palette derived from the full-res artwork for color accuracy
-    val paletteUrl = artworkUrlTemplate?.replace("{w}", "1200")?.replace("{h}", "1200")?.replace("{f}", "jpg")
+    val paletteUrl = artworkUrlTemplate?.replace("{w}", "300")?.replace("{h}", "300")?.replace("{f}", "jpg")
     val palette = rememberArtworkPalette(paletteUrl)
     val animated = palette.mapIndexed { i, c ->
         animateColorAsState(c, tween(1500), label = "blob$i").value
@@ -1001,7 +1008,8 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 // (fast, high). Each rides an ellipse on its own animator+phase so the composition
                 // never repeats, swells on its band, and glows from a palette colour.
                 val orbLevels = floatArrayOf(band0, band1, band2)
-                val anchorX = floatArrayOf(0.40f, 0.52f, 0.64f)
+                // Pushed right of the album art (which sits in the left column) so no orb hides behind it.
+                val anchorX = floatArrayOf(0.52f, 0.62f, 0.72f)
                 val anchorY = floatArrayOf(0.44f, 0.56f, 0.46f)
                 val phase   = floatArrayOf(0f, 2.1f, 4.2f)
                 val drift   = floatArrayOf(t1, t2, t3)
