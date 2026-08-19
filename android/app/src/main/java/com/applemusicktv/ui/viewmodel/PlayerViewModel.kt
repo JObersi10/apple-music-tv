@@ -122,6 +122,9 @@ data class PlayerState(
     val screensaverKeepBackground: Boolean = false,
     /** Show the clock and the queue/lyrics panel hint on Now Playing. Off = a cleaner, art-only view. */
     val showNowPlayingInfo: Boolean = true,
+    /** Animated album art. A whole second video decoder — default OFF: it's the biggest per-session
+     *  footprint on this Fire TV and the source of the surface errors. Opt in if the device can take it. */
+    val motionArtworkEnabled: Boolean = false,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
     val isLoading:        Boolean         = false,
     /** True while the current track is playing via on-device Widevine. */
@@ -526,6 +529,7 @@ class PlayerViewModel @Inject constructor(
             nowPlayingBackground = NowPlayingBackground.fromName(prefs.getString("np_background", null)),
             screensaverKeepBackground = prefs.getBoolean("screensaver_keep_bg", false),
             showNowPlayingInfo = prefs.getBoolean("np_info", true),
+            motionArtworkEnabled = prefs.getBoolean("motion_art", false),
         ) }
         player.addListener(playerListener)
         mediaSession = buildMediaSession(player)
@@ -688,7 +692,8 @@ class PlayerViewModel @Inject constructor(
             val npBg = NowPlayingBackground.fromName(prefs.getString("np_background", null))
             val keepBg = prefs.getBoolean("screensaver_keep_bg", false)
             val npInfo = prefs.getBoolean("np_info", true)
-            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, progressMs = posMs) }
+            val motionArt = prefs.getBoolean("motion_art", false)
+            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt, progressMs = posMs) }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
             val standalone = full && useStandalone()
             webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
@@ -847,6 +852,14 @@ class PlayerViewModel @Inject constructor(
         val next = !_state.value.showNowPlayingInfo
         _state.update { it.copy(showNowPlayingInfo = next) }
         prefs.edit { putBoolean("np_info", next) }
+    }
+
+    fun toggleMotionArtwork() {
+        val next = !_state.value.motionArtworkEnabled
+        _state.update { it.copy(motionArtworkEnabled = next, motionUrl = if (next) it.motionUrl else null) }
+        prefs.edit { putBoolean("motion_art", next) }
+        // Fetch it now if we just turned it on mid-song; clearing above handles turning it off.
+        if (next) _state.value.currentSong?.let { loadMotion(it.id) }
     }
 
     private val screensaverSteps = listOf(0, 1, 2, 5, 10, 20, 30, 60, 120)
@@ -1380,8 +1393,9 @@ class PlayerViewModel @Inject constructor(
 
     private fun loadMotion(songId: String) {
         motionJob?.cancel()
+        _state.update { it.copy(motionUrl = null) }
+        if (!_state.value.motionArtworkEnabled) return   // off → don't even fetch the motion URL
         motionJob = viewModelScope.launch {
-            _state.update { it.copy(motionUrl = null) }
             repo.getMotion(songId).onSuccess { url ->
                 if (_state.value.currentSong?.id == songId)
                     _state.update { it.copy(motionUrl = url) }

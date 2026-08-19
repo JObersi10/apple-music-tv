@@ -150,7 +150,7 @@ fun NowPlayingScreen(
         val chromeAlpha = 1f - idle
         val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
             NowPlayingBackground.BLACK else state.nowPlayingBackground
-        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode)
+        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying)
 
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -942,7 +942,7 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
  * Beat energy pulses blob radius and alpha.
  */
 @Composable
-private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f, mode: NowPlayingBackground = NowPlayingBackground.DYNAMIC) {
+private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f, mode: NowPlayingBackground = NowPlayingBackground.DYNAMIC, playing: Boolean = true) {
     // BLACK: plain black, no blobs, no beat. Nothing else to compute.
     if (mode == NowPlayingBackground.BLACK) {
         Box(Modifier.fillMaxSize().background(Color.Black))
@@ -979,13 +979,25 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     val t3s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
     val t4s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(15_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
 
+    // PERF: freeze the perpetual drift while paused. We snapshot the drift phase the moment playback
+    // stops and read that snapshot in the draw instead of the live State, so the draw phase isn't
+    // invalidated 60×/sec while nothing is playing. Beat energy/bands settle to 0 on their own.
+    val frozen = remember { floatArrayOf(0f, 0f, 0f, 0f) }
+    LaunchedEffect(playing) {
+        if (!playing) { frozen[0] = t1s.value; frozen[1] = t2s.value; frozen[2] = t3s.value; frozen[3] = t4s.value }
+    }
+
     // PROJECTOR uses TRUE black; a projector throws light on a wall, so the near-black #050505 lift
     // that stops a panel crushing shadows becomes a visible grey rectangle instead.
     Box(Modifier.fillMaxSize().background(if (projector) Color.Black else Color(0xFF050505))) {
         Box(Modifier.fillMaxSize().drawBehind {
             val w = size.width; val h = size.height
             // Deferred reads — this is the draw phase, so these re-run per frame without recomposing.
-            val t1 = t1s.value; val t2 = t2s.value; val t3 = t3s.value; val t4 = t4s.value
+            // While paused we read the frozen snapshot (not the live State) so the draw stops updating.
+            val t1 = if (playing) t1s.value else frozen[0]
+            val t2 = if (playing) t2s.value else frozen[1]
+            val t3 = if (playing) t3s.value else frozen[2]
+            val t4 = if (playing) t4s.value else frozen[3]
             val n = animatedStates.size
 
             if (projector) {

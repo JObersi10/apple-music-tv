@@ -101,6 +101,11 @@ fun DevMenuScreen(
                 onDec = { playerVm.stepBeatIntensity(-1) },
                 onInc = { playerVm.stepBeatIntensity(1) },
             )
+            Toggle(
+                label = "Motion artwork", on = pstate.motionArtworkEnabled,
+                sub = if (pstate.motionArtworkEnabled) "Play animated album art when available" else "Off — lighter on the device",
+                onToggle = { playerVm.toggleMotionArtwork() },
+            )
             Stepper(
                 label = "Screensaver",
                 value = screensaverLabel(pstate.screensaverTimeoutMin),
