@@ -125,6 +125,18 @@ data class PlayerState(
     /** Animated album art. A whole second video decoder — default OFF: it's the biggest per-session
      *  footprint on this Fire TV and the source of the surface errors. Opt in if the device can take it. */
     val motionArtworkEnabled: Boolean = false,
+    /** Projector orb drift speed: 0.6 slow · 1.0 normal · 1.6 fast. */
+    val orbSpeed: Float = 1.0f,
+    /** Lyrics font scale: 0.85 small · 1.0 normal · 1.2 large. */
+    val lyricsScale: Float = 1.0f,
+    /** Rounded (true) vs square (false) album-art corners. */
+    val artworkRounded: Boolean = true,
+    /** Accessibility: freeze/minimise background motion. */
+    val reduceMotion: Boolean = false,
+    /** Low Power Mode: cheaper background rendering (also forces motion art off). */
+    val lowPowerMode: Boolean = false,
+    /** Volume leveling (loudness AGC) on the audio path. */
+    val volumeLeveling: Boolean = false,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
     val isLoading:        Boolean         = false,
     /** True while the current track is playing via on-device Widevine. */
@@ -524,12 +536,21 @@ class PlayerViewModel @Inject constructor(
     init {
         // Load the lightweight display settings up front so they apply even on a cold launch with
         // no track to restore (restoreState, which reads the rest, only runs when a song was saved).
+        val initBg = NowPlayingBackground.fromName(prefs.getString("np_background", null))
+        com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
         _state.update { it.copy(
             lyricsOffsetMs = lyricsOffsetPrefs.getOffset(),
-            nowPlayingBackground = NowPlayingBackground.fromName(prefs.getString("np_background", null)),
+            nowPlayingBackground = initBg,
             screensaverKeepBackground = prefs.getBoolean("screensaver_keep_bg", false),
             showNowPlayingInfo = prefs.getBoolean("np_info", true),
             motionArtworkEnabled = prefs.getBoolean("motion_art", false),
+            beatIntensity = prefs.getFloat(intensityKey(initBg), 1.0f),
+            orbSpeed = prefs.getFloat("orb_speed", 1.0f),
+            lyricsScale = prefs.getFloat("lyrics_scale", 1.0f),
+            artworkRounded = prefs.getBoolean("artwork_rounded", true),
+            reduceMotion = prefs.getBoolean("reduce_motion", false),
+            lowPowerMode = prefs.getBoolean("low_power", false),
+            volumeLeveling = prefs.getBoolean("volume_leveling", false),
         ) }
         player.addListener(playerListener)
         mediaSession = buildMediaSession(player)
@@ -685,15 +706,17 @@ class PlayerViewModel @Inject constructor(
             val idx   = prefs.getInt("queue_index", 0).coerceIn(0, queue.lastIndex)
             val posMs = prefs.getLong("position_ms", 0L)
             val full  = hasMUT()
-            val beat      = prefs.getFloat("beat_intensity", 1.0f)
             val crossfade = prefs.getBoolean("crossfade_enabled", true)
             val screensaverMin = prefs.getInt("screensaver_min", 10)
             val bgPlay = prefs.getBoolean("background_play", true)
             val npBg = NowPlayingBackground.fromName(prefs.getString("np_background", null))
+            val beat      = prefs.getFloat(intensityKey(npBg), 1.0f)
             val keepBg = prefs.getBoolean("screensaver_keep_bg", false)
             val npInfo = prefs.getBoolean("np_info", true)
             val motionArt = prefs.getBoolean("motion_art", false)
-            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt, progressMs = posMs) }
+            com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
+            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), progressMs = posMs) }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
             val standalone = full && useStandalone()
             webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
@@ -812,7 +835,8 @@ class PlayerViewModel @Inject constructor(
         val cur = intensitySteps.indexOfFirst { kotlin.math.abs(it - _state.value.beatIntensity) < 0.05f }.let { if (it < 0) 1 else it }
         val next = intensitySteps[(cur + dir).coerceIn(0, intensitySteps.lastIndex)]
         _state.update { it.copy(beatIntensity = next) }
-        prefs.edit { putFloat("beat_intensity", next) }
+        // Remembered per background mode (Dynamic vs Projector).
+        prefs.edit { putFloat(intensityKey(_state.value.nowPlayingBackground), next) }
     }
 
     fun toggleCrossfade() {
@@ -834,12 +858,59 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** Cycle the Now Playing backdrop: Dynamic → Projector → Black → Dynamic (dir = +1 / -1). */
+    /** Intensity is remembered PER background mode (Dynamic vs Projector); Black has no orbs. */
+    private fun intensityKey(mode: NowPlayingBackground): String =
+        if (mode == NowPlayingBackground.PROJECTOR) "intensity_projector" else "intensity_dynamic"
+
     fun stepNowPlayingBackground(dir: Int) {
         val modes = NowPlayingBackground.entries
         val cur = _state.value.nowPlayingBackground.ordinal
         val next = modes[((cur + dir) % modes.size + modes.size) % modes.size]
-        _state.update { it.copy(nowPlayingBackground = next) }
+        // Swap in the intensity remembered for the mode we're switching to.
+        val nextIntensity = prefs.getFloat(intensityKey(next), 1.0f)
+        _state.update { it.copy(nowPlayingBackground = next, beatIntensity = nextIntensity) }
         prefs.edit { putString("np_background", next.name) }
+    }
+
+    fun stepOrbSpeed(dir: Int) {
+        val steps = floatArrayOf(0.6f, 1.0f, 1.6f)
+        val cur = steps.indexOfFirst { kotlin.math.abs(it - _state.value.orbSpeed) < 0.05f }.let { if (it < 0) 1 else it }
+        val next = steps[(cur + dir).coerceIn(0, steps.lastIndex)]
+        _state.update { it.copy(orbSpeed = next) }
+        prefs.edit { putFloat("orb_speed", next) }
+    }
+
+    fun stepLyricsScale(dir: Int) {
+        val steps = floatArrayOf(0.85f, 1.0f, 1.2f)
+        val cur = steps.indexOfFirst { kotlin.math.abs(it - _state.value.lyricsScale) < 0.05f }.let { if (it < 0) 1 else it }
+        val next = steps[(cur + dir).coerceIn(0, steps.lastIndex)]
+        _state.update { it.copy(lyricsScale = next) }
+        prefs.edit { putFloat("lyrics_scale", next) }
+    }
+
+    fun toggleArtworkRounded() {
+        val next = !_state.value.artworkRounded
+        _state.update { it.copy(artworkRounded = next) }
+        prefs.edit { putBoolean("artwork_rounded", next) }
+    }
+
+    fun toggleReduceMotion() {
+        val next = !_state.value.reduceMotion
+        _state.update { it.copy(reduceMotion = next) }
+        prefs.edit { putBoolean("reduce_motion", next) }
+    }
+
+    fun toggleLowPowerMode() {
+        val next = !_state.value.lowPowerMode
+        _state.update { it.copy(lowPowerMode = next) }
+        prefs.edit { putBoolean("low_power", next) }
+    }
+
+    fun toggleVolumeLeveling() {
+        val next = !_state.value.volumeLeveling
+        com.applemusicktv.media.GainProcessor.enabled = next
+        _state.update { it.copy(volumeLeveling = next) }
+        prefs.edit { putBoolean("volume_leveling", next) }
     }
 
     fun toggleScreensaverKeepBackground() {

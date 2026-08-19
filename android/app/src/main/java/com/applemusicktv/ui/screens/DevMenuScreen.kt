@@ -79,6 +79,11 @@ fun DevMenuScreen(
                 sub = if (state.standaloneOn) "Decode on this device — no PC required" else "Stream through the PC server",
                 onToggle = { vm.toggleStandalone() },
             )
+            Toggle(
+                label = "Volume leveling", on = pstate.volumeLeveling,
+                sub = if (pstate.volumeLeveling) "Even out loudness across tracks" else "Play each track at its own level",
+                onToggle = { playerVm.toggleVolumeLeveling() },
+            )
 
             // ── NOW PLAYING ───────────────────────────────────────────────
             SectionLabel("Now Playing")
@@ -94,17 +99,48 @@ fun DevMenuScreen(
                 sub = if (pstate.showNowPlayingInfo) "Display the clock and panel hints" else "Hide them for an art-only view",
                 onToggle = { playerVm.toggleNowPlayingInfo() },
             )
-            Stepper(
+            // Intensity is the orb SIZE/reactivity; hidden on Black (no orbs). Remembered per mode.
+            if (pstate.nowPlayingBackground.label != "Black") Stepper(
                 label = "Intensity",
                 value = intensityLabel(pstate.beatIntensity),
                 sub = "How hard the background reacts to the beat",
                 onDec = { playerVm.stepBeatIntensity(-1) },
                 onInc = { playerVm.stepBeatIntensity(1) },
             )
+            // Orb drift speed — only meaningful in Projector.
+            if (pstate.nowPlayingBackground.label == "Projector") Stepper(
+                label = "Orb speed",
+                value = orbSpeedLabel(pstate.orbSpeed),
+                sub = "How fast the orbs drift around",
+                onDec = { playerVm.stepOrbSpeed(-1) },
+                onInc = { playerVm.stepOrbSpeed(1) },
+            )
+            Stepper(
+                label = "Lyrics size",
+                value = lyricsScaleLabel(pstate.lyricsScale),
+                sub = "Text size in the lyrics panel",
+                onDec = { playerVm.stepLyricsScale(-1) },
+                onInc = { playerVm.stepLyricsScale(1) },
+            )
+            Toggle(
+                label = "Rounded artwork", on = pstate.artworkRounded,
+                sub = if (pstate.artworkRounded) "Soft rounded album-art corners" else "Square album-art corners",
+                onToggle = { playerVm.toggleArtworkRounded() },
+            )
             Toggle(
                 label = "Motion artwork", on = pstate.motionArtworkEnabled,
                 sub = if (pstate.motionArtworkEnabled) "Play animated album art when available" else "Off — lighter on the device",
                 onToggle = { playerVm.toggleMotionArtwork() },
+            )
+            Toggle(
+                label = "Reduce motion", on = pstate.reduceMotion,
+                sub = if (pstate.reduceMotion) "Background holds still" else "Background drifts and pulses",
+                onToggle = { playerVm.toggleReduceMotion() },
+            )
+            Toggle(
+                label = "Low Power Mode", on = pstate.lowPowerMode,
+                sub = if (pstate.lowPowerMode) "Simpler visuals, less work for the device" else "Full-quality visuals",
+                onToggle = { playerVm.toggleLowPowerMode() },
             )
             Stepper(
                 label = "Screensaver",
@@ -345,6 +381,18 @@ internal fun intensityLabel(f: Float): String = when {
     f < 1.5f -> "Normal"
     f < 2.5f -> "Strong"
     else     -> "Crazy"
+}
+
+internal fun orbSpeedLabel(f: Float): String = when {
+    f < 0.85f -> "Slow"
+    f < 1.3f  -> "Normal"
+    else      -> "Fast"
+}
+
+internal fun lyricsScaleLabel(f: Float): String = when {
+    f < 0.95f -> "Small"
+    f < 1.1f  -> "Normal"
+    else      -> "Large"
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

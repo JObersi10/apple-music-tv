@@ -150,7 +150,7 @@ fun NowPlayingScreen(
         val chromeAlpha = 1f - idle
         val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
             NowPlayingBackground.BLACK else state.nowPlayingBackground
-        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying)
+        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying, orbSpeed = state.orbSpeed, reduceMotion = state.reduceMotion, lowPower = state.lowPowerMode)
 
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -240,6 +240,7 @@ fun NowPlayingScreen(
                 onPrev = playerVm::prev,
                 onPlayPause = playerVm::togglePlayPause,
                 onNext = playerVm::next,
+                lyricsScale = state.lyricsScale,
             )
             else -> {
         Row(
@@ -277,7 +278,7 @@ fun NowPlayingScreen(
                 Box(
                     modifier = Modifier
                         .size(240.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(if (state.artworkRounded) 16.dp else 0.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
                     // Cross-fade the cover instead of hard-swapping it on song change.
@@ -303,7 +304,7 @@ fun NowPlayingScreen(
                     // decoder, and holding it alive through the PiP transition is a memory spike that
                     // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
                     @Suppress("ConstantConditionIf")
-                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip) {
+                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
                 }
@@ -468,6 +469,7 @@ fun NowPlayingScreen(
                             offsetMs = state.lyricsOffsetMs,
                             onSeek = { ms -> playerVm.player.seekTo(ms) },
                             playFocus = playFocus,
+                            fontScale = state.lyricsScale,
                         )
                     } else {
                         QueuePanel(
@@ -582,6 +584,7 @@ private fun FullScreenLyrics(
     onPrev: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    lyricsScale: Float = 1f,
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
@@ -607,7 +610,7 @@ private fun FullScreenLyrics(
                 offsetMs = offsetMs,
                 onSeek = onSeek,
                 playFocus = playFocus,
-                fontScale = 1.3f,
+                fontScale = 1.3f * lyricsScale,
                 autoReturnMs = 5_000L,
             )
         }
@@ -891,7 +894,10 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
             // memory-starved Fire TV. 256² is ~256 KB and gives an identical palette. Reuse Coil's
             // shared loader instead of spinning up a new ImageLoader per song.
             val loader = context.applicationContext.let { coil.Coil.imageLoader(it) }
-            val request = ImageRequest.Builder(context).data(artworkUrl).size(256).allowHardware(false).build()
+            // Don't let the palette's small ARGB bitmap sit in Coil's memory cache — it's used once,
+            // right here, then thrown away. (The displayed artwork is a separate, cached request.)
+            val request = ImageRequest.Builder(context).data(artworkUrl).size(256).allowHardware(false)
+                .memoryCachePolicy(coil.request.CachePolicy.DISABLED).build()
             val result = loader.execute(request)
             val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
             val p = Palette.from(bitmap).maximumColorCount(16).generate()
@@ -942,7 +948,7 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
  * Beat energy pulses blob radius and alpha.
  */
 @Composable
-private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f, mode: NowPlayingBackground = NowPlayingBackground.DYNAMIC, playing: Boolean = true) {
+private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beatAnalyzer: com.applemusicktv.media.BeatAnalyzer, beatMultiplier: Float = 1f, mode: NowPlayingBackground = NowPlayingBackground.DYNAMIC, playing: Boolean = true, orbSpeed: Float = 1f, reduceMotion: Boolean = false, lowPower: Boolean = false) {
     // BLACK: plain black, no blobs, no beat. Nothing else to compute.
     if (mode == NowPlayingBackground.BLACK) {
         Box(Modifier.fillMaxSize().background(Color.Black))
@@ -973,18 +979,22 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
         animateColorAsState(c, tween(1500), label = "blob$i")
     }
 
+    // Orb speed scales the drift periods (faster speed → shorter tween).
+    val sp = orbSpeed.coerceIn(0.4f, 2.0f)
     val infinite = rememberInfiniteTransition(label = "pool")
-    val t1s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(20_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
-    val t2s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(27_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
-    val t3s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(34_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
-    val t4s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(15_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
+    val t1s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween((20_000 / sp).toInt(), easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
+    val t2s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween((27_000 / sp).toInt(), easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
+    val t3s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween((34_000 / sp).toInt(), easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
+    val t4s = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween((15_000 / sp).toInt(), easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
 
-    // PERF: freeze the perpetual drift while paused. We snapshot the drift phase the moment playback
-    // stops and read that snapshot in the draw instead of the live State, so the draw phase isn't
-    // invalidated 60×/sec while nothing is playing. Beat energy/bands settle to 0 on their own.
+    // PERF + accessibility: freeze the perpetual drift while paused OR when Reduce Motion is on. We
+    // snapshot the drift phase and read that in the draw instead of the live State, so the draw phase
+    // isn't invalidated 60×/sec. Beat energy/bands settle to 0 on their own (and Reduce Motion zeroes
+    // them below, so the orbs hold completely still).
+    val moving = playing && !reduceMotion
     val frozen = remember { floatArrayOf(0f, 0f, 0f, 0f) }
-    LaunchedEffect(playing) {
-        if (!playing) { frozen[0] = t1s.value; frozen[1] = t2s.value; frozen[2] = t3s.value; frozen[3] = t4s.value }
+    LaunchedEffect(moving) {
+        if (!moving) { frozen[0] = t1s.value; frozen[1] = t2s.value; frozen[2] = t3s.value; frozen[3] = t4s.value }
     }
 
     // PROJECTOR uses TRUE black; a projector throws light on a wall, so the near-black #050505 lift
@@ -994,11 +1004,12 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
             val w = size.width; val h = size.height
             // Deferred reads — this is the draw phase, so these re-run per frame without recomposing.
             // While paused we read the frozen snapshot (not the live State) so the draw stops updating.
-            val t1 = if (playing) t1s.value else frozen[0]
-            val t2 = if (playing) t2s.value else frozen[1]
-            val t3 = if (playing) t3s.value else frozen[2]
-            val t4 = if (playing) t4s.value else frozen[3]
+            val t1 = if (moving) t1s.value else frozen[0]
+            val t2 = if (moving) t2s.value else frozen[1]
+            val t3 = if (moving) t3s.value else frozen[2]
+            val t4 = if (moving) t4s.value else frozen[3]
             val n = animatedStates.size
+            val motionAmp = if (reduceMotion) 0f else 1f   // Reduce Motion → orbs hold at base, no pulse
 
             if (projector) {
                 // THREE ORBS, ONE PER BAND — bass (slow, low), vocal (centre-panned, mid), treble
@@ -1006,7 +1017,7 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 // never repeats, swells on its band, and glows from a palette colour.
                 // Small drift toward the next accent so colour evolves but each orb keeps its identity.
                 val orbColors = List(3) { i -> lerp(animatedStates[i % n].value, animatedStates[(i + 1) % n].value, 0.05f + 0.10f * floatArrayOf(t1, t2, t3)[i]) }
-                val orbLevels = floatArrayOf(band0State.value, band1State.value, band2State.value)
+                val orbLevels = floatArrayOf(band0State.value * motionAmp, band1State.value * motionAmp, band2State.value * motionAmp)
                 // Pushed right of the album art (which sits in the left column) so no orb hides behind it.
                 val anchorX = floatArrayOf(0.52f, 0.62f, 0.72f)
                 val anchorY = floatArrayOf(0.44f, 0.56f, 0.46f)
@@ -1039,12 +1050,15 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                     )
                     // Core: small, whitened (a real glow's hottest point desaturates), punches hard on
                     // the band — a tiny fraction of the area, so it can flare without lifting the black.
-                    val cr = r * 0.34f
-                    val core = lerp(col, Color.White, 0.6f)
-                    drawCircle(
-                        brush = Brush.radialGradient(listOf(core.copy(alpha = (0.12f + lvl * 0.62f * amp).coerceAtMost(0.92f)), core.copy(alpha = 0f)), center = c, radius = cr),
-                        radius = cr, center = c, blendMode = BlendMode.Screen,
-                    )
+                    // Low Power skips the core (a second gradient per orb per frame) — the halo carries it.
+                    if (!lowPower) {
+                        val cr = r * 0.34f
+                        val core = lerp(col, Color.White, 0.6f)
+                        drawCircle(
+                            brush = Brush.radialGradient(listOf(core.copy(alpha = (0.12f + lvl * 0.62f * amp).coerceAtMost(0.92f)), core.copy(alpha = 0f)), center = c, radius = cr),
+                            radius = cr, center = c, blendMode = BlendMode.Screen,
+                        )
+                    }
                 }
                 // A LIGHT edge fade only — just enough to guarantee no lit rectangle at the frame edge.
                 // The orbs are small and pulled inward, so they never reach the edge anyway; a heavy
@@ -1060,8 +1074,10 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 return@drawBehind
             }
 
-            // DYNAMIC — four drifting album-colour blobs. Intensity (amp) scales the beat swing.
-            val energy = energyState.value
+            // DYNAMIC — four drifting album-colour blobs. Intensity (amp) scales the beat swing;
+            // Reduce Motion (motionAmp=0) holds them still.
+            val energy = energyState.value * motionAmp
+            val blobCount = if (lowPower) 2 else 4   // Low Power halves the blob count
             // Each blob slowly cycles between two palette colours for a "vibing" effect.
             val colors4 = List(4) { i ->
                 lerp(animatedStates[(i * 2) % n].value, animatedStates[(i * 2 + 1) % n].value, floatArrayOf(t4, 1f - t3, t1, 1f - t2)[i])
@@ -1083,7 +1099,7 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 Offset(lerp(0.05f, 0.30f, t3) * w, lerp(0.68f, 0.95f, t1) * h),
                 Offset(lerp(0.70f, 0.98f, t1) * w, lerp(0.65f, 0.95f, t3) * h),
             ).mapIndexed { i, c -> c + nudgeOffsets[i] }
-            colors4.forEachIndexed { i, color ->
+            colors4.take(blobCount).forEachIndexed { i, color ->
                 drawCircle(
                     brush = Brush.radialGradient(
                         listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0f)),

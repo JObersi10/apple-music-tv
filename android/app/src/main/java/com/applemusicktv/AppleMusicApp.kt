@@ -20,11 +20,12 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
 
     /**
      * Coil's default disk cache grows to ~2% of the whole partition — unbounded on a big
-     * Fire TV. Cap artwork on disk at 100 MB (LRU-evicted) and memory at 15% of RAM.
+     * Fire TV. Cap artwork on disk at 100 MB (LRU-evicted) and memory hard at 48 MB — 15% of RAM was
+     * ~225 MB on this box, far too much to hold in a memory-starved foreground app.
      */
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
-            .memoryCache { MemoryCache.Builder(this).maxSizePercent(0.15).build() }
+            .memoryCache { MemoryCache.Builder(this).maxSizeBytes(48 * 1024 * 1024).build() }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
