@@ -305,6 +305,46 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
     var update by remember { mutableStateOf(initialUpdate) }
     var progress by remember { mutableStateOf(-1f) } // -1 = not downloading
     var beta by remember { mutableStateOf(com.applemusicktv.util.UpdatePreferences.betaEnabled(ctx)) }
+    // The APK is downloaded and ready, but the unknown-sources grant isn't held yet. Parked here so
+    // onResume can fire the install the moment the user comes back from the settings screen.
+    var pendingApk by remember { mutableStateOf<java.io.File?>(null) }
+
+    // REQUEST_INSTALL_PACKAGES only makes the grant available to ASK for — nothing requests it, and
+    // since Android 8 the installer silently drops an install intent from an app without it (no
+    // dialog, nothing in the log). So check first; if missing, send the user to their own toggle and
+    // re-fire the parked install from onResume.
+    fun installOrRequestGrant(apk: java.io.File) {
+        val canInstall = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
+            ctx.packageManager.canRequestPackageInstalls()
+        if (canInstall) {
+            UpdateChecker.install(ctx, apk); pendingApk = null; return
+        }
+        pendingApk = apk
+        status = "Allow installs from this app, then come back"
+        val pkgUri = android.net.Uri.parse("package:${ctx.packageName}")
+        // The per-app screen isn't always present on Fire OS; fall back to the generic intent rather
+        // than throwing ActivityNotFoundException at someone who was only trying to update.
+        val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, pkgUri)
+        runCatching { ctx.startActivity(intent) }.onFailure {
+            runCatching { ctx.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)) }
+        }
+    }
+
+    // Coming back from the unknown-sources screen with the grant now held → fire the parked install.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                pendingApk?.let { apk ->
+                    val ok = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
+                        ctx.packageManager.canRequestPackageInstalls()
+                    if (ok) { UpdateChecker.install(ctx, apk); pendingApk = null; status = null }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     fun runCheck() {
         if (checking) return
@@ -359,7 +399,7 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
                         progress = 0f
                         scope.launch {
                             UpdateChecker.download(ctx, info) { progress = it }
-                                .onSuccess { apk -> UpdateChecker.install(ctx, apk); progress = -1f }
+                                .onSuccess { apk -> progress = -1f; installOrRequestGrant(apk) }
                                 .onFailure { progress = -1f; status = "Download failed"; update = null }
                         }
                     }

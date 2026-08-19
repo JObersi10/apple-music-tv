@@ -1,6 +1,45 @@
 # Handoff — Apple Music TV
 
-Last updated: 2026-08-14
+Last updated: 2026-08-19
+
+## Session 2026-08-19 — Now Playing customization, perf/footprint, updater grant fix (v1.1 release prep)
+
+Now Playing background + customization:
+- **Distinct-colour orbs** — `NowPlayingScreen.spreadByHue` now keeps a swatch that differs in
+  hue *or* brightness (was hue-only, 36°), so single-colour-family albums yield real
+  muted/dark/light variants instead of computed shades. Dynamic blobs are each **pinned to one
+  palette colour** (no pair-crossfade) and shrunk to 0.42 of the frame so they read as separate
+  colour pools (oil-painting look) instead of Screen-blending into one gradient wash.
+- **Beat consistency** — the Dynamic energy spring is now critically damped (`dampingRatio 1f`,
+  was underdamped 0.5) so each hit lands once and decays without ringing.
+- **New settings** (all in `PlayerViewModel` + `DevMenuScreen`, persisted in prefs):
+  Orb speed (Projector), Lyrics size (0.8/1.0/1.35, applies to synced + unsynced + full-screen),
+  Rounded/square artwork, Motion artwork toggle, Reduce motion, **Low Power Mode**, and
+  **per-mode Intensity memory** (`intensity_dynamic` / `intensity_projector`; hidden on Black).
+- **Volume leveling** (experimental, default off) — `media/GainProcessor` RMS AGC in the
+  Media3 `DefaultAudioProcessorChain` (`gapConceal → beatProcessor → gain`). **Known bug: it
+  can mute the stream** until skip/back — parked at user's request, do not ship enabled.
+
+Perf/footprint: animation State read inside `drawBehind` (draw phase) not at composable scope,
+killing ~60 fps recompose GC churn; palette bitmap decoded at 256² with memory cache disabled;
+Coil memory cache hard-capped at 48 MB.
+
+Crash fixes:
+- **ANR "does not have a focused window"** (was killing the app) — the lyrics list handed focus
+  to the active line even when it was scrolled off-screen (a detached `FocusRequester`). The
+  `focusProperties { enter }` now only targets the active line if it's in
+  `layoutInfo.visibleItemsInfo`, else `Default`.
+- A JNI `accessed stale Local` abort was observed under CheckJNI (debug only) — **not our code**
+  (the app has no native libs); it's a library (Media3/Coil) leaking JNI locals, aggravated by
+  the Fire TV's memory pressure. Should not abort in a release build (CheckJNI off).
+
+Updater — **grant fix (was silently broken on ungranted devices)**: `DevMenuScreen.UpdatesSection`
+now checks `canRequestPackageInstalls()` before `UpdateChecker.install`; if missing it parks the
+downloaded APK, sends the user to `ACTION_MANAGE_UNKNOWN_APP_SOURCES` (with a `package:` URI,
+falling back to the generic intent), and re-fires the install from an `ON_RESUME` lifecycle
+observer. Verified against the live `v1.0` GitHub release; single flavour so any `.apk` asset
+matches. To test the download/install leg, install a build whose versionName is below the
+release, then Check for Updates.
 
 ## Session 2026-08-14 — Cache cap, self-updater, crash/bug reporting (v1.1)
 

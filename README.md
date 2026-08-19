@@ -68,6 +68,17 @@ remux instead and serves a seekable MP4 over HTTP Range.
 - **Internet Radio** tab — geo-detected local stations (radio-browser.info), add any
   country by name (with spell-correction), plus "now playing" song ID from ICY stream
   metadata (pulls Apple artwork + lyrics for the current track)
+- **Now Playing background** — three looks: **Dynamic** (drifting album-colour pools,
+  each orb pinned to a distinct palette colour for an oil-painting spread), **Projector**
+  (three beat-reactive band orbs — bass / vocal / treble), and plain **Black**. The beat
+  pulse is critically damped so each hit lands once and decays cleanly
+- **Now Playing customization** (Settings → dev tools) — **Intensity** (Calm…Crazy,
+  remembered *per background mode*), **Orb speed** (Projector), **Lyrics size**
+  (Small/Normal/Large), **Rounded vs square artwork**, **Motion artwork** toggle,
+  **Reduce motion** (holds the orbs still), and **Low Power Mode** (fewer/simpler orbs
+  for weaker hardware)
+- **Volume leveling** (experimental, off by default) — RMS loudness leveling in the audio
+  chain
 - **⚙ Settings** screen — Crossfade, Standalone toggle, Screensaver timeout, Background
   play, Lyrics offset, Beat latency, live network log, and Reset App (replaces the old
   dev menu; dev tools tucked inside)

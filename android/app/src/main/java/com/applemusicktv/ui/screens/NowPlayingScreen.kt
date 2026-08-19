@@ -1087,14 +1087,17 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
             // Reduce Motion (motionAmp=0) holds them still.
             val energy = energyState.value * motionAmp
             val blobCount = if (lowPower) 2 else 4   // Low Power halves the blob count
-            // Each blob slowly cycles between two palette colours for a "vibing" effect.
-            val colors4 = List(4) { i ->
-                lerp(animatedStates[(i * 2) % n].value, animatedStates[(i * 2 + 1) % n].value, floatArrayOf(t4, 1f - t3, t1, 1f - t2)[i])
-            }
+            // Each blob is PINNED to its own distinct palette colour — no pair-crossfade. The old
+            // lerp blended two colours per blob and, with big overlapping blobs under Screen, merged
+            // the whole thing into one moving gradient wash. One colour per blob + smaller radius
+            // (below) lets the separate colours read as distinct pools, like Apple's oil-painting
+            // patches, instead of averaging into a single tint.
+            val colors4 = List(4) { i -> animatedStates[i % n].value }
             val eAmp = (energy * amp).coerceIn(0f, 2.2f)
             val beatScale = 1f + eAmp * 0.25f
             val beatAlpha = (0.60f + eAmp * 0.20f).coerceAtMost(0.95f)
-            val r = maxOf(w, h) * 0.62f * beatScale
+            // Smaller than the old 0.62 so blobs overlap less and stay recognisably separate colours.
+            val r = maxOf(w, h) * 0.42f * beatScale
             val nudge = eAmp * maxOf(w, h) * 0.02f
             val nudgeOffsets = listOf(
                 Offset( nudge,  nudge * 0.5f),
