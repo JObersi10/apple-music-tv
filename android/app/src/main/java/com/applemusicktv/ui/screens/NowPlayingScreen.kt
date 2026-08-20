@@ -1312,7 +1312,10 @@ private fun LyricsPanel(
         contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        items(lyrics.size, key = { if (lyrics[it].startMs >= 0) lyrics[it].startMs else -it.toLong() - 1 }) { idx ->
+        // Key MUST be unique: two synced lines can share a startMs (a blank + first line both at 0ms
+        // is common), and duplicate keys crash LazyColumn on the scroll-to-active remeasure. Fold in
+        // the index — the list never reorders within a song, so index keeps keys stable and unique.
+        items(lyrics.size, key = { "$it:${lyrics[it].startMs}" }) { idx ->
             val line = lyrics[idx]
             // One line lit at a time. Holding sustained lines lit was tried and removed:
             // line-synced sources set endMs to the next line's startMs, so "still within
