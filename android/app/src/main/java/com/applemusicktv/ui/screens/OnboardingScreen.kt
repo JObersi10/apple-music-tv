@@ -273,8 +273,12 @@ private fun StepTips(onScreenToggle: Boolean, nextFocus: FocusRequester, onSeenA
                 "Sleep timer, shuffle, repeat, Full-Screen Lyrics, the ambient screensaver, Picture-in-Picture — all live here.",
             ),
             TipCard(
-                TipMock.LOADING, "First play is slow. That's normal.",
-                "Your computer unscrambles the track first — about 15–20 seconds. The ring around play means it's working. Same song later starts instantly.",
+                TipMock.DOTS_MENU, "Projector mode fills the screen",
+                "In the ··· menu, switch on Projector mode — album colour, motion art and lyrics take over the whole TV like an ambient screensaver while the music plays.",
+            ),
+            TipCard(
+                TipMock.SCRUB, "Music videos, full-screen",
+                "Playlists and artist pages with videos play them full-screen, capped at 1080p and streamed as you watch. Look for the red MV tag.",
             ),
         )
     }

@@ -100,7 +100,10 @@ fun AppShell(modifier: Modifier = Modifier) {
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
     // Pause audio while a music video is on screen; a single decoder-hungry Fire TV
     // can't run both, and hearing the song under the video is wrong anyway.
-    LaunchedEffect(isMusicVideo) { if (isMusicVideo) playerVm.pause() }
+    LaunchedEffect(isMusicVideo) {
+        navVm.isOnMusicVideo = isMusicVideo
+        if (isMusicVideo) playerVm.pause()
+    }
 
     // Keep the screen awake ONLY while music is actually playing. When paused, drop the
     // flag so Fire TV's own screensaver / sleep can take over (our ambient screensaver only

@@ -54,6 +54,10 @@ class MusicVideoViewModel @Inject constructor(
     var player: ExoPlayer? = null
         private set
 
+    // Held so it can be released with the player — an externally-provided DrmSessionManager
+    // is NOT auto-released by ExoPlayer, and a leaked Widevine session starved the secure
+    // video decoder on the next video (it played audio-only).
+    private var drmManager: DefaultDrmSessionManager? = null
     private var progressJob: kotlinx.coroutines.Job? = null
 
     @OptIn(UnstableApi::class)
@@ -75,12 +79,13 @@ class MusicVideoViewModel @Inject constructor(
                     val dir = context.cacheDir
                     java.io.File(dir, com.applemusicktv.media.MV_VIDEO_FILE).writeText(mv.videoText)
                     java.io.File(dir, com.applemusicktv.media.MV_AUDIO_FILE).writeText(mv.audioText)
+                    mv.subsText?.let { java.io.File(dir, com.applemusicktv.media.MV_SUBS_FILE).writeText(it) }
                     val master = java.io.File(dir, com.applemusicktv.media.MV_MASTER_FILE)
                     master.writeText(mv.masterText)
                     android.net.Uri.fromFile(master).toString()
                 }
 
-                val drmCallback = AppleMusicDrmCallback(mv.adamId, mv.keyUri, bearer, mut)
+                val drmCallback = AppleMusicDrmCallback(mv.adamId, mv.keyUri, bearer, mut, mv.keyMap)
                 val drmManager = DefaultDrmSessionManager.Builder()
                     .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                     // MV HLS carries SEPARATE key ids for the audio and video tracks.
@@ -90,6 +95,7 @@ class MusicVideoViewModel @Inject constructor(
                     // available" (it was the video renderer that failed).
                     .setMultiSession(true)
                     .build(drmCallback)
+                    .also { this@MusicVideoViewModel.drmManager = it }
 
                 val httpFactory = DefaultHttpDataSource.Factory()
                     .setConnectTimeoutMs(30_000).setReadTimeoutMs(30_000)
@@ -157,6 +163,8 @@ class MusicVideoViewModel @Inject constructor(
         progressJob?.cancel()
         player?.release()
         player = null
+        drmManager?.release()
+        drmManager = null
     }
 
     override fun onCleared() { release() }

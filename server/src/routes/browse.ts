@@ -326,7 +326,7 @@ browse.get("/", async (c) => {
 browse.get("/genres", async (c) => {
   const sf = getStorefront() || "us"
   try {
-    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/genres`, { headers: hdrs(), params: { limit: 50 } })
+    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/genres`, { headers: hdrs(), params: { limit: 200 } })
     const genres = (res.data?.data ?? [])
       .map((g: any) => ({ id: g.id, name: g.attributes?.name ?? "" }))
       .filter((g: any) => g.name && g.id !== "34") // 34 = Podcasts

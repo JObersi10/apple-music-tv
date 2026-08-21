@@ -394,7 +394,7 @@ interface DirectAppleApi {
     @GET("v1/catalog/{sf}/genres")
     suspend fun catalogGenres(
         @Path("sf") storefront: String,
-        @Query("limit") limit: Int = 40,
+        @Query("limit") limit: Int = 200,
     ): AppleList<AppleItem<AppleGenreAttrs>>
 
     // ── Editorial categories: curators + multirooms (standalone parity) ───────

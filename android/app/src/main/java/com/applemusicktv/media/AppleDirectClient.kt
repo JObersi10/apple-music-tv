@@ -23,6 +23,7 @@ data class WebPlaybackResult(
 const val MV_VIDEO_FILE = "mv_video.m3u8"
 const val MV_AUDIO_FILE = "mv_audio.m3u8"
 const val MV_MASTER_FILE = "mv_master.m3u8"
+const val MV_SUBS_FILE = "mv_subs.m3u8"
 
 data class MusicVideoResult(
     val adamId:     String,
@@ -30,8 +31,12 @@ data class MusicVideoResult(
     val masterText: String,
     val videoText:  String,
     val audioText:  String,
-    /** Widevine key-line data-uri (real KID) for the license request body. */
+    /** Rewritten WebVTT subtitle playlist, or null when the video has no captions. */
+    val subsText:   String? = null,
+    /** Fallback Widevine key uri for the license request body. */
     val keyUri:     String = "",
+    /** placeholder-KID (hex) → license uri, so the callback routes per track. */
+    val keyMap:     Map<String, String> = emptyMap(),
 )
 
 @Singleton
@@ -236,8 +241,31 @@ class AppleDirectClient @Inject constructor() {
             val audio = rewriteMvMedia(abs(aUri))
             val videoText = video.text
             val audioText = audio.text
-            // License `uri` = Apple's original video Widevine key uri (echoed verbatim).
-            val keyUri = video.origKeyUri ?: ""
+
+            // Subtitles (WebVTT, unencrypted) — pick the DEFAULT/first CC or SUBTITLES
+            // rendition if present, absolutise its segment URIs, no DRM rewrite needed.
+            val subLine = lines.firstOrNull { it.startsWith("#EXT-X-MEDIA:TYPE=SUBTITLES") }
+                ?: lines.firstOrNull { it.startsWith("#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS") && it.contains("URI=") }
+            val subGroup = subLine?.let { Regex("""GROUP-ID="([^"]+)"""").find(it)?.groupValues?.get(1) }
+            val subsText: String? = subLine?.let { sl ->
+                val su = Regex("""URI="([^"]+)"""").find(sl)?.groupValues?.get(1) ?: return@let null
+                runCatching {
+                    val raw = fetchText(abs(su), emptyMap())
+                    val sBase = abs(su).substringBeforeLast("/") + "/"
+                    raw.lines().joinToString("\n") { ln ->
+                        if (ln.isNotBlank() && !ln.startsWith("#") && !ln.startsWith("http")) sBase + ln else ln
+                    }
+                }.getOrNull()
+            }
+            // Per-track routing: the DRM callback matches each session's challenge (which
+            // embeds the track's placeholder KID) to that track's license uri. Apple's
+            // license then binds the real content key under a KID the samples reference.
+            val keyMap = listOfNotNull(
+                video.kidHex?.let { it to (video.keyUri ?: "") },
+                audio.kidHex?.let { it to (audio.keyUri ?: "") },
+            ).toMap()
+            val keyUri = video.keyUri ?: ""
+            Log.i("AMMV", "keyMap=${keyMap.keys}")
 
             // Minimal master: our single video variant + single audio rendition, both
             // pointing at the local rewritten media playlists.
@@ -246,43 +274,65 @@ class AppleDirectClient @Inject constructor() {
                 appendLine("#EXT-X-VERSION:6")
                 appendLine("#EXT-X-INDEPENDENT-SEGMENTS")
                 appendLine("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"English\",DEFAULT=YES,AUTOSELECT=YES,URI=\"$MV_AUDIO_FILE\"")
-                // Force AUDIO="aud" to match our rendition group id.
-                val attrs = vPick.attrs.replace(Regex("""AUDIO="[^"]+""""), "AUDIO=\"aud\"")
+                if (subsText != null) {
+                    appendLine("#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,LANGUAGE=\"en\",URI=\"$MV_SUBS_FILE\"")
+                }
+                // Force AUDIO="aud" (and SUBTITLES="subs") to match our rendition groups.
+                var attrs = vPick.attrs.replace(Regex("""AUDIO="[^"]+""""), "AUDIO=\"aud\"")
                     .let { if (it.contains("AUDIO=")) it else "$it,AUDIO=\"aud\"" }
+                    .replace(Regex(""",?SUBTITLES="[^"]+""""), "")
+                if (subsText != null) attrs = "$attrs,SUBTITLES=\"subs\""
                 appendLine("#EXT-X-STREAM-INF:$attrs")
                 appendLine(MV_VIDEO_FILE)
             }
             Log.i("AMMV", "mv=$adamId picked ${vPick.height}p variant; rewrote v+a playlists keyUri=${keyUri.take(36)}")
-            MusicVideoResult(adamId = adamId, masterText = master, videoText = videoText, audioText = audioText, keyUri = keyUri)
+            MusicVideoResult(adamId = adamId, masterText = master, videoText = videoText, audioText = audioText, subsText = subsText, keyUri = keyUri, keyMap = keyMap)
         }
 
     /**
-     * Fetch one MV media playlist and correct its Widevine key line: pull the real KID
-     * from the init segment's `tenc` box, synthesize a matching pssh, and replace all the
-     * key lines (FairPlay/PlayReady/Widevine) with a single corrected Widevine one.
-     * Segment + map URIs are absolutised so the local file resolves them against mvod.
+     * Fetch one MV media playlist, KEEP Apple's original Widevine key line (its pssh
+     * carries the per-track placeholder KID Apple maps to the real content key — the
+     * fMP4 `tenc` default is unprotected, so there is no real KID to synthesize), and
+     * drop the FairPlay/PlayReady key lines so ExoPlayer commits to Widevine. Segment +
+     * map URIs are absolutised so the local file resolves them against mvod. Returns the
+     * rewritten text plus this track's placeholder KID (16 bytes) and license uri so the
+     * DRM callback can route each session's request to the matching track.
      */
     private fun rewriteMvMedia(mediaUrl: String): MvMedia {
         val text = fetchText(mediaUrl, emptyMap())
         val base = mediaUrl.substringBeforeLast("/") + "/"
         fun abs(u: String) = if (u.startsWith("http")) u else base + u
 
-        // Apple's ORIGINAL Widevine key uri (placeholder-KID pssh) — the license endpoint
-        // only issues a license when it's echoed back verbatim; our synthesized uri gets
-        // rejected (-1001). The returned license still carries the real key (mapped by
-        // adamId), which our corrected key line's real KID then matches.
-        val origWvUri = text.lines()
+        val wvLine = text.lines()
             .firstOrNull { it.startsWith("#EXT-X-KEY") && it.contains("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed") }
-            ?.let { Regex("""URI="([^"]+)"""").find(it)?.groupValues?.get(1) }
+        val wvUri = wvLine?.let { Regex("""URI="([^"]+)"""").find(it)?.groupValues?.get(1) }
+        // Apple's placeholder KID (Mic1/Mic6) lives in the pssh: protobuf `12 10 <16 bytes>`.
+        val placeholderKid = wvUri?.substringAfter("base64,", "")?.let { b64 ->
+            runCatching {
+                val raw = Base64.decode(b64, Base64.DEFAULT)
+                var j = 0; var found: ByteArray? = null
+                while (j + 2 + 16 <= raw.size) {
+                    if (raw[j] == 0x12.toByte() && raw[j + 1] == 0x10.toByte()) { found = raw.copyOfRange(j + 2, j + 18); break }
+                    j++
+                }
+                found
+            }.getOrNull()
+        }
+        val kidHex = placeholderKid?.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 
+        // The tenc default_KID is what MediaCodec queries per sample; it's typically all
+        // zeros here (the content key is identified by the pssh, not tenc). Build a pssh
+        // carrying BOTH: the tenc KID (so the decoder's key lookup hits) AND the Apple
+        // placeholder KID (so the two tracks get distinct DRM sessions and the license
+        // callback can route each to its own uri).
         val mapUri = Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(text)?.groupValues?.get(1)
-        val realKid = mapUri?.let { runCatching { extractTencKid(fetchBytes(abs(it))) }.getOrNull() }
-        val psshB64 = realKid?.let { Base64.encodeToString(widevinePssh(it), Base64.NO_WRAP) }
-        val keyLine = psshB64?.let {
-            "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"data:text/plain;base64,$it\"," +
+        val tencKid = mapUri?.let { runCatching { extractTencKid(fetchBytes(abs(it))) }.getOrNull() }
+        val kids = listOfNotNull(tencKid, placeholderKid).ifEmpty { null }
+        val rewrittenKeyLine = kids?.let {
+            val pssh = Base64.encodeToString(widevinePssh(it), Base64.NO_WRAP)
+            "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"data:text/plain;base64,$pssh\"," +
                 "KEYFORMAT=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\",KEYFORMATVERSIONS=\"1\""
         }
-        if (realKid == null) Log.w("AMMV", "no tenc KID for ${mediaUrl.take(60)} — using original key line")
 
         var keyEmitted = false
         val out = buildString {
@@ -290,9 +340,8 @@ class AppleDirectClient @Inject constructor() {
                 val line = raw.trim()
                 when {
                     line.startsWith("#EXT-X-KEY") -> {
-                        // Collapse the 3 DRM key lines into our single corrected one.
-                        if (keyLine != null) { if (!keyEmitted) { appendLine(keyLine); keyEmitted = true } }
-                        else appendLine(line)
+                        // Emit our combined-KID Widevine line once (drop FairPlay/PlayReady).
+                        if (!keyEmitted) { appendLine(rewrittenKeyLine ?: wvLine ?: line); keyEmitted = true }
                     }
                     line.startsWith("#EXT-X-MAP:") -> {
                         val u = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
@@ -303,10 +352,11 @@ class AppleDirectClient @Inject constructor() {
                 }
             }
         }
-        return MvMedia(out, origWvUri)
+        Log.i("AMMV", "track tencKid=${tencKid?.joinToString(""){"%02x".format(it.toInt() and 0xFF)}} placeholder=$kidHex")
+        return MvMedia(out, wvUri, kidHex)
     }
 
-    private data class MvMedia(val text: String, val origKeyUri: String?)
+    private data class MvMedia(val text: String, val keyUri: String?, val kidHex: String?)
 
     /** Scan an fMP4 init segment for the `tenc` box and return its 16-byte default KID. */
     private fun extractTencKid(bytes: ByteArray): ByteArray? {
@@ -316,7 +366,9 @@ class AppleDirectClient @Inject constructor() {
                 bytes[i + 2] == 'n'.code.toByte() && bytes[i + 3] == 'c'.code.toByte()) {
                 // tenc body: version(1) flags(3) reserved(1) pattern(1) isProtected(1)
                 // ivSize(1) then default_KID(16). KID starts 4(type)+9 from here.
-                val kidStart = i + 4 + 9
+                // tenc body after 'tenc': version(1) flags(3) reserved(1) pattern(1)
+                // isProtected(1) ivSize(1) then default_KID(16) → KID at 4+8.
+                val kidStart = i + 4 + 8
                 if (kidStart + 16 <= bytes.size) return bytes.copyOfRange(kidStart, kidStart + 16)
             }
             i++
@@ -371,10 +423,22 @@ class AppleDirectClient @Inject constructor() {
             "KEYFORMAT=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\",KEYFORMATVERSIONS=\"1\""
     }
 
+    /** Minimal Widevine pssh box wrapping one or more key ids. */
+    private fun widevinePssh(kids: List<ByteArray>): ByteArray {
+        // Widevine protobuf: field 1 (algorithm) = AESCTR, then field 2 (key_id) repeated.
+        var payload = byteArrayOf(0x08, 0x01)
+        for (kid in kids) payload = payload + byteArrayOf(0x12, 0x10) + kid
+        return psshBox(payload)
+    }
+
     /** Minimal Widevine pssh box wrapping a single key id. */
     private fun widevinePssh(kid: ByteArray): ByteArray {
         // Widevine protobuf: field 1 (algorithm) = AESCTR, field 2 (key_id) = kid.
         val payload = byteArrayOf(0x08, 0x01, 0x12, 0x10) + kid
+        return psshBox(payload)
+    }
+
+    private fun psshBox(payload: ByteArray): ByteArray {
         val systemId = byteArrayOf(
             0xED.toByte(), 0xEF.toByte(), 0x8B.toByte(), 0xA9.toByte(), 0x79, 0xD6.toByte(),
             0x4A, 0xCE.toByte(), 0xA3.toByte(), 0xC8.toByte(), 0x27, 0xDC.toByte(),

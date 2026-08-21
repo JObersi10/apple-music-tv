@@ -63,6 +63,7 @@ data class ArtistFullDto(
     val genreNames:     List<String>          = emptyList(),
     val editorialNotes: String?               = null,
     val topSongs:       List<SongDto>         = emptyList(),
+    val musicVideos:    List<SongDto>         = emptyList(),
     val latestRelease:  AlbumDto?             = null,
     val albums:         List<AlbumDto>        = emptyList(),
     val featuredAlbums: List<AlbumDto>        = emptyList(),

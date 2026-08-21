@@ -18,6 +18,11 @@ class NavigationViewModel @Inject constructor() : ViewModel() {
     // MainActivity sets this so Menu key knows current screen
     var isOnNowPlaying: Boolean = false
 
+    // When a fullscreen music video is on screen, MainActivity must NOT eat media/menu
+    // keys for the audio player — the video screen owns transport, and Menu shouldn't
+    // jump to Now Playing.
+    var isOnMusicVideo: Boolean = false
+
     fun navigateToNowPlaying() { _goToNowPlaying.value = true }
     fun consumeNowPlayingNavigation() { _goToNowPlaying.value = false }
     fun toggleQueuePanel() { _toggleQueue.value++ }

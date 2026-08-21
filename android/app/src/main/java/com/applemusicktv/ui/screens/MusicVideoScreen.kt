@@ -64,8 +64,13 @@ fun MusicVideoScreen(
                 factory = {
                     PlayerView(it).apply {
                         useController = true
+                        controllerShowTimeoutMs = 3000       // bar fades after 3s idle
+                        controllerAutoShow = false           // don't force it open on load
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        setKeepScreenOn(true)                // don't dim/sleep during video
+                        subtitleView?.setApplyEmbeddedStyles(true)
                         player = p
+                        hideController()
                     }
                 },
                 update = { it.player = p },
