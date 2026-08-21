@@ -277,8 +277,8 @@ fun NowPlayingScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(240.dp)
-                        .clip(RoundedCornerShape(if (state.artworkRounded) 16.dp else 0.dp))
+                        .size(288.dp)
+                        .clip(RoundedCornerShape(if (state.artworkRounded) 18.dp else 0.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
                     // Cross-fade the cover instead of hard-swapping it on song change.
@@ -329,7 +329,8 @@ fun NowPlayingScreen(
                         modifier = Modifier.align(Alignment.CenterEnd).size(32.dp).graphicsLayer { alpha = chromeAlpha },
                     ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("···", fontSize = 13.sp, color = Color.White) } }
                 }
-                Spacer(Modifier.height(3.dp))
+                // No gap between title and artist — a fixed spacer here read as an abrupt
+                // collapse against the idle chrome fade. Artist sits directly under the title.
                 if (song.artistId != null) {
                     Surface(
                         onClick = { onArtistClick(song.artistId) },
@@ -804,7 +805,10 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
             }
         },
         update = { view -> view.player = exo },
-        modifier = modifier.graphicsLayer { this.alpha = alpha },
+        // Overscan 4% so the video surface always covers the box even if it lays out a
+        // hair small on the first frame — the parent box clip crops the overflow. Kills
+        // the thin black edge / "shrinks in" look on the static→motion handoff.
+        modifier = modifier.graphicsLayer { this.alpha = alpha; scaleX = 1.04f; scaleY = 1.04f },
     )
 }
 

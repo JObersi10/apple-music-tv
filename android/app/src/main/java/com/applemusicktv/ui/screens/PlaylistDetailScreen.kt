@@ -265,9 +265,13 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("${idx + 1}", fontSize = 12.sp, color = Color(0xFF555555), modifier = Modifier.width(24.dp))
-                Box(Modifier.size(40.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF2A2A2A))) {
+                // Music-video frames are 16:9 — show the whole frame in a wide thumbnail
+                // instead of a square crop that lops off the sides. Songs stay square.
+                val thumbMod = if (song.isMusicVideo) Modifier.height(40.dp).aspectRatio(16f / 9f)
+                               else Modifier.size(40.dp)
+                Box(thumbMod.clip(RoundedCornerShape(5.dp)).background(Color(0xFF2A2A2A))) {
                     if (song.artworkUrl != null)
-                        AsyncImage(model = song.artworkUrl(80), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        AsyncImage(model = song.artworkUrl(120), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 }
                 Column(Modifier.weight(1f)) {
                     Text(song.title, fontSize = 13.sp, color = Color.White, maxLines = 1, fontWeight = FontWeight.Medium)
