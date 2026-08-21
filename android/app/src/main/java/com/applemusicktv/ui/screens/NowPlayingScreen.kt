@@ -788,7 +788,15 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
         factory = { ctx ->
             androidx.media3.ui.PlayerView(ctx).apply {
                 useController = false
-                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                // Motion art is square and so is the cover box — FILL maps it exactly with no
+                // distortion. ZOOM was leaving a black strip on the bottom/right because the
+                // video surface laid out smaller than the box, anchored top-left.
+                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+                // Force the PlayerView (and its inner surface) to fill the whole box.
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                )
                 // Keep shutter black — hides the green YUV frame on surface reattach.
                 // Alpha on the outer modifier handles the fade-in instead.
                 setShutterBackgroundColor(android.graphics.Color.BLACK)

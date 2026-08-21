@@ -51,7 +51,8 @@ class MusicRepository @Inject constructor(
     suspend fun search(term: String, limit: Int = 20): Result<SearchResults> {
         if (!useProxy) {
             return direct.search(term, limit).map { r ->
-                SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto), playlists = r.playlists.map(::playlistToAlbum))
+                SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto),
+                    playlists = r.playlists.map(::playlistToAlbum).filter { it.id.startsWith("pl.") })
             }
         }
         return runCatching {
