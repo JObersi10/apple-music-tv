@@ -33,6 +33,7 @@ class GainProcessor : BaseAudioProcessor() {
     private var trackKey: String? = null
     private var samplesSinceLog = 0L
     private var samplesInTrack = 0L   // for the settle-then-lock behaviour
+    private var lastLoggedGain = -1f  // last gain we emitted a VOL line for (-1 = none yet)
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return when (inputAudioFormat.encoding) {
@@ -54,6 +55,7 @@ class GainProcessor : BaseAudioProcessor() {
         rms = TARGET_RMS / gain.coerceAtLeast(0.01f)    // keep rms consistent with the adopted gain
         samplesSinceLog = 0L
         samplesInTrack = 0L
+        lastLoggedGain = -1f
         logger?.invoke("VOL", "track=${newKey ?: "?"} start gain=${"%.2f".format(gain)} (${if (newKey != null && cacheGet?.invoke(newKey) != null) "remembered" else "fresh"})")
     }
 
@@ -111,10 +113,22 @@ class GainProcessor : BaseAudioProcessor() {
                 gain += rate * (target - gain)
 
                 samplesSinceLog += count
-                if (samplesSinceLog >= sampleRate) {   // ~1s cadence (count ≈ frames*channels)
+                val locked = samplesInTrack > SETTLE_SAMPLES
+                if (!locked) {
+                    // Settling: report ~1s so you can watch it find the level.
+                    if (samplesSinceLog >= sampleRate * 2) {   // count = frames*channels, stereo
+                        samplesSinceLog = 0
+                        logger?.invoke("VOL", "gain=${"%.2f".format(gain)} rms=${"%.3f".format(rms)} → target=${"%.2f".format(target)} [settling]")
+                        lastLoggedGain = gain
+                    }
+                } else {
+                    // Locked: emit the settled value ONCE, then stay quiet unless the gain actually
+                    // drifts (a real level change), instead of spamming an unchanging number every second.
+                    if (kotlin.math.abs(gain - lastLoggedGain) >= 0.03f || lastLoggedGain < 0f) {
+                        logger?.invoke("VOL", "settled gain=${"%.2f".format(gain)} [locked]")
+                        lastLoggedGain = gain
+                    }
                     samplesSinceLog = 0
-                    val phase = if (samplesInTrack > SETTLE_SAMPLES) "locked" else "settling"
-                    logger?.invoke("VOL", "gain=${"%.2f".format(gain)} rms=${"%.3f".format(rms)} → target=${"%.2f".format(target)} [$phase]")
                 }
             }
         }

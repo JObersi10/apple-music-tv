@@ -922,7 +922,9 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
                 android.graphics.Color.colorToHSV(swatch.rgb, hsv)
                 if (monochrome) {
                     hsv[1] = 0f                                              // true grey, no invented hue
-                    hsv[2] = (0.45f + hsv[2] * 0.55f).coerceIn(0.42f, 0.96f) // keep the spread, stay glow-visible
+                    // Keep greys GREY — a near-white orb competes with the white lyrics. Cap well below
+                    // white so monochrome art reads as smoky grey pools, not glowing white blobs.
+                    hsv[2] = (0.30f + hsv[2] * 0.42f).coerceIn(0.30f, 0.68f)
                 } else {
                     // Deep saturated colours read as colour; pastels read as light grey. Floor the
                     // saturation and cap the value so a pale swatch doesn't wash out the lyrics.

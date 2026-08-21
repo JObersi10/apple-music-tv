@@ -673,8 +673,18 @@ class PlayerViewModel @Inject constructor(
     /** Remote type chosen in setup — overrides hardware detection for the toggle button. */
     fun remoteOverride(): String = onboardingPrefs.remoteOverride
 
-    /** Dev menu: replay setup on next launch. */
-    fun resetOnboarding() = onboardingPrefs.reset()
+    /** Flips true when the user asks to replay setup, so the shell can show it without a relaunch. */
+    private val _replayOnboarding = MutableStateFlow(false)
+    val replayOnboarding: StateFlow<Boolean> = _replayOnboarding
+
+    /** Dev menu: replay setup now (and on next launch until finished). */
+    fun resetOnboarding() {
+        onboardingPrefs.reset()
+        _replayOnboarding.value = true
+    }
+
+    /** Shell consumed the replay signal (setup is now on screen). */
+    fun consumeReplayOnboarding() { _replayOnboarding.value = false }
 
     /** Setup just finished — safe to bring back whatever was playing before. */
     fun onOnboardingFinished() {
@@ -949,7 +959,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun stepLyricsScale(dir: Int) {
-        val steps = floatArrayOf(0.8f, 1.0f, 1.35f)
+        val steps = floatArrayOf(0.8f, 1.1f, 1.5f, 2.0f)
         val cur = steps.indexOfFirst { kotlin.math.abs(it - _state.value.lyricsScale) < 0.05f }.let { if (it < 0) 1 else it }
         val next = steps[(cur + dir).coerceIn(0, steps.lastIndex)]
         _state.update { it.copy(lyricsScale = next) }

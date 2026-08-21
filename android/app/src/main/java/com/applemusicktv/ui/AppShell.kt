@@ -62,6 +62,12 @@ fun AppShell(modifier: Modifier = Modifier) {
     // server and token are configured, so there is no nav bar and nothing to browse.
     val onboardingVm: com.applemusicktv.ui.viewmodel.OnboardingViewModel = hiltViewModel()
     var showOnboarding by remember { mutableStateOf(!playerVm.onboardingCompleted()) }
+    // "Replay Setup" in Settings resets the pref and fires this — bring setup up right away
+    // instead of only on the next launch.
+    val replay by playerVm.replayOnboarding.collectAsState()
+    LaunchedEffect(replay) {
+        if (replay) { showOnboarding = true; playerVm.consumeReplayOnboarding() }
+    }
     if (showOnboarding) {
         OnboardingScreen(
             vm = onboardingVm,

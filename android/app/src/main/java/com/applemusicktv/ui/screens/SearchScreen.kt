@@ -187,6 +187,46 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty() || state.results!!.playlists.isNotEmpty()) -> {
                 val results = state.results!!
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    // Top Results — the strongest hit of each kind up front, the way Apple Music leads
+                    // its search page. Editorial playlists first (what the user missed), then artist,
+                    // album and the #1 song, so the best match is one focus move away.
+                    item {
+                        Text("Top Results", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            items(results.playlists.take(2), key = { "top-pl-${it.id}" }) { pl ->
+                                AlbumCard(album = pl, size = 150, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
+                            }
+                            results.artists.firstOrNull()?.let { artist ->
+                                item(key = "top-ar-${artist.id}") {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(150.dp)) {
+                                        Surface(
+                                            onClick = { onArtistClick(artist.id) },
+                                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                                            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
+                                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                                            modifier = Modifier.size(120.dp),
+                                        ) {
+                                            Box(Modifier.fillMaxSize()) {
+                                                if (artist.artworkUrl != null) AsyncImage(
+                                                    model = artist.artworkUrl.replace("{w}", "240").replace("{h}", "240").replace("{f}", "jpg"),
+                                                    contentDescription = artist.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.height(6.dp))
+                                        Text(artist.name, fontSize = 12.sp, color = Color.White, maxLines = 1)
+                                        Text("Artist", fontSize = 10.sp, color = Color(0xFF999999))
+                                    }
+                                }
+                            }
+                            items(results.albums.take(2), key = { "top-al-${it.id}" }) { album ->
+                                val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                                AlbumCard(album = album, size = 150, onClick = {
+                                    if (isPlaylist) onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "") else onAlbumClick(album.id)
+                                })
+                            }
+                        }
+                    }
                     if (results.playlists.isNotEmpty()) {
                         item {
                             Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))

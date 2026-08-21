@@ -13,6 +13,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -45,7 +47,16 @@ fun DevMenuScreen(
     var pcIpDraft by remember(state.pcServerIp) { mutableStateOf(state.pcServerIp) }
     var showDev by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+    // PC IP is a press-to-edit button, not a live field: a focused BasicTextField pops the
+    // Fire TV IME by itself the moment D-pad focus lands on it.
+    var pcIpEditing by remember { mutableStateOf(false) }
+    val pcIpFocus = remember { FocusRequester() }
     val ctx = LocalContext.current
+    val rootView = androidx.compose.ui.platform.LocalView.current
+    fun hideIme() = runCatching {
+        ctx.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+            ?.hideSoftInputFromWindow(rootView.windowToken, 0)
+    }
 
     // Live network activity — polled from the shared NetworkLog buffer.
     var netLogs by remember { mutableStateOf(emptyList<String>()) }
@@ -64,7 +75,7 @@ fun DevMenuScreen(
             // ── SOFTWARE ──────────────────────────────────────────────────
             SectionLabel("Software")
             UpdatesSection(initialUpdate)
-            BugReportRow(state.webServerUrl)
+            PhoneServerRow(state.webServerUrl)
 
             // ── PLAYBACK ──────────────────────────────────────────────────
             SectionLabel("Playback")
@@ -221,22 +232,43 @@ fun DevMenuScreen(
                 ) {
                     Text("PC SERVER", fontSize = 9.sp, color = Color(0xFF888888), fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.weight(1f).background(Color(0xFF0D0D0D), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
-                        ) {
-                            BasicTextField(
-                                value = pcIpDraft, onValueChange = { pcIpDraft = it }, singleLine = true,
-                                textStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
-                                cursorBrush = SolidColor(Color(0xFFFA233B)),
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft) }),
-                                decorationBox = { inner ->
-                                    if (pcIpDraft.isEmpty()) Text("192.168.x.x", fontSize = 13.sp, color = Color(0xFF444444), fontFamily = FontFamily.Monospace)
-                                    inner()
-                                },
-                            )
+                        if (pcIpEditing) {
+                            // Editing: OK opened this, so the field may hold focus + IME. Done/Back closes.
+                            LaunchedEffect(Unit) { runCatching { pcIpFocus.requestFocus() } }
+                            androidx.activity.compose.BackHandler(enabled = true) { pcIpEditing = false; hideIme() }
+                            Box(
+                                Modifier.weight(1f).background(Color(0xFF0D0D0D), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+                            ) {
+                                BasicTextField(
+                                    value = pcIpDraft, onValueChange = { pcIpDraft = it }, singleLine = true,
+                                    textStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
+                                    cursorBrush = SolidColor(Color(0xFFFA233B)),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }),
+                                    modifier = Modifier.fillMaxWidth().focusRequester(pcIpFocus),
+                                    decorationBox = { inner ->
+                                        if (pcIpDraft.isEmpty()) Text("192.168.x.x", fontSize = 13.sp, color = Color(0xFF444444), fontFamily = FontFamily.Monospace)
+                                        inner()
+                                    },
+                                )
+                            }
+                            ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }
+                        } else {
+                            // Idle: a plain button. Focus can land here with no IME. OK opens the editor.
+                            Surface(
+                                onClick = { pcIpEditing = true },
+                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF0D0D0D), focusedContainerColor = Color(0xFF1E1E1E)),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    pcIpDraft.ifEmpty { "192.168.x.x — press to edit" },
+                                    fontSize = 13.sp, color = if (pcIpDraft.isEmpty()) Color(0xFF666666) else Color.White,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                                )
+                            }
                         }
-                        ActionBtn("Set", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft) }
                         if (pcIpDraft.isNotEmpty()) ActionBtn("Clear", Color(0xFF3A1A1A), small = true) { pcIpDraft = ""; vm.setPcServerIp("") }
                     }
                     if (state.pcServerIp.isNotEmpty())
@@ -266,6 +298,9 @@ fun DevMenuScreen(
                     }
                 }
 
+                SectionLabel("Bug Report")
+                BugReportRow(state.webServerUrl)
+
                 SectionLabel("Danger Zone")
                 ActionBtn("Reset App", Color(0xFF4A1414)) { confirmReset = true }
                 Text("Wipes token, pins & settings, then restarts.", fontSize = 10.sp, color = Color(0xFF775555))
@@ -290,6 +325,23 @@ fun DevMenuScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PhoneServerRow(webServerUrl: String) {
+    Column(
+        Modifier.fillMaxWidth().background(Color(0xFF161618), RoundedCornerShape(10.dp)).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Phone web server", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Medium)
+        if (webServerUrl.isNotEmpty()) {
+            Text("Open on your phone to set the token and change settings:", fontSize = 10.sp, color = Color(0xFF777777))
+            Text(webServerUrl, fontSize = 15.sp, color = Color(0xFF6BCB77),
+                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+        } else {
+            Text("Connect to Wi-Fi to expose the phone page.", fontSize = 10.sp, color = Color(0xFF777777))
         }
     }
 }
@@ -455,8 +507,9 @@ internal fun orbSpeedLabel(f: Float): String = when {
 
 internal fun lyricsScaleLabel(f: Float): String = when {
     f < 0.95f -> "Small"
-    f < 1.1f  -> "Normal"
-    else      -> "Large"
+    f < 1.3f  -> "Normal"
+    f < 1.75f -> "Large"
+    else      -> "Huge"
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
