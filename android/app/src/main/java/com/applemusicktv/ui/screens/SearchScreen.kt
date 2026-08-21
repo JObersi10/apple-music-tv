@@ -230,7 +230,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     if (results.playlists.isNotEmpty()) {
                         item {
                             Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 items(results.playlists, key = { it.id }) { pl ->
                                     AlbumCard(album = pl, size = 130, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
                                 }
@@ -240,7 +240,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     if (results.artists.isNotEmpty()) {
                         item {
                             Text("Artists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 items(results.artists, key = { it.id }) { artist ->
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -330,6 +330,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                 columns = GridCells.Fixed(7),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(20.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 modifier = Modifier.height(300.dp),
                             ) {
                                 items(results.albums, key = { it.id }) { album ->
@@ -368,7 +369,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                     }
                                 }
                                 Spacer(Modifier.height(10.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                     items(recents, key = { it }) { term ->
                                         Surface(
                                             onClick = { vm.runRecent(term) },
@@ -412,7 +413,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         state.genreContent?.sections?.forEach { section ->
                             item {
                                 Text(section.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                     items(section.albums, key = { it.id }) { item ->
                                         val isPlaylist = item.id.startsWith("pl.") || item.id.startsWith("p.")
                                         com.applemusicktv.ui.components.AlbumCard(

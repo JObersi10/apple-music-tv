@@ -1523,14 +1523,14 @@ private fun LyricLineRow(
                     val activeIdx = line.words.indexOfLast { it.startMs <= progressMs }
                     WordWipeLine(words = line.words, activeIdx = activeIdx, progressMs = progressMs, fontSize = (24f * fontScale).sp, lineHeight = (30f * fontScale).sp)
                 } else {
-                    // Every line is the SAME size — the active line's emphasis is weight + brightness
-                    // (+ the karaoke wipe), NOT a larger font. A size difference changed each line's
-                    // height as the active line moved, and that height change DURING the scroll
-                    // animation was the "warping/melting". Equal sizes = no reflow = no warp.
+                    // Apple Music look: the active line is large + white; every other line is smaller
+                    // and dim, so the sung line clearly stands out. (Inactive lines share one smaller
+                    // size, so as the active line moves only two lines resize — the old active shrinks,
+                    // the new one grows — which the scroll animation carries smoothly.)
                     val style = when {
                         isActive -> TextStyle(fontSize = (24f * fontScale).sp, fontWeight = FontWeight.Bold, lineHeight = (30f * fontScale).sp, letterSpacing = (-0.4).sp, color = Color.White)
-                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (24f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (30f * fontScale).sp, letterSpacing = (-0.2).sp)
-                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (24f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (30f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (16f * fontScale).sp, fontWeight = FontWeight.SemiBold, lineHeight = (21f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (16f * fontScale).sp, fontWeight = FontWeight.SemiBold, lineHeight = (21f * fontScale).sp, letterSpacing = (-0.2).sp)
                     }
                     Text(text = AnnotatedString(line.text), style = style)
                 }
