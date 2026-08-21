@@ -1303,6 +1303,9 @@ private fun LyricsPanel(
             }
             .then(if (playFocus != null) Modifier.focusProperties {
                 right = playFocus
+                // LEFT from a lyric line always lands on play/pause too — user wants
+                // either horizontal press out of the lyrics to go straight to transport.
+                left = playFocus
                 // Entering the list (e.g. LEFT from the play button) lands on the current
                 // line, not whichever line happens to sit nearest the button.
                 // Only steer focus to the active line if it is actually laid out right now.

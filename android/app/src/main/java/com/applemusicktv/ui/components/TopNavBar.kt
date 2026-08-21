@@ -9,6 +9,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -31,7 +34,7 @@ private fun EqualizerDot() {
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun TopNavBar(
     selected: TopNavTab,
@@ -41,6 +44,10 @@ fun TopNavBar(
     modifier: Modifier = Modifier,
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    // When the Now Playing screen is up, ANY upward entry into the nav bar (from the
+    // ··· button, transport row, lyrics, etc.) must land on the Now Playing tab, not
+    // whichever tab sits nearest the pressed control.
+    val npTabFocus = remember { FocusRequester() }
     val alpha by animateFloatAsState(
         targetValue = if (selected == TopNavTab.NowPlaying && !isFocused) 0f else 1f,
         animationSpec = tween(500),
@@ -50,6 +57,9 @@ fun TopNavBar(
     Box(
         modifier = modifier
             .onFocusChanged { isFocused = it.hasFocus }
+            .focusProperties {
+                enter = { if (selected == TopNavTab.NowPlaying) npTabFocus else FocusRequester.Default }
+            }
             .graphicsLayer { this.alpha = alpha }
             .fillMaxWidth()
             .background(Color(0xFF0A0A0A))
@@ -74,6 +84,7 @@ fun TopNavBar(
 
                     Surface(
                         onClick = { onSelect(tab) },
+                        modifier = if (tab == TopNavTab.NowPlaying) Modifier.focusRequester(npTabFocus) else Modifier,
                         shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                         colors  = ClickableSurfaceDefaults.colors(
                             containerColor        = bgColor,
