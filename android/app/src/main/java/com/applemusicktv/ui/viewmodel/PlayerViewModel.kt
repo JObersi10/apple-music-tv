@@ -959,7 +959,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun stepLyricsScale(dir: Int) {
-        val steps = floatArrayOf(0.8f, 1.1f, 1.5f, 2.0f)
+        val steps = floatArrayOf(1.0f, 1.25f, 1.6f, 2.0f)
         val cur = steps.indexOfFirst { kotlin.math.abs(it - _state.value.lyricsScale) < 0.05f }.let { if (it < 0) 1 else it }
         val next = steps[(cur + dir).coerceIn(0, steps.lastIndex)]
         _state.update { it.copy(lyricsScale = next) }

@@ -506,9 +506,9 @@ internal fun orbSpeedLabel(f: Float): String = when {
 }
 
 internal fun lyricsScaleLabel(f: Float): String = when {
-    f < 0.95f -> "Small"
-    f < 1.3f  -> "Normal"
-    f < 1.75f -> "Large"
+    f < 1.1f  -> "Small"
+    f < 1.4f  -> "Normal"
+    f < 1.8f  -> "Large"
     else      -> "Huge"
 }
 

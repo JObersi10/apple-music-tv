@@ -1529,8 +1529,8 @@ private fun LyricLineRow(
                     // the new one grows — which the scroll animation carries smoothly.)
                     val style = when {
                         isActive -> TextStyle(fontSize = (24f * fontScale).sp, fontWeight = FontWeight.Bold, lineHeight = (30f * fontScale).sp, letterSpacing = (-0.4).sp, color = Color.White)
-                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (16f * fontScale).sp, fontWeight = FontWeight.SemiBold, lineHeight = (21f * fontScale).sp, letterSpacing = (-0.2).sp)
-                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (16f * fontScale).sp, fontWeight = FontWeight.SemiBold, lineHeight = (21f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (18.5f * fontScale).sp, fontWeight = FontWeight.SemiBold, lineHeight = (24f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (18.5f * fontScale).sp, fontWeight = FontWeight.SemiBold, lineHeight = (24f * fontScale).sp, letterSpacing = (-0.2).sp)
                     }
                     Text(text = AnnotatedString(line.text), style = style)
                 }
