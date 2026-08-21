@@ -430,6 +430,17 @@ interface DirectAppleApi {
         @Query("platform") platform: String = "web",
     ): EdDataResponse
 
+    @GET("v1/editorial/{sf}/rooms/{id}")
+    suspend fun edRoom(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("include") include: String = "contents",
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("limit[contents]") contentsLimit: Int = 60,
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+    ): EdDataResponse
+
     @GET("v1/editorial/{sf}/multirooms/{id}")
     suspend fun edMultiRoom(
         @Path("sf") storefront: String,

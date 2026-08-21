@@ -137,6 +137,48 @@ browse.get("/curator/:id", async (c) => {
   }
 });
 
+// The genre/mood/decade tile grid, like Apple's "Browse by Genre". Three sibling
+// editorial rooms, each a list of apple-curators with editorial artwork. Tapping a tile
+// opens that apple-curator as a category page. Rewind/Replay year-in-review curators are
+// filtered out. Rooms are stable ids pulled from music.apple.com's browse feed.
+const CATEGORY_ROOMS: Array<{ title: string; room: string }> = [
+  { title: "Genres",            room: "6456176470" },
+  { title: "Moods & Activities", room: "6456176472" },
+  { title: "Decades",           room: "6456176471" },
+]
+browse.get("/categories", async (c) => {
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  const sf = getStorefront() || "us";
+  const drop = /rewind|replay|year in|wrapped/i;
+  try {
+    const sections = await Promise.all(CATEGORY_ROOMS.map(async ({ title, room }) => {
+      const res = await axios.get(`${APPLE}/v1/editorial/${sf}/rooms/${room}`, {
+        headers: hdrs(mut),
+        params: { include: "contents", extend: "editorialArtwork", l: "en-US", platform: "web", "limit[contents]": 60 },
+      });
+      const items = (res.data?.data?.[0]?.relationships?.contents?.data ?? [])
+        .filter((it: any) => it.type === "apple-curators" || it.type === "curators")
+        .filter((it: any) => !drop.test(it.attributes?.name ?? ""))
+        .map((it: any) => {
+          const a = it.attributes ?? {};
+          const ea = a.editorialArtwork ?? {};
+          return {
+            id: it.id,
+            // Strip the "Apple Music " brand prefix so tiles read "Acoustic", "Chill", etc.
+            name: (a.name ?? "Unknown").replace(/^Apple Music (?=\S)/, "").replace(/^Apple (?=\S)/, ""),
+            kind: it.type === "apple-curators" ? "apple-curator" : "curator",
+            isApple: it.type === "apple-curators",
+            artworkUrl: artUrl((ea.subscriptionCover ?? ea.brandLogo ?? a.artwork)?.url, 600),
+          };
+        });
+      return { title, items };
+    }));
+    return c.json({ sections: sections.filter((s) => s.items.length) });
+  } catch (e: any) {
+    return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed", sections: [] }, 200);
+  }
+});
+
 // An editorial grouping → its default tab's children are named content shelves.
 // Shelf title is `attributes.name` (NOT `title` — that field is empty here).
 async function groupingSections(sf: string, groupingId: string, mut?: string): Promise<Array<{ title: string; albums: any[] }>> {

@@ -86,6 +86,31 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         multirooms + curators
     }.getOrDefault(emptyList())
 
+    // Genre/mood/decade grid — three editorial rooms of apple-curators. Mirrors the proxy.
+    suspend fun getCategories(): List<CategorySectionDto> {
+        val rooms = listOf("Genres" to "6456176470", "Moods & Activities" to "6456176472", "Decades" to "6456176471")
+        val drop = Regex("rewind|replay|year in|wrapped", RegexOption.IGNORE_CASE)
+        return rooms.mapNotNull { (title, room) ->
+            val items = runCatching {
+                api.edRoom(storefront, room).data.firstOrNull()?.relationships?.contents?.data.orEmpty()
+                    .filter { it.type == "apple-curators" || it.type == "curators" }
+                    .filter { !drop.containsMatchIn(it.attributes?.name ?: "") }
+                    .map {
+                        val a = it.attributes
+                        val ea = a?.editorialArtwork
+                        CuratorDto(
+                            id = it.id,
+                            name = (a?.name ?: "Unknown").replace(Regex("^Apple Music (?=\\S)"), "").replace(Regex("^Apple (?=\\S)"), ""),
+                            kind = if (it.type == "apple-curators") "apple-curator" else "curator",
+                            isApple = it.type == "apple-curators",
+                            artworkUrl = resolveArt(ea?.subscriptionCover?.url ?: ea?.brandLogo?.url ?: a?.artwork?.url, 600),
+                        )
+                    }
+            }.getOrDefault(emptyList())
+            if (items.isEmpty()) null else CategorySectionDto(title, items)
+        }
+    }
+
     suspend fun getCurator(id: String, isApple: Boolean): MultiRoomDto {
         val kind = if (isApple) "apple-curators" else "curators"
         val cur = api.edCurator(storefront, kind, id).data.firstOrNull()

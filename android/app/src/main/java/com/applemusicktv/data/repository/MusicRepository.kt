@@ -23,6 +23,9 @@ data class Curator(
     val artworkUrl: String?,
 )
 
+/** A titled row of category tiles (Genres, Moods & Activities, Decades). */
+data class CategoryGroup(val title: String, val items: List<Curator>)
+
 data class SearchResults(
     val songs:     List<Song>    = emptyList(),
     val albums:    List<Album>   = emptyList(),
@@ -140,6 +143,18 @@ class MusicRepository @Inject constructor(
     suspend fun getMultiRoom(id: String) =
         if (!useProxy) runCatching { direct.getMultiRoom(id) }
         else runCatching { api.getMultiRoom(id) }
+
+    // Genre/mood/decade tile grid (each tile is a curator → category page).
+    suspend fun getCategories(): Result<List<CategoryGroup>> =
+        if (!useProxy) runCatching { direct.getCategories().map { it.toGroup() } }
+        else runCatching {
+            api.getCategories().sections.map { s ->
+                CategoryGroup(s.title, s.items.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
+            }
+        }
+
+    private fun CategorySectionDto.toGroup() =
+        CategoryGroup(title, items.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
 
     suspend fun getGenres() =
         if (!useProxy) direct.genres().map { g -> g.filter { it.name.isNotEmpty() && it.id != "34" } }

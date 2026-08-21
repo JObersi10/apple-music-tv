@@ -170,6 +170,12 @@ data class HomeSection(val title: String, val albums: List<AlbumDto> = emptyList
 data class HomeResponse(val sections: List<HomeSection> = emptyList())
 
 @JsonClass(generateAdapter = true)
+data class CategorySectionDto(val title: String, val items: List<CuratorDto> = emptyList())
+
+@JsonClass(generateAdapter = true)
+data class CategoriesResponse(val sections: List<CategorySectionDto> = emptyList())
+
+@JsonClass(generateAdapter = true)
 data class MultiRoomDto(
     val id: String = "",
     val title: String = "",
@@ -239,6 +245,9 @@ interface ProxyApi {
 
     @GET("api/browse/multiroom/{id}")
     suspend fun getMultiRoom(@Path("id") id: String): MultiRoomDto
+
+    @GET("api/browse/categories")
+    suspend fun getCategories(): CategoriesResponse
 
     @GET("api/browse/genres")
     suspend fun getGenres(): GenresResponse
