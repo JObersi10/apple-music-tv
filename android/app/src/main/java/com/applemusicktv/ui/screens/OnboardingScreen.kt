@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
+import androidx.compose.animation.togetherWith
 import com.applemusicktv.data.CrossfadePreferences
 import com.applemusicktv.data.OnboardingPreferences
 import com.applemusicktv.ui.viewmodel.OnboardingViewModel
@@ -78,14 +79,35 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
             .padding(horizontal = 96.dp, vertical = 56.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
-            Text("Step ${s.step} of ${vm.totalSteps}", fontSize = 13.sp, color = Color(0xFF666666))
-            Spacer(Modifier.height(6.dp))
+            ProgressDots(current = s.step, total = vm.totalSteps)
+            Spacer(Modifier.height(14.dp))
 
-            when (s.step) {
-                1 -> StepAccount(vm, s)
-                2 -> StepRemote(vm, s, TvDevice.isFireTv(context))
-                3 -> StepPreferences(vm, s)
-                else -> StepTips(TvDevice.needsOnScreenMenuToggle(context, s.remoteChoice))
+            // Slide + fade between steps — forward slides in from the right, Back from the left.
+            var prevStep by remember { mutableStateOf(s.step) }
+            val forward = s.step >= prevStep
+            LaunchedEffect(s.step) { prevStep = s.step }
+            androidx.compose.animation.AnimatedContent(
+                targetState = s.step,
+                transitionSpec = {
+                    val dir = if (forward) 1 else -1
+                    (androidx.compose.animation.slideInHorizontally(
+                        androidx.compose.animation.core.tween(320)
+                    ) { w -> dir * w / 3 } + androidx.compose.animation.fadeIn(
+                        androidx.compose.animation.core.tween(320)
+                    )) togetherWith (androidx.compose.animation.fadeOut(
+                        androidx.compose.animation.core.tween(160)
+                    ))
+                },
+                label = "onboardingStep",
+            ) { step ->
+                Column {
+                    when (step) {
+                        1 -> StepAccount(vm, s)
+                        2 -> StepRemote(vm, s, TvDevice.isFireTv(context))
+                        3 -> StepPreferences(vm, s)
+                        else -> StepTips(TvDevice.needsOnScreenMenuToggle(context, s.remoteChoice))
+                    }
+                }
             }
 
             Spacer(Modifier.weight(1f))
@@ -244,6 +266,24 @@ private fun StepTips(onScreenToggle: Boolean) {
             "The first play of a song is slow. That's normal.",
             "Your computer has to unscramble it first, which takes about 15 to 20 seconds. The spinning ring around the play button means it's working. Play the same song again later and it starts instantly.",
         )
+    }
+}
+
+/** A row of pill dots — the current step's pill stretches wide and lights red, done steps stay lit,
+ *  upcoming ones are dim. Width + colour animate so stepping forward/back feels smooth. */
+@Composable
+private fun ProgressDots(current: Int, total: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (i in 1..total) {
+            val active = i == current
+            val done = i < current
+            val width by androidx.compose.animation.core.animateDpAsState(if (active) 26.dp else 8.dp, androidx.compose.animation.core.tween(300), label = "dotW")
+            val color by androidx.compose.animation.animateColorAsState(
+                when { active -> Color(0xFFFA233B); done -> Color(0xFF9A9A9A); else -> Color(0xFF333333) },
+                androidx.compose.animation.core.tween(300), label = "dotC",
+            )
+            Box(Modifier.height(8.dp).width(width).background(color, RoundedCornerShape(50)))
+        }
     }
 }
 
