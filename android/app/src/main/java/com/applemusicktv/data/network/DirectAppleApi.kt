@@ -395,7 +395,106 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Query("limit") limit: Int = 40,
     ): AppleList<AppleItem<AppleGenreAttrs>>
+
+    // ── Editorial categories: curators + multirooms (standalone parity) ───────
+    @GET("v1/catalog/{sf}/search")
+    suspend fun edSearch(
+        @Path("sf") storefront: String,
+        @Query("term") term: String,
+        @Query("types") types: String,
+        @Query("with") with: String = "serverBubbles,topResults",
+        @Query("limit") limit: Int = 6,
+        @Query("platform") platform: String = "web",
+        @Query("l") l: String = "en-US",
+    ): EdSearchResponse
+
+    @GET("v1/catalog/{sf}/{kind}/{id}")
+    suspend fun edCurator(
+        @Path("sf") storefront: String,
+        @Path("kind") kind: String,
+        @Path("id") id: String,
+        @Query("include") include: String = "grouping,playlists",
+        @Query("limit[curators:playlists]") plLimit: Int = 10,
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+    ): EdDataResponse
+
+    @GET("v1/editorial/{sf}/groupings/{id}")
+    suspend fun edGrouping(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("include") include: String = "tabs",
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+    ): EdDataResponse
+
+    @GET("v1/editorial/{sf}/multirooms/{id}")
+    suspend fun edMultiRoom(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("include[albums]") incAlbums: String = "artists",
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+    ): EdDataResponse
 }
 
 @JsonClass(generateAdapter = true)
 data class AppleGenreAttrs(val name: String = "")
+
+// ── Editorial discovery DTOs (curators + multirooms) ─────────────────────────
+@JsonClass(generateAdapter = true)
+data class EdArtwork(val url: String? = null, val bgColor: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class EdLink(val feature: String? = null, val url: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class EdNotes(val name: String? = null, val tagline: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class EdEditorialArtwork(
+    val subscriptionCover: EdArtwork? = null,
+    val brandLogo: EdArtwork? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class EdAttrs(
+    val name: String? = null,
+    val title: String? = null,
+    val artistName: String? = null,
+    val curatorName: String? = null,
+    val artwork: EdArtwork? = null,
+    val url: String? = null,
+    val link: EdLink? = null,
+    val editorialNotes: EdNotes? = null,
+    val editorialArtwork: EdEditorialArtwork? = null,
+    val editorialElementKind: String? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class EdRels(
+    val children: EdListRel? = null,
+    val contents: EdListRel? = null,
+    val tabs: EdListRel? = null,
+    val grouping: EdListRel? = null,
+    val playlists: EdListRel? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class EdItem(
+    val id: String = "",
+    val type: String = "",
+    val attributes: EdAttrs? = null,
+    val relationships: EdRels? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class EdListRel(val data: List<EdItem> = emptyList())
+
+@JsonClass(generateAdapter = true)
+data class EdSearchResponse(val results: Map<String, EdListRel> = emptyMap())
+
+@JsonClass(generateAdapter = true)
+data class EdDataResponse(val data: List<EdItem> = emptyList())

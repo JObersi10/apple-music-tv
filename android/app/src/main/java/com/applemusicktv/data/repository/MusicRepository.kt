@@ -62,7 +62,8 @@ class MusicRepository @Inject constructor(
         if (!useProxy) {
             return direct.search(term, limit).map { r ->
                 SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto),
-                    playlists = r.playlists.map(::playlistToAlbum).filter { it.id.startsWith("pl.") })
+                    playlists = r.playlists.map(::playlistToAlbum).filter { it.id.startsWith("pl.") },
+                    curators = r.curators.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
             }
         }
         return runCatching {
@@ -130,14 +131,15 @@ class MusicRepository @Inject constructor(
         else runCatching { api.getBrowse() }
     /** Editorial "multiroom" category page (e.g. The Sounds of Formula 1). Proxy-only for now —
      *  standalone (direct) port is a follow-up. */
-    // Curator page (playlists grouped under one shelf). Proxy-only; standalone Apple
-    // search doesn't surface curators, so the section simply won't appear there.
+    // Curator page (playlists, or grouping tabs for rich apple-curators).
     suspend fun getCurator(id: String, isApple: Boolean) =
-        runCatching { api.getCurator(id, if (isApple) 1 else 0) }
+        if (!useProxy) runCatching { direct.getCurator(id, isApple) }
+        else runCatching { api.getCurator(id, if (isApple) 1 else 0) }
 
-    // Editorial multiroom page (hand-built shelves + hero blurb). Proxy-only; not
-    // searchable via Apple's API, so it's only reachable from a Browse spotlight.
-    suspend fun getMultiRoom(id: String) = runCatching { api.getMultiRoom(id) }
+    // Editorial multiroom page (hand-built shelves; hero blurb on proxy only).
+    suspend fun getMultiRoom(id: String) =
+        if (!useProxy) runCatching { direct.getMultiRoom(id) }
+        else runCatching { api.getMultiRoom(id) }
 
     suspend fun getGenres() =
         if (!useProxy) direct.genres().map { g -> g.filter { it.name.isNotEmpty() && it.id != "34" } }
