@@ -49,6 +49,159 @@ async function fetchPlaylist(sf: string, id: string, mut?: string): Promise<any 
   } catch { return null; }
 }
 
+// A "multi-room" is an Apple editorial category page (e.g. The Sounds of Formula 1):
+// a title, a hero description, and several titled shelves of playlists/albums.
+// The web app fetches it from /v1/editorial/{sf}/multirooms/{id}; children are
+// "editorial-elements" — kind 404 = hero (title+description), 345 = a content shelf,
+// 405 = an external link (skipped).
+browse.get("/multiroom/:id", async (c) => {
+  const id = c.req.param("id");
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  const sf = getStorefront() || "us";
+  try {
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/multirooms/${id}`, {
+      headers: hdrs(mut),
+      params: { l: "en-US", platform: "web", extend: "editorialArtwork", "include[albums]": "artists", "art[url]": "f" },
+    });
+    const room = res.data?.data?.[0];
+    if (!room) return c.json({ error: "not found" }, 404);
+    const kids: any[] = room.relationships?.children?.data ?? [];
+
+    let description: string | null = null;
+    // Key must be `albums` — that's what the Android HomeSection model reads.
+    const sections: Array<{ title: string; albums: any[] }> = [];
+    for (const k of kids) {
+      const attr = k.attributes ?? {};
+      const kind = attr.editorialElementKind;
+      if (kind === "404" && attr.description) {
+        // Hero — may be a plain string or {short,standard}.
+        description = typeof attr.description === "string"
+          ? attr.description
+          : (attr.description?.standard ?? attr.description?.short ?? null);
+      } else if (kind === "345") {
+        const items = (k.relationships?.contents?.data ?? []).map(itemFromRaw).filter(Boolean);
+        if (items.length && attr.title) sections.push({ title: attr.title, albums: items });
+      }
+    }
+    // Wide editorial hero for the page header.
+    const ea = room.attributes?.editorialArtwork ?? {};
+    const artworkUrl = artUrl((ea.superHeroWide ?? ea.subscriptionHero ?? ea.storeFlowcase ?? ea.subscriptionCover)?.url, 1600);
+    return c.json({ id, title: room.attributes?.title ?? "", description, artworkUrl, sections });
+  } catch (e: any) {
+    return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed" }, 502);
+  }
+});
+
+// A curator page — the normal, searchable editorial entity behind things like
+// "Formula 1" or "Tomorrowland". Two flavours share the same shape: `curators`
+// (label/brand curators) and `apple-curators` (Apple's own). Pass ?apple=1 for the
+// latter. We flatten the curator's playlists into a single shelf; same response shape
+// as /multiroom so the Category screen renders it unchanged.
+browse.get("/curator/:id", async (c) => {
+  const id = c.req.param("id");
+  const isApple = c.req.query("apple") === "1";
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  const sf = getStorefront() || "us";
+  const kind = isApple ? "apple-curators" : "curators";
+  try {
+    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/${kind}/${id}`, {
+      headers: hdrs(mut),
+      params: { include: "grouping,playlists", extend: "editorialArtwork", "limit[curators:playlists]": 10, l: "en-US", platform: "web" },
+    });
+    const cur = res.data?.data?.[0];
+    if (!cur) return c.json({ error: "not found" }, 404);
+    const attr = cur.attributes ?? {};
+    const description = typeof attr.description === "string"
+      ? attr.description
+      : (attr.description?.standard ?? attr.description?.short ?? null);
+
+    // Rich curators (e.g. Tomorrowland Live Sets) hang their content off an editorial
+    // "grouping" — a set of named shelves (2026, 2025, …). Expand that when present;
+    // otherwise fall back to the curator's flat playlists relationship (e.g. Formula 1).
+    let sections: Array<{ title: string; albums: any[] }> = [];
+    const groupingId = cur.relationships?.grouping?.data?.[0]?.id;
+    if (groupingId) {
+      sections = await groupingSections(sf, groupingId, mut);
+    }
+    if (!sections.length) {
+      const items = (cur.relationships?.playlists?.data ?? []).map(itemFromRaw).filter(Boolean);
+      // Key must be `albums` — that's what the Android HomeSection model reads.
+      if (items.length) sections = [{ title: "Playlists", albums: items }];
+    }
+    const ea = attr.editorialArtwork ?? {};
+    const artworkUrl = artUrl(
+      (ea.superHeroWide ?? ea.subscriptionHero ?? ea.storeFlowcase)?.url ?? attr.artwork?.url, 1600)
+    return c.json({ id, title: attr.name ?? "", description, artworkUrl, sections });
+  } catch (e: any) {
+    return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed" }, 502);
+  }
+});
+
+// The genre/mood/decade tile grid, like Apple's "Browse by Genre". Three sibling
+// editorial rooms, each a list of apple-curators with editorial artwork. Tapping a tile
+// opens that apple-curator as a category page. Rewind/Replay year-in-review curators are
+// filtered out. Rooms are stable ids pulled from music.apple.com's browse feed.
+const CATEGORY_ROOMS: Array<{ title: string; room: string }> = [
+  { title: "Genres",            room: "6456176470" },
+  { title: "Moods & Activities", room: "6456176472" },
+  { title: "Decades",           room: "6456176471" },
+]
+browse.get("/categories", async (c) => {
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  const sf = getStorefront() || "us";
+  const drop = /rewind|replay|year in|wrapped/i;
+  try {
+    const sections = await Promise.all(CATEGORY_ROOMS.map(async ({ title, room }) => {
+      const res = await axios.get(`${APPLE}/v1/editorial/${sf}/rooms/${room}`, {
+        headers: hdrs(mut),
+        params: { include: "contents", extend: "editorialArtwork", l: "en-US", platform: "web", "limit[contents]": 60 },
+      });
+      const items = (res.data?.data?.[0]?.relationships?.contents?.data ?? [])
+        .filter((it: any) => it.type === "apple-curators" || it.type === "curators")
+        .filter((it: any) => !drop.test(it.attributes?.name ?? ""))
+        .map((it: any) => {
+          const a = it.attributes ?? {};
+          const ea = a.editorialArtwork ?? {};
+          return {
+            id: it.id,
+            // Strip the "Apple Music " brand prefix so tiles read "Acoustic", "Chill", etc.
+            name: (a.name ?? "Unknown").replace(/^Apple Music (?=\S)/, "").replace(/^Apple (?=\S)/, ""),
+            kind: it.type === "apple-curators" ? "apple-curator" : "curator",
+            isApple: it.type === "apple-curators",
+            artworkUrl: artUrl((ea.subscriptionCover ?? ea.brandLogo ?? a.artwork)?.url, 600),
+          };
+        });
+      return { title, items };
+    }));
+    return c.json({ sections: sections.filter((s) => s.items.length) });
+  } catch (e: any) {
+    return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed", sections: [] }, 200);
+  }
+});
+
+// An editorial grouping → its default tab's children are named content shelves.
+// Shelf title is `attributes.name` (NOT `title` — that field is empty here).
+async function groupingSections(sf: string, groupingId: string, mut?: string): Promise<Array<{ title: string; albums: any[] }>> {
+  try {
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/groupings/${groupingId}`, {
+      headers: hdrs(mut),
+      params: { include: "tabs", extend: "editorialArtwork", l: "en-US", platform: "web" },
+    });
+    const tab = res.data?.data?.[0]?.relationships?.tabs?.data?.[0];
+    const kids: any[] = tab?.relationships?.children?.data ?? [];
+    const out: Array<{ title: string; albums: any[] }> = [];
+    for (const k of kids) {
+      const a = k.attributes ?? {};
+      const kind = a.editorialElementKind;
+      if (kind !== "326" && kind !== "345") continue;
+      const title = a.name ?? a.title;
+      const albums = (k.relationships?.contents?.data ?? []).map(itemFromRaw).filter(Boolean);
+      if (title && albums.length) out.push({ title, albums });
+    }
+    return out;
+  } catch { return []; }
+}
+
 browse.get("/", async (c) => {
   const mut = c.req.header("X-Music-User-Token") || getMUT();
   const sf = getStorefront() || "us";

@@ -14,11 +14,24 @@ import retrofit2.HttpException
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** An editorial curator (e.g. "Formula 1", "Tomorrowland") — opens a page of its playlists. */
+data class Curator(
+    val id:         String,
+    val name:       String,
+    val kind:       String,   // "multiroom" | "curator" | "apple-curator"
+    val isApple:    Boolean,
+    val artworkUrl: String?,
+)
+
+/** A titled row of category tiles (Genres, Moods & Activities, Decades). */
+data class CategoryGroup(val title: String, val items: List<Curator>)
+
 data class SearchResults(
-    val songs:     List<Song>   = emptyList(),
-    val albums:    List<Album>  = emptyList(),
-    val artists:   List<Artist> = emptyList(),
-    val playlists: List<Album>  = emptyList(),
+    val songs:     List<Song>    = emptyList(),
+    val albums:    List<Album>   = emptyList(),
+    val artists:   List<Artist>  = emptyList(),
+    val playlists: List<Album>   = emptyList(),
+    val curators:  List<Curator> = emptyList(),
 )
 
 @Singleton
@@ -51,18 +64,23 @@ class MusicRepository @Inject constructor(
     suspend fun search(term: String, limit: Int = 20): Result<SearchResults> {
         if (!useProxy) {
             return direct.search(term, limit).map { r ->
-                SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto), playlists = r.playlists.map(::playlistToAlbum))
+                SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto),
+                    playlists = r.playlists.map(::playlistToAlbum).filter { it.id.startsWith("pl.") },
+                    curators = r.curators.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
             }
         }
         return runCatching {
             val res = api.search(term, limit)
             // The proxy backend often doesn't surface catalog playlists — fall back to a
             // direct Apple catalog search for them so the Playlists row still populates.
-            val playlists = res.playlists.map(::playlistToAlbum).ifEmpty {
+            // Keep only Apple editorial/curated playlists (catalog id `pl.`); drop personal
+            // user playlists (`p.`), which aren't what a catalog search is meant to show.
+            val playlists = (res.playlists.map(::playlistToAlbum).ifEmpty {
                 runCatching { direct.search(term, limit).getOrNull()?.playlists?.map(::playlistToAlbum) }
                     .getOrNull().orEmpty()
-            }
-            SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists)
+            }).filter { it.id.startsWith("pl.") }
+            val curators = res.curators.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) }
+            SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists, curators = curators)
         }
     }
 
@@ -114,6 +132,30 @@ class MusicRepository @Inject constructor(
     suspend fun getBrowse() =
         if (!useProxy) runCatching { sectionsOf(directBrowse.browse()) }
         else runCatching { api.getBrowse() }
+    /** Editorial "multiroom" category page (e.g. The Sounds of Formula 1). Proxy-only for now —
+     *  standalone (direct) port is a follow-up. */
+    // Curator page (playlists, or grouping tabs for rich apple-curators).
+    suspend fun getCurator(id: String, isApple: Boolean) =
+        if (!useProxy) runCatching { direct.getCurator(id, isApple) }
+        else runCatching { api.getCurator(id, if (isApple) 1 else 0) }
+
+    // Editorial multiroom page (hand-built shelves; hero blurb on proxy only).
+    suspend fun getMultiRoom(id: String) =
+        if (!useProxy) runCatching { direct.getMultiRoom(id) }
+        else runCatching { api.getMultiRoom(id) }
+
+    // Genre/mood/decade tile grid (each tile is a curator → category page).
+    suspend fun getCategories(): Result<List<CategoryGroup>> =
+        if (!useProxy) runCatching { direct.getCategories().map { it.toGroup() } }
+        else runCatching {
+            api.getCategories().sections.map { s ->
+                CategoryGroup(s.title, s.items.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
+            }
+        }
+
+    private fun CategorySectionDto.toGroup() =
+        CategoryGroup(title, items.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
+
     suspend fun getGenres() =
         if (!useProxy) direct.genres().map { g -> g.filter { it.name.isNotEmpty() && it.id != "34" } }
         else runCatching { api.getGenres().genres }

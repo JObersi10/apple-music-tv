@@ -1,5 +1,7 @@
 package com.applemusicktv.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -8,7 +10,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import com.applemusicktv.data.repository.CategoryGroup
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -18,6 +24,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.tv.material3.*
 import com.applemusicktv.ui.components.AlbumCard
 import com.applemusicktv.ui.viewmodel.HomeSection
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import com.applemusicktv.data.repository.MusicRepository
 import dagger.hilt.android.lifecycle.HiltViewModel

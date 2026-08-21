@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.itemsIndexed
 import coil.compose.AsyncImage
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Brush
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,10 +36,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.*
 import com.applemusicktv.ui.components.AlbumCard
 import com.applemusicktv.ui.viewmodel.SearchViewModel
+import com.applemusicktv.data.repository.Curator
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> }, modifier: Modifier = Modifier) {
+fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> }, onCuratorClick: (id: String, kind: String) -> Unit = { _, _ -> }, modifier: Modifier = Modifier) {
     val vm: SearchViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val recents by vm.recentSearches.collectAsState()
@@ -184,13 +187,68 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFFFA233B))
             }
-            state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty() || state.results!!.playlists.isNotEmpty()) -> {
+            state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty() || state.results!!.playlists.isNotEmpty() || state.results!!.curators.isNotEmpty()) -> {
                 val results = state.results!!
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    // Top Results — the strongest hit of each kind up front, the way Apple Music leads
+                    // its search page. Editorial playlists first (what the user missed), then artist,
+                    // album and the #1 song, so the best match is one focus move away.
+                    item {
+                        Text("Top Results", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            // Editorial category first — it's the strongest match for terms like
+                            // "formula 1" or "tomorrowland", and the one users can't find otherwise.
+                            items(results.curators.take(1), key = { "top-cu-${it.id}" }) { cur ->
+                                CuratorCard(cur, size = 150, onClick = { onCuratorClick(cur.id, cur.kind) })
+                            }
+                            items(results.playlists.take(2), key = { "top-pl-${it.id}" }) { pl ->
+                                AlbumCard(album = pl, size = 150, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
+                            }
+                            results.artists.firstOrNull()?.let { artist ->
+                                item(key = "top-ar-${artist.id}") {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(150.dp)) {
+                                        Surface(
+                                            onClick = { onArtistClick(artist.id) },
+                                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                                            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
+                                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                                            modifier = Modifier.size(120.dp),
+                                        ) {
+                                            Box(Modifier.fillMaxSize()) {
+                                                if (artist.artworkUrl != null) AsyncImage(
+                                                    model = artist.artworkUrl.replace("{w}", "240").replace("{h}", "240").replace("{f}", "jpg"),
+                                                    contentDescription = artist.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.height(6.dp))
+                                        Text(artist.name, fontSize = 12.sp, color = Color.White, maxLines = 1)
+                                        Text("Artist", fontSize = 10.sp, color = Color(0xFF999999))
+                                    }
+                                }
+                            }
+                            items(results.albums.take(2), key = { "top-al-${it.id}" }) { album ->
+                                val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                                AlbumCard(album = album, size = 150, onClick = {
+                                    if (isPlaylist) onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "") else onAlbumClick(album.id)
+                                })
+                            }
+                        }
+                    }
+                    if (results.curators.isNotEmpty()) {
+                        item {
+                            Text("Categories", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                items(results.curators, key = { it.id }) { cur ->
+                                    CuratorCard(cur, onClick = { onCuratorClick(cur.id, cur.kind) })
+                                }
+                            }
+                        }
+                    }
                     if (results.playlists.isNotEmpty()) {
                         item {
                             Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 items(results.playlists, key = { it.id }) { pl ->
                                     AlbumCard(album = pl, size = 130, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
                                 }
@@ -200,7 +258,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     if (results.artists.isNotEmpty()) {
                         item {
                             Text("Artists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 items(results.artists, key = { it.id }) { artist ->
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -290,6 +348,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                 columns = GridCells.Fixed(7),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(20.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 modifier = Modifier.height(300.dp),
                             ) {
                                 items(results.albums, key = { it.id }) { album ->
@@ -305,8 +364,8 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                 }
             }
             state.query.length < 2 -> {
-                // Genre browsing when not searching
-                if (state.genres.isNotEmpty() || recents.isNotEmpty()) {
+                // Category tiles + recents when not searching
+                if (state.categories.isNotEmpty() || recents.isNotEmpty()) {
                     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                         // Recent searches first — retyping on a remote is the slow part.
                         if (recents.isNotEmpty()) {
@@ -328,7 +387,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                     }
                                 }
                                 Spacer(Modifier.height(10.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                     items(recents, key = { it }) { term ->
                                         Surface(
                                             onClick = { vm.runRecent(term) },
@@ -347,42 +406,13 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                 }
                             }
                         }
-                        item {
-                            Text("Browse by Genre", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                items(state.genres, key = { it.id }) { genre ->
-                                    val isSelected = genre.id == state.selectedGenreId
-                                    Surface(
-                                        onClick = { vm.selectGenre(genre.id) },
-                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
-                                        colors = ClickableSurfaceDefaults.colors(
-                                            containerColor = if (isSelected) Color(0xFFFA233B) else Color(0xFF2A2A2A),
-                                            focusedContainerColor = if (isSelected) Color(0xFFE01F33) else Color(0xFF3A3A3A),
-                                        ),
-                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                                    ) {
-                                        Text(genre.name, fontSize = 13.sp, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                                    }
-                                }
-                            }
-                        }
-                        if (state.genreLoading) {
-                            item { Box(Modifier.fillMaxWidth(), Alignment.Center) { CircularProgressIndicator(color = Color(0xFFFA233B)) } }
-                        }
-                        state.genreContent?.sections?.forEach { section ->
+                        // Genre / mood / decade tiles — Apple's "Browse by Genre" grid.
+                        state.categories.forEach { group ->
                             item {
-                                Text(section.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                    items(section.albums, key = { it.id }) { item ->
-                                        val isPlaylist = item.id.startsWith("pl.") || item.id.startsWith("p.")
-                                        com.applemusicktv.ui.components.AlbumCard(
-                                            album = com.applemusicktv.data.model.Album(
-                                                id = item.id, title = item.title, artistName = item.artistName,
-                                                artworkUrl = item.artworkUrl, artworkBgColor = item.artworkBgColor,
-                                            ),
-                                            size = 140,
-                                            onClick = { onAlbumClick(item.id) },
-                                        )
+                                Text(group.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                    items(group.items, key = { it.id }) { cur ->
+                                        CategoryTile(cur.name, cur.artworkUrl) { onCuratorClick(cur.id, cur.kind) }
                                     }
                                 }
                             }
@@ -414,6 +444,58 @@ private fun SearchContextItem(icon: String, label: String, onClick: () -> Unit, 
         ) {
             Text(icon, fontSize = 16.sp, color = Color(0xFF888888), modifier = Modifier.width(22.dp))
             Text(label, fontSize = 15.sp, color = Color.White)
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun CuratorCard(cur: Curator, size: Int = 130, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(size.dp)) {
+        Surface(
+            onClick = onClick,
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1E1E20), focusedContainerColor = Color(0xFF2E2E30)),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+            modifier = Modifier.size(size.dp),
+        ) {
+            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                if (cur.artworkUrl != null) AsyncImage(
+                    model = cur.artworkUrl, contentDescription = cur.name,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                ) else Text("♪", fontSize = 40.sp, color = Color(0xFF666666))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(cur.name, fontSize = 12.sp, color = Color.White, maxLines = 2)
+        Text("Category", fontSize = 10.sp, color = Color(0xFF999999))
+    }
+}
+
+/** Colourful category tile (genre/mood/decade) — editorial art with label on a scrim. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun CategoryTile(name: String, artworkUrl: String?, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF1C1C1E)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(12.dp)),
+        ),
+        modifier = Modifier.width(180.dp).height(110.dp),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            if (artworkUrl != null) AsyncImage(
+                model = artworkUrl, contentDescription = name,
+                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+            )
+            Box(Modifier.fillMaxSize().background(
+                Brush.verticalGradient(0f to Color(0x22000000), 1f to Color(0xCC000000)),
+            ))
+            Text(name, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                maxLines = 2, modifier = Modifier.align(Alignment.BottomStart).padding(12.dp))
         }
     }
 }

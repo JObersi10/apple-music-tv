@@ -101,7 +101,16 @@ data class PlayerState(
     val lyrics:           List<LyricLine> = emptyList(),
     val isFullStream:     Boolean         = false,
     val motionUrl:        String?         = null,
+    /** A/V-sync EXTRA the user dials on top of everything. 0 normally; the only value shown in the UI. */
     val lyricsOffsetMs:   Long            = 0L,
+    /** Automatic A/V sync: add the Bluetooth delta when a BT output is live. */
+    val avSyncAuto:       Boolean         = true,
+    /** A BT output is currently active. */
+    val avOnBluetooth:    Boolean         = false,
+    /** Total delay applied to the LYRIC clock: hidden 200 ms baseline (+ BT delta) + extra. */
+    val avLyricsMs:       Long            = LYRICS_BASELINE_MS,
+    /** Human label for the current audio output. */
+    val avOutputLabel:    String          = "HDMI / TV",
     val isShuffled:       Boolean         = false,
     val originalQueue:    List<Song>      = emptyList(),
     val repeatMode:       RepeatMode      = RepeatMode.Off,
@@ -146,6 +155,14 @@ data class PlayerState(
     /** True while the activity is in Picture-in-Picture (renders the minimal PiP view). */
     val isInPip:          Boolean         = false,
 )
+
+/** Hidden LYRICS baseline: the Fire TV shows the lyric line ~200 ms before you hear the word even over
+ *  HDMI, so the lyric clock is always shifted by this. Internal — never surfaced in the UI, so the
+ *  menu's "extra" reads 0 normally. The BEAT does NOT get this baseline (it's already aligned on HDMI). */
+private const val LYRICS_BASELINE_MS = 200L
+/** Added to BOTH the beat and the lyrics when a Bluetooth output is live (Automatic mode). Bluetooth
+ *  delays the actual sound by roughly this much; an estimate, since Android exposes no exact figure. */
+private const val BT_DELTA_MS = 350L
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
@@ -344,6 +361,7 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             lyricsOffsetPrefs.offsetMs.collect { ms ->
                 _state.update { it.copy(lyricsOffsetMs = ms) }
+                updateOutputLatency()
             }
         }
         // Same for crossfade length. Takes effect at the next song boundary — an
@@ -356,6 +374,42 @@ class PlayerViewModel @Inject constructor(
     fun setLyricsOffset(ms: Long) {
         lyricsOffsetPrefs.setOffset(ms)
         _state.update { it.copy(lyricsOffsetMs = ms) }
+        updateOutputLatency()
+    }
+
+    fun setAvSyncAuto(auto: Boolean) {
+        prefs.edit().putBoolean("av_auto", auto).apply()
+        _state.update { it.copy(avSyncAuto = auto) }
+        updateOutputLatency()
+    }
+
+    /**
+     * Recompute the single output-latency figure that drives BOTH the beat visuals and the lyric clock:
+     * the embedded [AV_BASELINE_MS] baseline, plus [AV_BT_ESTIMATE_MS] when a Bluetooth output is live
+     * and Automatic mode is on, plus the user's [PlayerState.lyricsOffsetMs] extra. Called on init, on
+     * every audio-device change, and when either the mode or the extra is edited.
+     */
+    private fun updateOutputLatency() {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val btTypes = setOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER,
+        )
+        val btDev = runCatching {
+            am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.type in btTypes }
+        }.getOrNull()
+        val onBt = btDev != null
+        val extra = _state.value.lyricsOffsetMs
+        val auto = _state.value.avSyncAuto
+        val btDelta = if (onBt && auto) BT_DELTA_MS else 0L
+        // Beat has NO HDMI baseline (it's aligned already), it only gains the Bluetooth delta.
+        val beatMs = btDelta + extra
+        // Lyrics carry the hidden 200 ms display baseline on every output, plus the same BT delta.
+        val lyricsMs = LYRICS_BASELINE_MS + btDelta + extra
+        beatAnalyzer.latencyMs = beatMs
+        val label = if (onBt) "Bluetooth" + (btDev?.productName?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+                    else "HDMI / TV"
+        _state.update { it.copy(avOnBluetooth = onBt, avLyricsMs = lyricsMs, avOutputLabel = label) }
     }
 
     private val playerListener = object : Player.Listener {
@@ -538,8 +592,27 @@ class PlayerViewModel @Inject constructor(
         // no track to restore (restoreState, which reads the rest, only runs when a song was saved).
         val initBg = NowPlayingBackground.fromName(prefs.getString("np_background", null))
         com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
+        // Volume-leveling per-track gain memory. The cache is a tiny prefs store (one float per track id),
+        // capped so it can't grow without bound. (The VOL live logger is wired in AppleMusicApp so it goes
+        // to the APP log, not the network log.)
+        run {
+            val gainCache = context.getSharedPreferences("gain_cache", Context.MODE_PRIVATE)
+            com.applemusicktv.media.GainProcessor.cacheGet = { key -> if (gainCache.contains(key)) gainCache.getFloat(key, 1f) else null }
+            com.applemusicktv.media.GainProcessor.cachePut = { key, g ->
+                if (gainCache.all.size > 500) gainCache.edit().clear().apply()
+                gainCache.edit().putFloat(key, g).apply()
+            }
+        }
+        // The 200 ms lyrics latency is now embedded (LYRICS_BASELINE_MS) and hidden, so the user-facing
+        // "extra" starts at 0. Force it to 0 once so nobody carries a pre-existing manual offset on top
+        // of the new baseline (which would double-count).
+        if (!prefs.getBoolean("av_migrated_v2", false)) {
+            lyricsOffsetPrefs.setOffset(0L)
+            prefs.edit().putBoolean("av_migrated_v2", true).apply()
+        }
         _state.update { it.copy(
             lyricsOffsetMs = lyricsOffsetPrefs.getOffset(),
+            avSyncAuto = prefs.getBoolean("av_auto", true),
             nowPlayingBackground = initBg,
             screensaverKeepBackground = prefs.getBoolean("screensaver_keep_bg", false),
             showNowPlayingInfo = prefs.getBoolean("np_info", true),
@@ -570,21 +643,16 @@ class PlayerViewModel @Inject constructor(
         // same probe flag the init-segment dump uses.
         if (PROBE_INIT_SEGMENT) player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
 
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        fun updateBtLatency() {
-            val btTypes = setOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER)
-            val onBt = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in btTypes }
-            beatAnalyzer.latencyMs = if (onBt) 200L else 0L
-        }
-        updateBtLatency()
+        updateOutputLatency()
         // AudioManager is a system service and outlives this ViewModel, so hold the
         // callback and unregister it in onCleared — otherwise every future BT connect
         // fires into a dead instance.
         audioDeviceCallback = object : AudioDeviceCallback() {
-            override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>) { updateBtLatency() }
-            override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>) { updateBtLatency() }
+            override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>) { updateOutputLatency() }
+            override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>) { updateOutputLatency() }
         }
-        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
+        (context.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+            .registerAudioDeviceCallback(audioDeviceCallback, null)
 
         viewModelScope.launch {
             repo.authErrorFlow.collect {
@@ -605,8 +673,18 @@ class PlayerViewModel @Inject constructor(
     /** Remote type chosen in setup — overrides hardware detection for the toggle button. */
     fun remoteOverride(): String = onboardingPrefs.remoteOverride
 
-    /** Dev menu: replay setup on next launch. */
-    fun resetOnboarding() = onboardingPrefs.reset()
+    /** Flips true when the user asks to replay setup, so the shell can show it without a relaunch. */
+    private val _replayOnboarding = MutableStateFlow(false)
+    val replayOnboarding: StateFlow<Boolean> = _replayOnboarding
+
+    /** Dev menu: replay setup now (and on next launch until finished). */
+    fun resetOnboarding() {
+        onboardingPrefs.reset()
+        _replayOnboarding.value = true
+    }
+
+    /** Shell consumed the replay signal (setup is now on screen). */
+    fun consumeReplayOnboarding() { _replayOnboarding.value = false }
 
     /** Setup just finished — safe to bring back whatever was playing before. */
     fun onOnboardingFinished() {
@@ -881,7 +959,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun stepLyricsScale(dir: Int) {
-        val steps = floatArrayOf(0.8f, 1.0f, 1.35f)
+        val steps = floatArrayOf(1.0f, 1.25f, 1.6f, 2.0f)
         val cur = steps.indexOfFirst { kotlin.math.abs(it - _state.value.lyricsScale) < 0.05f }.let { if (it < 0) 1 else it }
         val next = steps[(cur + dir).coerceIn(0, steps.lastIndex)]
         _state.update { it.copy(lyricsScale = next) }
@@ -974,6 +1052,7 @@ class PlayerViewModel @Inject constructor(
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}${if (standalone) " [standalone]" else ""}")
         awaitingSongStart = song.id
+        com.applemusicktv.media.GainProcessor.currentTrackKey = song.id   // per-track volume-leveling memory
         _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = lyricsCache[song.id] ?: emptyList(), motionUrl = null, progressMs = 0L) }
         saveState()
         player.repeatMode = Player.REPEAT_MODE_OFF

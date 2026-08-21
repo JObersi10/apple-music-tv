@@ -62,6 +62,12 @@ fun AppShell(modifier: Modifier = Modifier) {
     // server and token are configured, so there is no nav bar and nothing to browse.
     val onboardingVm: com.applemusicktv.ui.viewmodel.OnboardingViewModel = hiltViewModel()
     var showOnboarding by remember { mutableStateOf(!playerVm.onboardingCompleted()) }
+    // "Replay Setup" in Settings resets the pref and fires this — bring setup up right away
+    // instead of only on the next launch.
+    val replay by playerVm.replayOnboarding.collectAsState()
+    LaunchedEffect(replay) {
+        if (replay) { showOnboarding = true; playerVm.consumeReplayOnboarding() }
+    }
     if (showOnboarding) {
         OnboardingScreen(
             vm = onboardingVm,
@@ -178,6 +184,12 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
                 )
             }
+            composable(Screen.Category.route) {
+                CategoryScreen(
+                    onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                )
+            }
             composable(Screen.Library.route) {
                 LibraryScreen(
                     vm         = libraryVm,
@@ -196,6 +208,14 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     onPlaylistClick = { id, name, artworkUrl ->
                         navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
+                    },
+                    onCuratorClick = { id, kind ->
+                        val prefix = when (kind) {
+                            "multiroom"     -> "mr-"
+                            "apple-curator" -> "ac-"
+                            else            -> "c-"
+                        }
+                        navController.navigate(Screen.Category.route(prefix + id))
                     },
                 )
             }

@@ -45,6 +45,9 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
         com.applemusicktv.util.CrashReporter.install(this)
         clearStaleCaches()
         webServer.start(appScope)
+        // Route volume-leveling diagnostics into the APP log (so they show under App Log, not Network,
+        // and stream live on the :8081 event port).
+        com.applemusicktv.media.GainProcessor.logger = { tag, msg -> webServer.addLog(tag, msg) }
         // Sync locally-stored MUT to proxy server on startup so ExoPlayer stream requests work
         val mut = mutPrefs.getMUT()
         if (mut.isNotEmpty()) {

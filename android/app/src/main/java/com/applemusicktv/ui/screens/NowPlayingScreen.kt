@@ -233,7 +233,7 @@ fun NowPlayingScreen(
             1 -> FullScreenLyrics(
                 lyrics = state.lyrics,
                 progressState = smoothProgress,
-                offsetMs = state.lyricsOffsetMs,
+                offsetMs = state.avLyricsMs,
                 song = song,
                 isPlaying = state.isPlaying,
                 onSeek = { ms -> playerVm.player.seekTo(ms) },
@@ -466,7 +466,7 @@ fun NowPlayingScreen(
                         LyricsPanel(
                             lyrics = state.lyrics,
                             progressState = smoothProgress,
-                            offsetMs = state.lyricsOffsetMs,
+                            offsetMs = state.avLyricsMs,
                             onSeek = { ms -> playerVm.player.seekTo(ms) },
                             playFocus = playFocus,
                             fontScale = state.lyricsScale,
@@ -788,7 +788,15 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
         factory = { ctx ->
             androidx.media3.ui.PlayerView(ctx).apply {
                 useController = false
-                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                // Motion art is square and so is the cover box — FILL maps it exactly with no
+                // distortion. ZOOM was leaving a black strip on the bottom/right because the
+                // video surface laid out smaller than the box, anchored top-left.
+                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+                // Force the PlayerView (and its inner surface) to fill the whole box.
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                )
                 // Keep shutter black — hides the green YUV frame on surface reattach.
                 // Alpha on the outer modifier handles the fade-in instead.
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
@@ -922,7 +930,9 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
                 android.graphics.Color.colorToHSV(swatch.rgb, hsv)
                 if (monochrome) {
                     hsv[1] = 0f                                              // true grey, no invented hue
-                    hsv[2] = (0.45f + hsv[2] * 0.55f).coerceIn(0.42f, 0.96f) // keep the spread, stay glow-visible
+                    // Keep greys GREY — a near-white orb competes with the white lyrics. Cap well below
+                    // white so monochrome art reads as smoky grey pools, not glowing white blobs.
+                    hsv[2] = (0.30f + hsv[2] * 0.42f).coerceIn(0.30f, 0.68f)
                 } else {
                     // Deep saturated colours read as colour; pastels read as light grey. Floor the
                     // saturation and cap the value so a pale swatch doesn't wash out the lyrics.
@@ -1312,7 +1322,10 @@ private fun LyricsPanel(
         contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        items(lyrics.size, key = { if (lyrics[it].startMs >= 0) lyrics[it].startMs else -it.toLong() - 1 }) { idx ->
+        // Key MUST be unique: two synced lines can share a startMs (a blank + first line both at 0ms
+        // is common), and duplicate keys crash LazyColumn on the scroll-to-active remeasure. Fold in
+        // the index — the list never reorders within a song, so index keeps keys stable and unique.
+        items(lyrics.size, key = { "$it:${lyrics[it].startMs}" }) { idx ->
             val line = lyrics[idx]
             // One line lit at a time. Holding sustained lines lit was tried and removed:
             // line-synced sources set endMs to the next line's startMs, so "still within
@@ -1516,12 +1529,16 @@ private fun LyricLineRow(
                     // Karaoke wipe: each word fills left→right as it's sung, current word
                     // grows + glows on slow/held words. Apple Music style.
                     val activeIdx = line.words.indexOfLast { it.startMs <= progressMs }
-                    WordWipeLine(words = line.words, activeIdx = activeIdx, progressMs = progressMs, fontSize = (26f * fontScale).sp, lineHeight = (32f * fontScale).sp)
+                    WordWipeLine(words = line.words, activeIdx = activeIdx, progressMs = progressMs, fontSize = (24f * fontScale).sp, lineHeight = (30f * fontScale).sp)
                 } else {
+                    // Apple Music look: the active line is large + white; every other line is smaller
+                    // and dim, so the sung line clearly stands out. (Inactive lines share one smaller
+                    // size, so as the active line moves only two lines resize — the old active shrinks,
+                    // the new one grows — which the scroll animation carries smoothly.)
                     val style = when {
-                        isActive -> TextStyle(fontSize = (26f * fontScale).sp, fontWeight = FontWeight.Bold, lineHeight = (32f * fontScale).sp, letterSpacing = (-0.4).sp, color = Color.White)
-                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (20f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (27f * fontScale).sp, letterSpacing = (-0.2).sp)
-                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (20f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (27f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        isActive -> TextStyle(fontSize = (24f * fontScale).sp, fontWeight = FontWeight.Bold, lineHeight = (30f * fontScale).sp, letterSpacing = (-0.4).sp, color = Color.White)
+                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (18.5f * fontScale).sp, fontWeight = FontWeight.SemiBold, lineHeight = (24f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (18.5f * fontScale).sp, fontWeight = FontWeight.SemiBold, lineHeight = (24f * fontScale).sp, letterSpacing = (-0.2).sp)
                     }
                     Text(text = AnnotatedString(line.text), style = style)
                 }

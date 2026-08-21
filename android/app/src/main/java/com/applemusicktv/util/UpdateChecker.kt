@@ -70,7 +70,23 @@ object UpdateChecker {
             }
         }
         // Defence-in-depth: only ever install over TLS.
-        if (!apkUrl.startsWith("https://") || !isNewer(tag, BuildConfig.VERSION_NAME)) return null
+        if (!apkUrl.startsWith("https://")) return null
+
+        // The rolling "dev" prerelease (published by CI on every push to main) carries a non-numeric tag,
+        // so the version compare can't rank it. Offer it whenever its commit differs from this build's —
+        // that's what makes Beta updates track each new CI build instead of never firing.
+        val isRolling = tag.equals("dev", ignoreCase = true) || parts(tag).isEmpty()
+        if (isRolling) {
+            val localSha = BuildConfig.GIT_SHA
+            val remoteSha = Regex("commit\\s+([0-9a-fA-F]{7,40})").find(notes)?.groupValues?.get(1)
+            // Can't tell them apart (source build, or no commit in the notes) → don't nag.
+            if (localSha == "unknown" || remoteSha == null) return null
+            val same = remoteSha.startsWith(localSha, true) || localSha.startsWith(remoteSha, true)
+            if (same) return null
+            return UpdateInfo("dev · ${remoteSha.take(7)}", notes, apkUrl, size)
+        }
+
+        if (!isNewer(tag, BuildConfig.VERSION_NAME)) return null
         return UpdateInfo(tag.trimStart('v', 'V'), notes, apkUrl, size)
     }
 
@@ -135,10 +151,12 @@ object UpdateChecker {
             if (accept != null) setRequestProperty("Accept", accept)
         }
 
+    /** Dotted-version integer parts after dropping a leading "v"; empty for a non-numeric tag like "dev". */
+    private fun parts(s: String) = s.trim().trimStart('v', 'V')
+        .split('.', '-', '+', '_').mapNotNull { it.toIntOrNull() }
+
     /** Numeric dotted-version compare after dropping a leading "v"; "1.1" > "1.0.0". */
     private fun isNewer(remote: String, local: String): Boolean {
-        fun parts(s: String) = s.trim().trimStart('v', 'V')
-            .split('.', '-', '+', '_').mapNotNull { it.toIntOrNull() }
         val r = parts(remote)
         val l = parts(local)
         for (i in 0 until maxOf(r.size, l.size)) {

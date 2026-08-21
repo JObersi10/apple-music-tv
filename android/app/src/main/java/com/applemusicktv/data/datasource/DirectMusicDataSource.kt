@@ -27,7 +27,129 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
             playlists = res.results.playlists.data
                 .sortedByDescending { it.attributes?.playlistType == "editorial" }
                 .map { it.toPlaylistDto() },
+            curators = searchCurators(term),
         )
+    }
+
+    // ── Editorial categories (curators + multirooms) — standalone parity ──────
+    private fun resolveArt(url: String?, size: Int = 400): String? = url
+        ?.replace("{w}", "$size")?.replace("{h}", "$size")?.replace("{f}", "jpg")
+
+    private fun edItemToAlbumDto(it: EdItem): AlbumDto? {
+        val a = it.attributes ?: return null
+        val url = a.artwork?.url ?: return null   // require artwork, same as the proxy
+        return AlbumDto(
+            id             = it.id,
+            title          = a.name ?: "Unknown",
+            artistName     = a.artistName ?: a.curatorName ?: "",
+            artworkUrl     = url,
+            artworkBgColor = a.artwork.bgColor,
+            releaseDate    = null,
+        )
+    }
+
+    /** Curators + multirooms, tagged by kind (multirooms first). Empty on any failure. */
+    suspend fun searchCurators(term: String): List<CuratorDto> = runCatching {
+        val res = api.edSearch(
+            storefront, term,
+            // editorial-items (multirooms) is only accepted alongside a broad type set.
+            types = "artists,albums,songs,playlists,curators,apple-curators,music-videos,stations,editorial-items",
+        )
+        val multirooms = mutableListOf<CuratorDto>()
+        val curators   = mutableListOf<CuratorDto>()
+        val seen = HashSet<String>()
+        val idRe = Regex("""multi-?room[s]?/(\d+)""")
+        for (group in res.results.values) for (item in group.data) {
+            val a = item.attributes ?: continue
+            when (item.type) {
+                "editorial-items" -> {
+                    if (a.link?.feature != "multirooms") continue
+                    val id = idRe.find(a.link.url ?: a.url ?: "")?.groupValues?.get(1) ?: continue
+                    if (!seen.add("mr$id")) continue
+                    multirooms += CuratorDto(
+                        id = id, name = a.editorialNotes?.name ?: a.name ?: "Unknown",
+                        kind = "multiroom", isApple = false,
+                        artworkUrl = resolveArt(a.editorialArtwork?.subscriptionCover?.url ?: a.editorialArtwork?.brandLogo?.url),
+                    )
+                }
+                "curators", "apple-curators" -> {
+                    if (!seen.add(item.id)) continue
+                    curators += CuratorDto(
+                        id = item.id, name = a.name ?: "Unknown",
+                        kind = if (item.type == "apple-curators") "apple-curator" else "curator",
+                        isApple = item.type == "apple-curators",
+                        artworkUrl = resolveArt(a.artwork?.url),
+                    )
+                }
+            }
+        }
+        multirooms + curators
+    }.getOrDefault(emptyList())
+
+    // Genre/mood/decade grid — three editorial rooms of apple-curators. Mirrors the proxy.
+    suspend fun getCategories(): List<CategorySectionDto> {
+        val rooms = listOf("Genres" to "6456176470", "Moods & Activities" to "6456176472", "Decades" to "6456176471")
+        val drop = Regex("rewind|replay|year in|wrapped", RegexOption.IGNORE_CASE)
+        return rooms.mapNotNull { (title, room) ->
+            val items = runCatching {
+                api.edRoom(storefront, room).data.firstOrNull()?.relationships?.contents?.data.orEmpty()
+                    .filter { it.type == "apple-curators" || it.type == "curators" }
+                    .filter { !drop.containsMatchIn(it.attributes?.name ?: "") }
+                    .map {
+                        val a = it.attributes
+                        val ea = a?.editorialArtwork
+                        CuratorDto(
+                            id = it.id,
+                            name = (a?.name ?: "Unknown").replace(Regex("^Apple Music (?=\\S)"), "").replace(Regex("^Apple (?=\\S)"), ""),
+                            kind = if (it.type == "apple-curators") "apple-curator" else "curator",
+                            isApple = it.type == "apple-curators",
+                            artworkUrl = resolveArt(ea?.subscriptionCover?.url ?: ea?.brandLogo?.url ?: a?.artwork?.url, 600),
+                        )
+                    }
+            }.getOrDefault(emptyList())
+            if (items.isEmpty()) null else CategorySectionDto(title, items)
+        }
+    }
+
+    suspend fun getCurator(id: String, isApple: Boolean): MultiRoomDto {
+        val kind = if (isApple) "apple-curators" else "curators"
+        val cur = api.edCurator(storefront, kind, id).data.firstOrNull()
+            ?: return MultiRoomDto(id = id)
+        var sections = cur.relationships?.grouping?.data?.firstOrNull()?.id
+            ?.let { groupingSections(it) } ?: emptyList()
+        if (sections.isEmpty()) {
+            val items = cur.relationships?.playlists?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
+            if (items.isNotEmpty()) sections = listOf(HomeSection("Playlists", items))
+        }
+        val ea = cur.attributes?.editorialArtwork
+        val hero = resolveArt(ea?.superHeroWide?.url ?: ea?.brandLogo?.url ?: cur.attributes?.artwork?.url, 1600)
+        return MultiRoomDto(id = id, title = cur.attributes?.name ?: "", artworkUrl = hero, sections = sections)
+    }
+
+    private suspend fun groupingSections(groupingId: String): List<HomeSection> = runCatching {
+        val tab = api.edGrouping(storefront, groupingId).data.firstOrNull()
+            ?.relationships?.tabs?.data?.firstOrNull()
+        (tab?.relationships?.children?.data ?: emptyList()).mapNotNull { k ->
+            val kind = k.attributes?.editorialElementKind
+            if (kind != "326" && kind != "345") return@mapNotNull null
+            val title = k.attributes?.name ?: k.attributes?.title ?: return@mapNotNull null
+            val albums = k.relationships?.contents?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
+            if (albums.isEmpty()) null else HomeSection(title, albums)
+        }
+    }.getOrDefault(emptyList())
+
+    // Multiroom hero blurb is skipped on the direct path (its description is a string|object
+    // union that the typed parser can't take); shelves are what matter.
+    suspend fun getMultiRoom(id: String): MultiRoomDto {
+        val room = api.edMultiRoom(storefront, id).data.firstOrNull()
+            ?: return MultiRoomDto(id = id)
+        val sections = (room.relationships?.children?.data ?: emptyList()).mapNotNull { k ->
+            if (k.attributes?.editorialElementKind != "345") return@mapNotNull null
+            val title = k.attributes.title ?: return@mapNotNull null
+            val albums = k.relationships?.contents?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
+            if (albums.isEmpty()) null else HomeSection(title, albums)
+        }
+        return MultiRoomDto(id = id, title = room.attributes?.title ?: "", sections = sections)
     }
 
     suspend fun librarySongs(): Result<LibrarySongsResponse> = runCatching {

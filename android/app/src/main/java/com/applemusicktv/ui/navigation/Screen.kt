@@ -14,6 +14,9 @@ sealed class Screen(val route: String) {
     object ArtistDetail   : Screen("artist/{artistId}") {
         fun route(id: String) = "artist/$id"
     }
+    object Category       : Screen("category/{categoryId}") {
+        fun route(id: String) = "category/$id"
+    }
     object PlaylistDetail : Screen("playlist/{playlistId}/{playlistName}/{artworkUrl}") {
         fun route(id: String, name: String, artworkUrl: String = "") =
             "playlist/${encode(id)}/${encode(name)}/${encode(artworkUrl)}"
