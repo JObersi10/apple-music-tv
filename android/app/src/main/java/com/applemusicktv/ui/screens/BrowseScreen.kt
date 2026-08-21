@@ -33,10 +33,9 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class BrowseUiState(
-    val isLoading:  Boolean               = true,
-    val error:      String?               = null,
-    val sections:   List<HomeSection>     = emptyList(),
-    val categories: List<CategoryGroup>   = emptyList(),
+    val isLoading: Boolean           = true,
+    val error:     String?           = null,
+    val sections:  List<HomeSection> = emptyList(),
 )
 
 @HiltViewModel
@@ -49,7 +48,6 @@ class BrowseViewModel @Inject constructor(private val repo: MusicRepository) : V
     fun load() {
         viewModelScope.launch {
             _state.value = BrowseUiState(isLoading = true)
-            val cats = repo.getCategories().getOrDefault(emptyList())
             repo.getBrowse()
                 .onSuccess { resp ->
                     _state.value = BrowseUiState(
@@ -57,10 +55,9 @@ class BrowseViewModel @Inject constructor(private val repo: MusicRepository) : V
                         sections  = resp.sections.map { s ->
                             HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto))
                         },
-                        categories = cats,
                     )
                 }
-                .onFailure { _state.value = BrowseUiState(isLoading = false, error = it.message, categories = cats) }
+                .onFailure { _state.value = BrowseUiState(isLoading = false, error = it.message) }
         }
     }
 }
@@ -71,7 +68,6 @@ fun BrowseScreen(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
-    onCuratorClick: (id: String, kind: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val vm: BrowseViewModel = hiltViewModel()
@@ -110,55 +106,8 @@ fun BrowseScreen(
         contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        items(state.categories, key = { "cat-${it.title}" }) { group ->
-            CategoryRow(group, onCuratorClick)
-        }
         items(state.sections, key = { it.title }) { section ->
             BrowseRow(section, onAlbumClick, onPlaylistClick, playerVm)
-        }
-    }
-}
-
-@Composable
-private fun CategoryRow(group: CategoryGroup, onCuratorClick: (id: String, kind: String) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(group.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
-            modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            items(group.items, key = { it.id }) { cur ->
-                GenreTile(cur.name, cur.artworkUrl) { onCuratorClick(cur.id, cur.kind) }
-            }
-        }
-    }
-}
-
-/** A colourful category tile — editorial art with the label overlaid on a scrim. */
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun GenreTile(name: String, artworkUrl: String?, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF1C1C1E)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        border = ClickableSurfaceDefaults.border(
-            focusedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(12.dp)),
-        ),
-        modifier = Modifier.width(180.dp).height(110.dp),
-    ) {
-        Box(Modifier.fillMaxSize()) {
-            if (artworkUrl != null) AsyncImage(
-                model = artworkUrl, contentDescription = name,
-                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
-            )
-            Box(Modifier.fillMaxSize().background(
-                Brush.verticalGradient(0f to Color(0x22000000), 1f to Color(0xCC000000)),
-            ))
-            Text(name, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                maxLines = 2, modifier = Modifier.align(Alignment.BottomStart).padding(12.dp))
         }
     }
 }

@@ -20,6 +20,7 @@ data class SearchUiState(
     val selectedGenreId: String?       = null,
     val genreContent:   com.applemusicktv.data.network.HomeResponse? = null,
     val genreLoading:   Boolean        = false,
+    val categories:     List<com.applemusicktv.data.repository.CategoryGroup> = emptyList(),
 )
 
 @OptIn(FlowPreview::class)
@@ -38,7 +39,7 @@ class SearchViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            repo.getGenres().onSuccess { genres -> _state.update { it.copy(genres = genres) } }
+            repo.getCategories().onSuccess { cats -> _state.update { it.copy(categories = cats) } }
         }
         viewModelScope.launch {
             queryFlow
@@ -79,7 +80,7 @@ class SearchViewModel @Inject constructor(
     fun removeRecent(term: String) = history.remove(term)
     fun clearRecents() = history.clear()
 
-    fun clearSearch() { _state.value = SearchUiState(genres = _state.value.genres); queryFlow.value = "" }
+    fun clearSearch() { _state.value = SearchUiState(categories = _state.value.categories); queryFlow.value = "" }
     fun selectGenre(id: String) {
         _state.update { it.copy(selectedGenreId = id, genreLoading = true, genreContent = null) }
         viewModelScope.launch {
