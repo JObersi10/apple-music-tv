@@ -25,17 +25,19 @@ class CategoryViewModel @Inject constructor(
     savedState: SavedStateHandle,
 ) : ViewModel() {
 
-    // Route id is prefixed with the curator flavour: "ac-<id>" = apple-curator, "c-<id>" = curator.
+    // Route id is prefixed with the page flavour: "ac-<id>" apple-curator, "c-<id>" curator,
+    // "mr-<id>" editorial multiroom.
     private val rawId = savedState.get<String>("categoryId") ?: ""
     private val isApple = rawId.startsWith("ac-")
-    private val curatorId = rawId.removePrefix("ac-").removePrefix("c-")
+    private val isMultiRoom = rawId.startsWith("mr-")
+    private val realId = rawId.removePrefix("ac-").removePrefix("c-").removePrefix("mr-")
     private val _state = MutableStateFlow(CategoryUiState())
     val state: StateFlow<CategoryUiState> = _state
 
-    init { if (curatorId.isNotEmpty()) load() }
+    init { if (realId.isNotEmpty()) load() }
 
     private fun load() = viewModelScope.launch {
-        repo.getCurator(curatorId, isApple)
+        (if (isMultiRoom) repo.getMultiRoom(realId) else repo.getCurator(realId, isApple))
             .onSuccess { d ->
                 _state.value = CategoryUiState(
                     isLoading = false, title = d.title, description = d.description, sections = d.sections,

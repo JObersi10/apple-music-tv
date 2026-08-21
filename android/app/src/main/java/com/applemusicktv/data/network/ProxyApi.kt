@@ -235,6 +235,9 @@ interface ProxyApi {
         @Query("apple") apple: Int = 0,
     ): MultiRoomDto
 
+    @GET("api/browse/multiroom/{id}")
+    suspend fun getMultiRoom(@Path("id") id: String): MultiRoomDto
+
     @GET("api/browse/genres")
     suspend fun getGenres(): GenresResponse
 

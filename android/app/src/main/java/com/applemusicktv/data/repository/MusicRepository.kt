@@ -134,6 +134,10 @@ class MusicRepository @Inject constructor(
     suspend fun getCurator(id: String, isApple: Boolean) =
         runCatching { api.getCurator(id, if (isApple) 1 else 0) }
 
+    // Editorial multiroom page (hand-built shelves + hero blurb). Proxy-only; not
+    // searchable via Apple's API, so it's only reachable from a Browse spotlight.
+    suspend fun getMultiRoom(id: String) = runCatching { api.getMultiRoom(id) }
+
     suspend fun getGenres() =
         if (!useProxy) direct.genres().map { g -> g.filter { it.name.isNotEmpty() && it.id != "34" } }
         else runCatching { api.getGenres().genres }
