@@ -103,7 +103,7 @@ browse.get("/curator/:id", async (c) => {
   try {
     const res = await axios.get(`${APPLE}/v1/catalog/${sf}/${kind}/${id}`, {
       headers: hdrs(mut),
-      params: { include: "playlists", "limit[curators:playlists]": 10, l: "en-US", platform: "web" },
+      params: { include: "grouping,playlists", "limit[curators:playlists]": 10, l: "en-US", platform: "web" },
     });
     const cur = res.data?.data?.[0];
     if (!cur) return c.json({ error: "not found" }, 404);
@@ -111,14 +111,48 @@ browse.get("/curator/:id", async (c) => {
     const description = typeof attr.description === "string"
       ? attr.description
       : (attr.description?.standard ?? attr.description?.short ?? null);
-    const items = (cur.relationships?.playlists?.data ?? []).map(itemFromRaw).filter(Boolean);
-    // Key must be `albums` — that's what the Android HomeSection model reads.
-    const sections = items.length ? [{ title: "Playlists", albums: items }] : [];
+
+    // Rich curators (e.g. Tomorrowland Live Sets) hang their content off an editorial
+    // "grouping" — a set of named shelves (2026, 2025, …). Expand that when present;
+    // otherwise fall back to the curator's flat playlists relationship (e.g. Formula 1).
+    let sections: Array<{ title: string; albums: any[] }> = [];
+    const groupingId = cur.relationships?.grouping?.data?.[0]?.id;
+    if (groupingId) {
+      sections = await groupingSections(sf, groupingId, mut);
+    }
+    if (!sections.length) {
+      const items = (cur.relationships?.playlists?.data ?? []).map(itemFromRaw).filter(Boolean);
+      // Key must be `albums` — that's what the Android HomeSection model reads.
+      if (items.length) sections = [{ title: "Playlists", albums: items }];
+    }
     return c.json({ id, title: attr.name ?? "", description, sections });
   } catch (e: any) {
     return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed" }, 502);
   }
 });
+
+// An editorial grouping → its default tab's children are named content shelves.
+// Shelf title is `attributes.name` (NOT `title` — that field is empty here).
+async function groupingSections(sf: string, groupingId: string, mut?: string): Promise<Array<{ title: string; albums: any[] }>> {
+  try {
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/groupings/${groupingId}`, {
+      headers: hdrs(mut),
+      params: { include: "tabs", extend: "editorialArtwork", l: "en-US", platform: "web" },
+    });
+    const tab = res.data?.data?.[0]?.relationships?.tabs?.data?.[0];
+    const kids: any[] = tab?.relationships?.children?.data ?? [];
+    const out: Array<{ title: string; albums: any[] }> = [];
+    for (const k of kids) {
+      const a = k.attributes ?? {};
+      const kind = a.editorialElementKind;
+      if (kind !== "326" && kind !== "345") continue;
+      const title = a.name ?? a.title;
+      const albums = (k.relationships?.contents?.data ?? []).map(itemFromRaw).filter(Boolean);
+      if (title && albums.length) out.push({ title, albums });
+    }
+    return out;
+  } catch { return []; }
+}
 
 browse.get("/", async (c) => {
   const mut = c.req.header("X-Music-User-Token") || getMUT();

@@ -194,6 +194,11 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     item {
                         Text("Top Results", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            // Editorial category first — it's the strongest match for terms like
+                            // "formula 1" or "tomorrowland", and the one users can't find otherwise.
+                            items(results.curators.take(1), key = { "top-cu-${it.id}" }) { cur ->
+                                CuratorCard(cur, size = 150, onClick = { onCuratorClick(cur.id, cur.isApple) })
+                            }
                             items(results.playlists.take(2), key = { "top-pl-${it.id}" }) { pl ->
                                 AlbumCard(album = pl, size = 150, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
                             }
@@ -228,22 +233,22 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                             }
                         }
                     }
-                    if (results.playlists.isNotEmpty()) {
-                        item {
-                            Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                                items(results.playlists, key = { it.id }) { pl ->
-                                    AlbumCard(album = pl, size = 130, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
-                                }
-                            }
-                        }
-                    }
                     if (results.curators.isNotEmpty()) {
                         item {
                             Text("Categories", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 items(results.curators, key = { it.id }) { cur ->
                                     CuratorCard(cur, onClick = { onCuratorClick(cur.id, cur.isApple) })
+                                }
+                            }
+                        }
+                    }
+                    if (results.playlists.isNotEmpty()) {
+                        item {
+                            Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                items(results.playlists, key = { it.id }) { pl ->
+                                    AlbumCard(album = pl, size = 130, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
                                 }
                             }
                         }
@@ -472,14 +477,14 @@ private fun SearchContextItem(icon: String, label: String, onClick: () -> Unit, 
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun CuratorCard(cur: Curator, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(130.dp)) {
+private fun CuratorCard(cur: Curator, size: Int = 130, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(size.dp)) {
         Surface(
             onClick = onClick,
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
             colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1E1E20), focusedContainerColor = Color(0xFF2E2E30)),
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-            modifier = Modifier.size(130.dp),
+            modifier = Modifier.size(size.dp),
         ) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 if (cur.artworkUrl != null) AsyncImage(
