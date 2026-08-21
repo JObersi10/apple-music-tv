@@ -49,6 +49,45 @@ async function fetchPlaylist(sf: string, id: string, mut?: string): Promise<any 
   } catch { return null; }
 }
 
+// A "multi-room" is an Apple editorial category page (e.g. The Sounds of Formula 1):
+// a title, a hero description, and several titled shelves of playlists/albums.
+// The web app fetches it from /v1/editorial/{sf}/multirooms/{id}; children are
+// "editorial-elements" — kind 404 = hero (title+description), 345 = a content shelf,
+// 405 = an external link (skipped).
+browse.get("/multiroom/:id", async (c) => {
+  const id = c.req.param("id");
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  const sf = getStorefront() || "us";
+  try {
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/multirooms/${id}`, {
+      headers: hdrs(mut),
+      params: { l: "en-US", platform: "web", extend: "editorialArtwork", "include[albums]": "artists", "art[url]": "f" },
+    });
+    const room = res.data?.data?.[0];
+    if (!room) return c.json({ error: "not found" }, 404);
+    const kids: any[] = room.relationships?.children?.data ?? [];
+
+    let description: string | null = null;
+    const sections: Array<{ title: string; items: any[] }> = [];
+    for (const k of kids) {
+      const attr = k.attributes ?? {};
+      const kind = attr.editorialElementKind;
+      if (kind === "404" && attr.description) {
+        // Hero — may be a plain string or {short,standard}.
+        description = typeof attr.description === "string"
+          ? attr.description
+          : (attr.description?.standard ?? attr.description?.short ?? null);
+      } else if (kind === "345") {
+        const items = (k.relationships?.contents?.data ?? []).map(itemFromRaw).filter(Boolean);
+        if (items.length && attr.title) sections.push({ title: attr.title, items });
+      }
+    }
+    return c.json({ id, title: room.attributes?.title ?? "", description, sections });
+  } catch (e: any) {
+    return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed" }, 502);
+  }
+});
+
 browse.get("/", async (c) => {
   const mut = c.req.header("X-Music-User-Token") || getMUT();
   const sf = getStorefront() || "us";
