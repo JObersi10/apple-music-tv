@@ -44,6 +44,8 @@ class InAppWebServer @Inject constructor(
     fun start(scope: CoroutineScope) {
         if (job?.isActive == true) return
         appScope = scope
+        // Stream network-request lines live too, so :8081 and the web page show ALL logs, not just app logs.
+        NetworkLog.listener = { line -> broadcastLive(line) }
         job = scope.launch(Dispatchers.IO) {
             val server = ServerSocket(port)
             while (isActive) {
@@ -75,17 +77,7 @@ class InAppWebServer @Inject constructor(
             if (logs.size >= 300) logs.removeFirst()
             logs.addLast(line)
         }
-        val sseData = "data: ${line.replace("\n", " ")}\n\n".toByteArray()
-        val dead = mutableListOf<java.io.OutputStream>()
-        for (out in sseClients) { try { out.write(sseData); out.flush() } catch (_: Exception) { dead.add(out) } }
-        sseClients.removeAll(dead)
-        // Push to event stream clients on IO thread (network I/O must not run on main thread)
-        val eventLine = "${line.replace("\n", " ")}\n".toByteArray()
-        appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val dead = mutableListOf<java.io.OutputStream>()
-            for (out in eventClients) { try { out.write(eventLine); out.flush() } catch (_: Exception) { dead.add(out) } }
-            eventClients.removeAll(dead)
-        }
+        broadcastLive(line)
         appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val body = """{"level":"$level","msg":${org.json.JSONObject.quote(msg)}}"""
@@ -100,6 +92,20 @@ class InAppWebServer @Inject constructor(
                 conn.responseCode
                 conn.disconnect()
             } catch (_: Exception) {}
+        }
+    }
+
+    /** Push one line to every live listener — SSE (web page) and the raw :8081 event stream. */
+    private fun broadcastLive(line: String) {
+        val sseData = "data: ${line.replace("\n", " ")}\n\n".toByteArray()
+        val deadSse = mutableListOf<java.io.OutputStream>()
+        for (out in sseClients) { try { out.write(sseData); out.flush() } catch (_: Exception) { deadSse.add(out) } }
+        sseClients.removeAll(deadSse)
+        val eventLine = "${line.replace("\n", " ")}\n".toByteArray()
+        appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val dead = mutableListOf<java.io.OutputStream>()
+            for (out in eventClients) { try { out.write(eventLine); out.flush() } catch (_: Exception) { dead.add(out) } }
+            eventClients.removeAll(dead)
         }
     }
 

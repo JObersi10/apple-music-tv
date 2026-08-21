@@ -70,8 +70,11 @@ class DevMenuViewModel @Inject constructor(
             log(if (localHasMUT) "OK" else "WARN", "MUT: ${if (localHasMUT) "active" else "not set"}")
             log(if (s.hasBearer) "OK" else "WARN", "Bearer: ${if (s.hasBearer) "active" else "not ready"}")
         }.onFailure {
-            _state.update { s -> s.copy(serverOk = false, standaloneMode = true) }
-            log("WARN", "Server unreachable — standalone mode active")
+            // Standalone mode (no PC server) is the normal case — the token still lives locally, so read
+            // it from prefs here too. Otherwise the Account section shows "Music-User-Token: not set" even
+            // when it's saved, because hasMUT was only populated on the server-reachable path.
+            _state.update { s -> s.copy(serverOk = false, standaloneMode = true, hasMUT = mutPrefs.hasMUT()) }
+            log(if (mutPrefs.hasMUT()) "OK" else "WARN", "Server unreachable — standalone; MUT ${if (mutPrefs.hasMUT()) "active" else "not set"}")
         }
     }
 

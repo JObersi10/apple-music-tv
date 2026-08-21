@@ -233,7 +233,7 @@ fun NowPlayingScreen(
             1 -> FullScreenLyrics(
                 lyrics = state.lyrics,
                 progressState = smoothProgress,
-                offsetMs = state.lyricsOffsetMs,
+                offsetMs = state.avLyricsMs,
                 song = song,
                 isPlaying = state.isPlaying,
                 onSeek = { ms -> playerVm.player.seekTo(ms) },
@@ -466,7 +466,7 @@ fun NowPlayingScreen(
                         LyricsPanel(
                             lyrics = state.lyrics,
                             progressState = smoothProgress,
-                            offsetMs = state.lyricsOffsetMs,
+                            offsetMs = state.avLyricsMs,
                             onSeek = { ms -> playerVm.player.seekTo(ms) },
                             playFocus = playFocus,
                             fontScale = state.lyricsScale,
@@ -1519,12 +1519,16 @@ private fun LyricLineRow(
                     // Karaoke wipe: each word fills left→right as it's sung, current word
                     // grows + glows on slow/held words. Apple Music style.
                     val activeIdx = line.words.indexOfLast { it.startMs <= progressMs }
-                    WordWipeLine(words = line.words, activeIdx = activeIdx, progressMs = progressMs, fontSize = (26f * fontScale).sp, lineHeight = (32f * fontScale).sp)
+                    WordWipeLine(words = line.words, activeIdx = activeIdx, progressMs = progressMs, fontSize = (24f * fontScale).sp, lineHeight = (30f * fontScale).sp)
                 } else {
+                    // Every line is the SAME size — the active line's emphasis is weight + brightness
+                    // (+ the karaoke wipe), NOT a larger font. A size difference changed each line's
+                    // height as the active line moved, and that height change DURING the scroll
+                    // animation was the "warping/melting". Equal sizes = no reflow = no warp.
                     val style = when {
-                        isActive -> TextStyle(fontSize = (26f * fontScale).sp, fontWeight = FontWeight.Bold, lineHeight = (32f * fontScale).sp, letterSpacing = (-0.4).sp, color = Color.White)
-                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (20f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (27f * fontScale).sp, letterSpacing = (-0.2).sp)
-                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (20f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (27f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        isActive -> TextStyle(fontSize = (24f * fontScale).sp, fontWeight = FontWeight.Bold, lineHeight = (30f * fontScale).sp, letterSpacing = (-0.4).sp, color = Color.White)
+                        isPast   -> TextStyle(color = Color(0xFFCCCCCC), fontSize = (24f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (30f * fontScale).sp, letterSpacing = (-0.2).sp)
+                        else     -> TextStyle(color = Color(0xFF8E8E93), fontSize = (24f * fontScale).sp, fontWeight = FontWeight.Normal, lineHeight = (30f * fontScale).sp, letterSpacing = (-0.2).sp)
                     }
                     Text(text = AnnotatedString(line.text), style = style)
                 }

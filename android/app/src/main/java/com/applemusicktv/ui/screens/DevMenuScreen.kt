@@ -84,6 +84,11 @@ fun DevMenuScreen(
                 sub = if (pstate.volumeLeveling) "Even out loudness across tracks" else "Play each track at its own level",
                 onToggle = { playerVm.toggleVolumeLeveling() },
             )
+            Toggle(
+                label = "Background play", on = pstate.backgroundPlayEnabled,
+                sub = if (pstate.backgroundPlayEnabled) "Keep playing when you leave the app" else "Pause when the app goes to the background",
+                onToggle = { playerVm.toggleBackgroundPlay() },
+            )
 
             // ── NOW PLAYING ───────────────────────────────────────────────
             SectionLabel("Now Playing")
@@ -155,19 +160,32 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
 
-            // ── LYRICS ────────────────────────────────────────────────────
-            SectionLabel("Lyrics")
-            Stepper(
-                label = "Lyrics offset", value = "${state.lyricsOffsetMs}ms",
-                sub = "Negative = earlier, positive = later",
-                onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 100) },
-                onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 100) },
+            // ── A/V SYNC ──────────────────────────────────────────────────
+            // One delay drives both the beat visuals and the lyric clock. A ~200 ms display baseline is
+            // built in (so this normally reads 0); Automatic adds a Bluetooth estimate on top when a BT
+            // output is live. "Extra" is your own nudge on top of all that.
+            SectionLabel("A/V Sync")
+            Text(
+                "Output: ${pstate.avOutputLabel}",
+                fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium,
+            )
+            Text(
+                if (pstate.avSyncAuto && pstate.avOnBluetooth) "Bluetooth delay applied: +350 ms (estimated)"
+                else "Standard timing",
+                fontSize = 10.sp, color = Color(0xFF999999), modifier = Modifier.padding(bottom = 4.dp),
+            )
+            Toggle(
+                label = "Automatic",
+                on = pstate.avSyncAuto,
+                sub = if (pstate.avSyncAuto) "Adds a Bluetooth estimate on top automatically"
+                      else "Manual — only your extra below is added to the baseline",
+                onToggle = { playerVm.setAvSyncAuto(!pstate.avSyncAuto) },
             )
             Stepper(
-                label = "Beat latency", value = "${state.beatLatencyMs}ms",
-                sub = "Delay for beat-synced visuals (0–500)",
-                onDec = { vm.setBeatLatency(state.beatLatencyMs - 10) },
-                onInc = { vm.setBeatLatency(state.beatLatencyMs + 10) },
+                label = "Extra offset", value = "${state.lyricsOffsetMs}ms",
+                sub = "On top of the built-in baseline. Negative = earlier, positive = later",
+                onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 50) },
+                onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 50) },
             )
 
             Spacer(Modifier.height(6.dp))
@@ -373,7 +391,7 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
             Column(Modifier.weight(1f)) {
                 Text("App version", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Medium)
                 Text(
-                    status ?: "v${BuildConfig.VERSION_NAME}",
+                    status ?: "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE} · ${BuildConfig.GIT_SHA})",
                     fontSize = 10.sp, color = Color(0xFF777777), modifier = Modifier.padding(top = 2.dp),
                 )
             }
