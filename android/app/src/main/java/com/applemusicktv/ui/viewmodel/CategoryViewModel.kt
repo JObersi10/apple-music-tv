@@ -14,6 +14,7 @@ data class CategoryUiState(
     val isLoading:   Boolean = true,
     val title:       String = "",
     val description: String? = null,
+    val artworkUrl:  String? = null,
     val sections:    List<HomeSection> = emptyList(),
     val error:       String? = null,
 )
@@ -40,7 +41,8 @@ class CategoryViewModel @Inject constructor(
         (if (isMultiRoom) repo.getMultiRoom(realId) else repo.getCurator(realId, isApple))
             .onSuccess { d ->
                 _state.value = CategoryUiState(
-                    isLoading = false, title = d.title, description = d.description, sections = d.sections,
+                    isLoading = false, title = d.title, description = d.description,
+                    artworkUrl = d.artworkUrl, sections = d.sections,
                 )
             }
             .onFailure { _state.value = CategoryUiState(isLoading = false, error = it.message) }

@@ -83,7 +83,10 @@ browse.get("/multiroom/:id", async (c) => {
         if (items.length && attr.title) sections.push({ title: attr.title, albums: items });
       }
     }
-    return c.json({ id, title: room.attributes?.title ?? "", description, sections });
+    // Wide editorial hero for the page header.
+    const ea = room.attributes?.editorialArtwork ?? {};
+    const artworkUrl = artUrl((ea.superHeroWide ?? ea.subscriptionHero ?? ea.storeFlowcase ?? ea.subscriptionCover)?.url, 1600);
+    return c.json({ id, title: room.attributes?.title ?? "", description, artworkUrl, sections });
   } catch (e: any) {
     return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed" }, 502);
   }
@@ -103,7 +106,7 @@ browse.get("/curator/:id", async (c) => {
   try {
     const res = await axios.get(`${APPLE}/v1/catalog/${sf}/${kind}/${id}`, {
       headers: hdrs(mut),
-      params: { include: "grouping,playlists", "limit[curators:playlists]": 10, l: "en-US", platform: "web" },
+      params: { include: "grouping,playlists", extend: "editorialArtwork", "limit[curators:playlists]": 10, l: "en-US", platform: "web" },
     });
     const cur = res.data?.data?.[0];
     if (!cur) return c.json({ error: "not found" }, 404);
@@ -125,7 +128,10 @@ browse.get("/curator/:id", async (c) => {
       // Key must be `albums` — that's what the Android HomeSection model reads.
       if (items.length) sections = [{ title: "Playlists", albums: items }];
     }
-    return c.json({ id, title: attr.name ?? "", description, sections });
+    const ea = attr.editorialArtwork ?? {};
+    const artworkUrl = artUrl(
+      (ea.superHeroWide ?? ea.subscriptionHero ?? ea.storeFlowcase)?.url ?? attr.artwork?.url, 1600)
+    return c.json({ id, title: attr.name ?? "", description, artworkUrl, sections });
   } catch (e: any) {
     return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed" }, 502);
   }

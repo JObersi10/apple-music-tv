@@ -96,7 +96,9 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
             val items = cur.relationships?.playlists?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
             if (items.isNotEmpty()) sections = listOf(HomeSection("Playlists", items))
         }
-        return MultiRoomDto(id = id, title = cur.attributes?.name ?: "", sections = sections)
+        val ea = cur.attributes?.editorialArtwork
+        val hero = resolveArt(ea?.superHeroWide?.url ?: ea?.brandLogo?.url ?: cur.attributes?.artwork?.url, 1600)
+        return MultiRoomDto(id = id, title = cur.attributes?.name ?: "", artworkUrl = hero, sections = sections)
     }
 
     private suspend fun groupingSections(groupingId: String): List<HomeSection> = runCatching {

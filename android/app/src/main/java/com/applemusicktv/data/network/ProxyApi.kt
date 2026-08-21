@@ -174,6 +174,7 @@ data class MultiRoomDto(
     val id: String = "",
     val title: String = "",
     val description: String? = null,
+    val artworkUrl: String? = null,
     val sections: List<HomeSection> = emptyList(),
 )
 

@@ -8,7 +8,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,11 +51,41 @@ fun CategoryScreen(
             ) {
                 item {
                     Column(Modifier.padding(start = 8.dp)) {
-                        Text(state.title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        state.description?.takeIf { it.isNotBlank() }?.let {
-                            Spacer(Modifier.height(10.dp))
-                            Text(it, fontSize = 13.sp, color = Color(0xFFAAAAAA), lineHeight = 19.sp,
-                                modifier = Modifier.fillMaxWidth(0.75f))
+                        // Editorial hero — a wide banner with a scrim, title overlaid bottom-left.
+                        state.artworkUrl?.takeIf { it.isNotBlank() }?.let { art ->
+                            Box(
+                                Modifier.fillMaxWidth().height(220.dp)
+                                    .clip(RoundedCornerShape(16.dp)),
+                            ) {
+                                AsyncImage(
+                                    model = art, contentDescription = state.title,
+                                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                                )
+                                Box(
+                                    Modifier.fillMaxSize().background(
+                                        Brush.verticalGradient(
+                                            0f to Color.Transparent, 0.55f to Color(0x66000000), 1f to Color(0xEE000000),
+                                        ),
+                                    ),
+                                )
+                                Text(
+                                    state.title, fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                                    modifier = Modifier.align(Alignment.BottomStart).padding(24.dp),
+                                )
+                            }
+                            state.description?.takeIf { it.isNotBlank() }?.let {
+                                Spacer(Modifier.height(12.dp))
+                                Text(it, fontSize = 13.sp, color = Color(0xFFAAAAAA), lineHeight = 19.sp,
+                                    modifier = Modifier.fillMaxWidth(0.8f))
+                            }
+                        } ?: run {
+                            // No hero image — plain title (e.g. multirooms have none server-side).
+                            Text(state.title, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            state.description?.takeIf { it.isNotBlank() }?.let {
+                                Spacer(Modifier.height(10.dp))
+                                Text(it, fontSize = 13.sp, color = Color(0xFFAAAAAA), lineHeight = 19.sp,
+                                    modifier = Modifier.fillMaxWidth(0.75f))
+                            }
                         }
                     }
                 }

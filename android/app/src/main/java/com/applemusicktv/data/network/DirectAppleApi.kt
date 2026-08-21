@@ -414,6 +414,7 @@ interface DirectAppleApi {
         @Path("kind") kind: String,
         @Path("id") id: String,
         @Query("include") include: String = "grouping,playlists",
+        @Query("extend") extend: String = "editorialArtwork",
         @Query("limit[curators:playlists]") plLimit: Int = 10,
         @Query("l") l: String = "en-US",
         @Query("platform") platform: String = "web",
@@ -457,6 +458,8 @@ data class EdNotes(val name: String? = null, val tagline: String? = null)
 data class EdEditorialArtwork(
     val subscriptionCover: EdArtwork? = null,
     val brandLogo: EdArtwork? = null,
+    val superHeroWide: EdArtwork? = null,
+    val subscriptionHero: EdArtwork? = null,
 )
 
 @JsonClass(generateAdapter = true)
