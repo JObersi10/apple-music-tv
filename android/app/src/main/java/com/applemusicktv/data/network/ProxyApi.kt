@@ -172,7 +172,7 @@ interface ProxyApi {
     suspend fun search(
         @Query("term")  term:  String,
         @Query("limit") limit: Int    = 20,
-        @Query("types") types: String = "songs,albums,artists",
+        @Query("types") types: String = "songs,albums,artists,playlists",
     ): SearchResponse
 
     @GET("api/albums/{id}")

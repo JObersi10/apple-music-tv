@@ -58,10 +58,12 @@ class MusicRepository @Inject constructor(
             val res = api.search(term, limit)
             // The proxy backend often doesn't surface catalog playlists — fall back to a
             // direct Apple catalog search for them so the Playlists row still populates.
-            val playlists = res.playlists.map(::playlistToAlbum).ifEmpty {
+            // Keep only Apple editorial/curated playlists (catalog id `pl.`); drop personal
+            // user playlists (`p.`), which aren't what a catalog search is meant to show.
+            val playlists = (res.playlists.map(::playlistToAlbum).ifEmpty {
                 runCatching { direct.search(term, limit).getOrNull()?.playlists?.map(::playlistToAlbum) }
                     .getOrNull().orEmpty()
-            }
+            }).filter { it.id.startsWith("pl.") }
             SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists)
         }
     }

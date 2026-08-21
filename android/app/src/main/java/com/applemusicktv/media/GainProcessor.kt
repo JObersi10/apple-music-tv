@@ -34,6 +34,8 @@ class GainProcessor : BaseAudioProcessor() {
     private var samplesSinceLog = 0L
     private var samplesInTrack = 0L   // for the settle-then-lock behaviour
     private var lastLoggedGain = -1f  // last gain we emitted a VOL line for (-1 = none yet)
+    private var settleLogsSent = 0    // how many of the 3 "analyzing" lines we've sent this track
+    private var settledLogged = false // emitted the single "settled" summary yet?
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return when (inputAudioFormat.encoding) {
@@ -56,6 +58,8 @@ class GainProcessor : BaseAudioProcessor() {
         samplesSinceLog = 0L
         samplesInTrack = 0L
         lastLoggedGain = -1f
+        settleLogsSent = 0
+        settledLogged = false
         logger?.invoke("VOL", "track=${newKey ?: "?"} start gain=${"%.2f".format(gain)} (${if (newKey != null && cacheGet?.invoke(newKey) != null) "remembered" else "fresh"})")
     }
 
@@ -112,23 +116,20 @@ class GainProcessor : BaseAudioProcessor() {
                 val rate = if (samplesInTrack > SETTLE_SAMPLES) GAIN_RATE * 0.12f else GAIN_RATE
                 gain += rate * (target - gain)
 
-                samplesSinceLog += count
                 val locked = samplesInTrack > SETTLE_SAMPLES
                 if (!locked) {
-                    // Settling: report ~1s so you can watch it find the level.
-                    if (samplesSinceLog >= sampleRate * 2) {   // count = frames*channels, stereo
-                        samplesSinceLog = 0
-                        logger?.invoke("VOL", "gain=${"%.2f".format(gain)} rms=${"%.3f".format(rms)} → target=${"%.2f".format(target)} [settling]")
-                        lastLoggedGain = gain
+                    // Settling: shoot exactly 3 "analyzing" lines across the settle window — at ~1/4, 1/2
+                    // and 3/4 of the way — not a per-second stream.
+                    val next = SETTLE_SAMPLES * (settleLogsSent + 1) / 4
+                    if (settleLogsSent < 3 && samplesInTrack >= next) {
+                        settleLogsSent++
+                        logger?.invoke("VOL", "analyzing… gain=${"%.2f".format(gain)} rms=${"%.3f".format(rms)} → target=${"%.2f".format(target)}")
                     }
-                } else {
-                    // Locked: emit the settled value ONCE, then stay quiet unless the gain actually
-                    // drifts (a real level change), instead of spamming an unchanging number every second.
-                    if (kotlin.math.abs(gain - lastLoggedGain) >= 0.03f || lastLoggedGain < 0f) {
-                        logger?.invoke("VOL", "settled gain=${"%.2f".format(gain)} [locked]")
-                        lastLoggedGain = gain
-                    }
-                    samplesSinceLog = 0
+                } else if (!settledLogged) {
+                    // Just crossed into locked: emit ONE line of what it ended up doing, then go quiet.
+                    settledLogged = true
+                    lastLoggedGain = gain
+                    logger?.invoke("VOL", "settled at gain=${"%.2f".format(gain)} (${if (gain > 1.01f) "boosted +${"%.0f".format((gain - 1f) * 100)}%" else if (gain < 0.99f) "cut ${"%.0f".format((1f - gain) * 100)}%" else "unchanged"})")
                 }
             }
         }
