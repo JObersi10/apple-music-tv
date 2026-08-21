@@ -17,6 +17,11 @@ sealed class Screen(val route: String) {
     object Category       : Screen("category/{categoryId}") {
         fun route(id: String) = "category/$id"
     }
+    object MusicVideo     : Screen("mv/{mvId}/{mvTitle}/{mvArtist}") {
+        fun route(id: String, title: String, artist: String) =
+            "mv/${encode(id)}/${encode(title)}/${encode(artist)}"
+        private fun encode(s: String) = java.net.URLEncoder.encode(s.ifEmpty { " " }, "UTF-8")
+    }
     object PlaylistDetail : Screen("playlist/{playlistId}/{playlistName}/{artworkUrl}") {
         fun route(id: String, name: String, artworkUrl: String = "") =
             "playlist/${encode(id)}/${encode(name)}/${encode(artworkUrl)}"

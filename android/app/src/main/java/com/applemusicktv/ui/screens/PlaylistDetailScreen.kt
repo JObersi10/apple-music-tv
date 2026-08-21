@@ -42,6 +42,7 @@ fun PlaylistDetailScreen(
     onBack: () -> Unit,
     onArtistClick: (String) -> Unit = {},
     onAlbumClick: (String) -> Unit = {},
+    onMusicVideoClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val vm: PlaylistDetailViewModel = hiltViewModel()
@@ -132,7 +133,7 @@ fun PlaylistDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks, 0) },
+                                onClick = { playerVm.playAlbum(sortedTracks.filter { !it.isMusicVideo }, 0) },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B), focusedContainerColor = Color(0xFFCC1A2E)),
                             ) {
@@ -141,7 +142,7 @@ fun PlaylistDetailScreen(
                                 }
                             }
                             Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true) },
+                                onClick = { playerVm.playAlbum(sortedTracks.filter { !it.isMusicVideo }.shuffled(), 0, shuffle = true) },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
                             ) {
@@ -182,7 +183,7 @@ fun PlaylistDetailScreen(
                             }
                         }
                     }
-                    trackItems(sortedTracks, playerVm) { song ->
+                    trackItems(sortedTracks, playerVm, onMusicVideoClick) { song ->
                         val now = System.currentTimeMillis()
                         if (menuSongState == null && now - lastDismissMs > 600) menuSongState = song
                     }
@@ -238,12 +239,17 @@ private enum class PlaylistSort(val label: String) {
     DEFAULT("Default"), TITLE("Title"), ARTIST("Artist"), ALBUM("Album")
 }
 
-private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onLongPress: (Song) -> Unit = {}) {
+private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onMusicVideoClick: (Song) -> Unit = {}, onLongPress: (Song) -> Unit = {}) {
     items(tracks.size) { idx ->
         val song = tracks[idx]
         @OptIn(ExperimentalTvMaterial3Api::class)
         Surface(
-            onClick     = { playerVm.playAlbum(tracks, idx) },
+            onClick     = {
+                if (song.isMusicVideo) onMusicVideoClick(song)
+                // Play the audio tracks only, and start at this row's position within
+                // that filtered list — an MV id would fail the audio decrypt.
+                else playerVm.playAlbum(tracks.filter { !it.isMusicVideo }, tracks.take(idx + 1).count { !it.isMusicVideo } - 1)
+            },
             onLongClick = { onLongPress(song) },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
@@ -267,7 +273,13 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
                     Text(song.title, fontSize = 13.sp, color = Color.White, maxLines = 1, fontWeight = FontWeight.Medium)
                     Text(song.artistName, fontSize = 11.sp, color = Color(0xFF666666), maxLines = 1)
                 }
-                Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFF555555))
+                if (song.isMusicVideo) {
+                    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Text("MV", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFF555555))
+                }
             }
         }
     }

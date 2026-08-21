@@ -128,6 +128,7 @@ data class AppleSearchResponse(val results: AppleSearchResults = AppleSearchResu
 
 fun AppleItem<AppleSongAttrs>.toSongDto() = SongDto(
     id             = id,
+    type           = type.ifEmpty { "songs" },
     title          = attributes?.name ?: "",
     artistName     = attributes?.artistName ?: "",
     albumName      = attributes?.albumName ?: "",

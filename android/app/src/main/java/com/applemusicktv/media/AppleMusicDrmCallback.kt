@@ -66,7 +66,10 @@ class AppleMusicDrmCallback(
             .build()
 
         val resp = http.newCall(httpReq).execute()
-        val licenseB64 = JSONObject(resp.body!!.string()).getString("license")
+        val respBody = resp.body!!.string()
+        val json = JSONObject(respBody)
+        android.util.Log.i("AMMV", "license http=${resp.code} status=${json.opt("status")} hasLicense=${json.has("license")} keys=${json.keys().asSequence().toList()}")
+        val licenseB64 = json.getString("license")
         return Base64.decode(licenseB64, Base64.DEFAULT)
     }
 }

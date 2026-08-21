@@ -115,6 +115,7 @@ export function normaliseSong(s: any) {
   const a = s.attributes ?? {}
   return {
     id:             s.id,
+    type:           s.type ?? "songs",
     title:          a.name ?? "Unknown",
     artistName:     a.artistName ?? "",
     artistId:       s.relationships?.artists?.data?.[0]?.id ?? null,

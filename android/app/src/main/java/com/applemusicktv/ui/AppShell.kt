@@ -94,8 +94,13 @@ fun AppShell(modifier: Modifier = Modifier) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
     val isOnNowPlaying = currentRoute == Screen.NowPlaying.route
+    // Music video is a fullscreen route: no top padding, no nav bar overlay.
+    val isMusicVideo = currentRoute?.startsWith("mv/") == true
 
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
+    // Pause audio while a music video is on screen; a single decoder-hungry Fire TV
+    // can't run both, and hearing the song under the video is wrong anyway.
+    LaunchedEffect(isMusicVideo) { if (isMusicVideo) playerVm.pause() }
 
     // Keep the screen awake ONLY while music is actually playing. When paused, drop the
     // flag so Fire TV's own screensaver / sleep can take over (our ambient screensaver only
@@ -165,7 +170,7 @@ fun AppShell(modifier: Modifier = Modifier) {
             startDestination = Screen.Home.route,
             modifier         = Modifier
                 .fillMaxSize()
-                .padding(top = if (isOnNowPlaying) 0.dp else navBarHeight),
+                .padding(top = if (isOnNowPlaying || isMusicVideo) 0.dp else navBarHeight),
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
@@ -274,6 +279,22 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onBack        = { navController.popBackStack() },
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onMusicVideoClick = { s -> navController.navigate(Screen.MusicVideo.route(s.id, s.title, s.artistName)) },
+                )
+            }
+            composable(
+                route     = Screen.MusicVideo.route,
+                arguments = listOf(
+                    navArgument("mvId")     { type = NavType.StringType },
+                    navArgument("mvTitle")  { type = NavType.StringType },
+                    navArgument("mvArtist") { type = NavType.StringType },
+                ),
+            ) { back ->
+                MusicVideoScreen(
+                    mvId   = URLDecoder.decode(back.arguments?.getString("mvId")     ?: "", "UTF-8"),
+                    title  = URLDecoder.decode(back.arguments?.getString("mvTitle")  ?: "", "UTF-8").trim(),
+                    artist = URLDecoder.decode(back.arguments?.getString("mvArtist") ?: "", "UTF-8").trim(),
+                    onBack = { navController.popBackStack() },
                 )
             }
         }
@@ -385,8 +406,9 @@ fun AppShell(modifier: Modifier = Modifier) {
             }
         }
 
-        // Nav bar on top layer (drawn after content).
-        Box(modifier = Modifier.align(Alignment.TopCenter)) {
+        // Nav bar on top layer (drawn after content). Hidden entirely on the
+        // fullscreen music-video route so it can't steal D-pad focus.
+        if (!isMusicVideo) Box(modifier = Modifier.align(Alignment.TopCenter)) {
             TopNavBar(
                 selected  = selectedTab,
                 isPlaying = playerState.isPlaying,

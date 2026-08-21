@@ -6,6 +6,7 @@ import retrofit2.http.*
 @JsonClass(generateAdapter = true)
 data class SongDto(
     val id:             String,
+    val type:           String       = "songs",
     val title:          String,
     val artistName:     String,
     val artistId:       String? = null,

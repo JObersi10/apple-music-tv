@@ -261,6 +261,7 @@ class MusicRepository @Inject constructor(
         genreNames     = dto.genreNames,
         artistId       = dto.artistId,
         albumId        = dto.albumId,
+        type           = dto.type,
     )
 
     fun albumFromDto(dto: AlbumDto) = Album(

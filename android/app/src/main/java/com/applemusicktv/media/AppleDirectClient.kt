@@ -20,6 +20,20 @@ data class WebPlaybackResult(
     val hlsText:  String = "",
 )
 
+const val MV_VIDEO_FILE = "mv_video.m3u8"
+const val MV_AUDIO_FILE = "mv_audio.m3u8"
+const val MV_MASTER_FILE = "mv_master.m3u8"
+
+data class MusicVideoResult(
+    val adamId:     String,
+    /** Minimal master m3u8 referencing the two local media files by name. */
+    val masterText: String,
+    val videoText:  String,
+    val audioText:  String,
+    /** Widevine key-line data-uri (real KID) for the license request body. */
+    val keyUri:     String = "",
+)
+
 @Singleton
 class AppleDirectClient @Inject constructor() {
 
@@ -146,6 +160,172 @@ class AppleDirectClient @Inject constructor() {
 
             WebPlaybackResult(adamId = adamId, hlsUrl = mediaUrl, keyUri = keyUri, hlsText = hlsText)
         }
+
+    /**
+     * Resolve a music-video id to a set of playable, DRM-corrected HLS playlists.
+     *
+     * The catch that took three failed attempts: Apple's MV playlist ships a Widevine
+     * `#EXT-X-KEY` whose pssh carries a **placeholder KID ("Mic1…"), not the real
+     * content KID**. Trust it and the device CDM requests the wrong key → the video
+     * sample's real KID (in the fMP4 init segment's `tenc` box) is never satisfied and
+     * MediaCodec dies "Crypto key not available". So we do exactly what the audio path
+     * does: download each track's init segment, read the real KID off `tenc`, synthesize
+     * a correct Widevine pssh, and rewrite the key line with it. Apple's license endpoint
+     * returns the real content key regardless of the challenge KID (it maps by adamId),
+     * so once the session/sample/license KIDs all agree, playback works.
+     *
+     * We emit a minimal master with one video variant (best ≤1080p) + one audio rendition
+     * pointing at two locally-written media playlists; segments still stream from mvod on
+     * demand (nothing but the tiny m3u8 files touches disk). Returns the playlist texts —
+     * the caller writes the three files and plays the master via file://.
+     */
+    suspend fun getMusicVideoPlayback(mvId: String, bearer: String, mut: String): MusicVideoResult =
+        withContext(Dispatchers.IO) {
+            val numeric = mvId.replace(Regex("^[a-z]+\\."), "")
+            val forms = listOf("salableAdamId", "universalLibraryId")
+            var entry: JSONObject? = null
+            var lastBody = ""
+            for (field in forms) {
+                val idVal = if (field == "universalLibraryId") mvId else numeric
+                val bodyStr = """{"$field":"$idVal","language":"en-US"}"""
+                val resp = http.newCall(
+                    Request.Builder()
+                        .url("https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback")
+                        .post(bodyStr.toRequestBody("application/json".toMediaType()))
+                        .addHeader("Authorization", "Bearer $bearer")
+                        .addHeader("Cookie",        "media-user-token=$mut")
+                        .addHeader("Origin",        "https://music.apple.com")
+                        .build()
+                ).execute()
+                lastBody = resp.body!!.string()
+                val json = JSONObject(lastBody)
+                if (json.has("songList") && json.getJSONArray("songList").length() > 0) {
+                    val e = json.getJSONArray("songList").getJSONObject(0)
+                    if (e.has("hls-playlist-url")) { entry = e; break }
+                }
+            }
+            if (entry == null) error("MV webPlayback rejected: ${lastBody.take(200)}")
+            val adamId = entry.optString("songId", numeric)
+            val masterUrl = entry.getString("hls-playlist-url")
+            val masterText = fetchText(masterUrl, emptyMap())
+            val mBase = masterUrl.substringBeforeLast("/") + "/"
+            fun abs(u: String) = if (u.startsWith("http")) u else mBase + u
+            val lines = masterText.lines()
+
+            // Best video variant ≤1080p (its STREAM-INF attrs are reused in our master).
+            data class V(val height: Int, val attrs: String, val uri: String)
+            val variants = mutableListOf<V>()
+            for (i in lines.indices) {
+                if (lines[i].startsWith("#EXT-X-STREAM-INF")) {
+                    val h = Regex("""RESOLUTION=\d+x(\d+)""").find(lines[i])?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val uri = lines.getOrNull(i + 1)?.takeIf { it.isNotBlank() && !it.startsWith("#") } ?: continue
+                    variants.add(V(h, lines[i].removePrefix("#EXT-X-STREAM-INF:"), uri))
+                }
+            }
+            val vPick = variants.filter { it.height in 1..1080 }.maxByOrNull { it.height }
+                ?: variants.maxByOrNull { it.height } ?: error("No video variant in MV master")
+
+            // The audio group this variant references, else the first/highest audio rendition.
+            val wantGroup = Regex("""AUDIO="([^"]+)"""").find(vPick.attrs)?.groupValues?.get(1)
+            val audioLines = lines.filter { it.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") }
+            val aLine = audioLines.firstOrNull { wantGroup != null && it.contains("GROUP-ID=\"$wantGroup\"") }
+                ?: audioLines.lastOrNull() ?: error("No audio rendition in MV master")
+            val aUri = Regex("""URI="([^"]+)"""").find(aLine)?.groupValues?.get(1) ?: error("No audio URI")
+
+            val video = rewriteMvMedia(abs(vPick.uri))
+            val audio = rewriteMvMedia(abs(aUri))
+            val videoText = video.text
+            val audioText = audio.text
+            // License `uri` = Apple's original video Widevine key uri (echoed verbatim).
+            val keyUri = video.origKeyUri ?: ""
+
+            // Minimal master: our single video variant + single audio rendition, both
+            // pointing at the local rewritten media playlists.
+            val master = buildString {
+                appendLine("#EXTM3U")
+                appendLine("#EXT-X-VERSION:6")
+                appendLine("#EXT-X-INDEPENDENT-SEGMENTS")
+                appendLine("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"English\",DEFAULT=YES,AUTOSELECT=YES,URI=\"$MV_AUDIO_FILE\"")
+                // Force AUDIO="aud" to match our rendition group id.
+                val attrs = vPick.attrs.replace(Regex("""AUDIO="[^"]+""""), "AUDIO=\"aud\"")
+                    .let { if (it.contains("AUDIO=")) it else "$it,AUDIO=\"aud\"" }
+                appendLine("#EXT-X-STREAM-INF:$attrs")
+                appendLine(MV_VIDEO_FILE)
+            }
+            Log.i("AMMV", "mv=$adamId picked ${vPick.height}p variant; rewrote v+a playlists keyUri=${keyUri.take(36)}")
+            MusicVideoResult(adamId = adamId, masterText = master, videoText = videoText, audioText = audioText, keyUri = keyUri)
+        }
+
+    /**
+     * Fetch one MV media playlist and correct its Widevine key line: pull the real KID
+     * from the init segment's `tenc` box, synthesize a matching pssh, and replace all the
+     * key lines (FairPlay/PlayReady/Widevine) with a single corrected Widevine one.
+     * Segment + map URIs are absolutised so the local file resolves them against mvod.
+     */
+    private fun rewriteMvMedia(mediaUrl: String): MvMedia {
+        val text = fetchText(mediaUrl, emptyMap())
+        val base = mediaUrl.substringBeforeLast("/") + "/"
+        fun abs(u: String) = if (u.startsWith("http")) u else base + u
+
+        // Apple's ORIGINAL Widevine key uri (placeholder-KID pssh) — the license endpoint
+        // only issues a license when it's echoed back verbatim; our synthesized uri gets
+        // rejected (-1001). The returned license still carries the real key (mapped by
+        // adamId), which our corrected key line's real KID then matches.
+        val origWvUri = text.lines()
+            .firstOrNull { it.startsWith("#EXT-X-KEY") && it.contains("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed") }
+            ?.let { Regex("""URI="([^"]+)"""").find(it)?.groupValues?.get(1) }
+
+        val mapUri = Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(text)?.groupValues?.get(1)
+        val realKid = mapUri?.let { runCatching { extractTencKid(fetchBytes(abs(it))) }.getOrNull() }
+        val psshB64 = realKid?.let { Base64.encodeToString(widevinePssh(it), Base64.NO_WRAP) }
+        val keyLine = psshB64?.let {
+            "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"data:text/plain;base64,$it\"," +
+                "KEYFORMAT=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\",KEYFORMATVERSIONS=\"1\""
+        }
+        if (realKid == null) Log.w("AMMV", "no tenc KID for ${mediaUrl.take(60)} — using original key line")
+
+        var keyEmitted = false
+        val out = buildString {
+            for (raw in text.lines()) {
+                val line = raw.trim()
+                when {
+                    line.startsWith("#EXT-X-KEY") -> {
+                        // Collapse the 3 DRM key lines into our single corrected one.
+                        if (keyLine != null) { if (!keyEmitted) { appendLine(keyLine); keyEmitted = true } }
+                        else appendLine(line)
+                    }
+                    line.startsWith("#EXT-X-MAP:") -> {
+                        val u = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
+                        appendLine(if (u == null) line else line.replace("\"$u\"", "\"${abs(u)}\""))
+                    }
+                    line.isEmpty() || line.startsWith("#") -> appendLine(line)
+                    else -> appendLine(abs(line))
+                }
+            }
+        }
+        return MvMedia(out, origWvUri)
+    }
+
+    private data class MvMedia(val text: String, val origKeyUri: String?)
+
+    /** Scan an fMP4 init segment for the `tenc` box and return its 16-byte default KID. */
+    private fun extractTencKid(bytes: ByteArray): ByteArray? {
+        var i = 0
+        while (i + 4 <= bytes.size - 4) {
+            if (bytes[i] == 't'.code.toByte() && bytes[i + 1] == 'e'.code.toByte() &&
+                bytes[i + 2] == 'n'.code.toByte() && bytes[i + 3] == 'c'.code.toByte()) {
+                // tenc body: version(1) flags(3) reserved(1) pattern(1) isProtected(1)
+                // ivSize(1) then default_KID(16). KID starts 4(type)+9 from here.
+                val kidStart = i + 4 + 9
+                if (kidStart + 16 <= bytes.size) return bytes.copyOfRange(kidStart, kidStart + 16)
+            }
+            i++
+        }
+        return null
+    }
+
+    private fun fetchBytes(url: String): ByteArray =
+        http.newCall(Request.Builder().url(url).build()).execute().body!!.bytes()
 
     /**
      * ExoPlayer's HLS parser hard-rejects Apple's `#EXT-X-KEY:METHOD=ISO-23001-7`

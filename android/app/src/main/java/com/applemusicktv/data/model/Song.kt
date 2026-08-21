@@ -14,7 +14,12 @@ data class Song(
     val genreNames:     List<String> = emptyList(),
     val artistId:       String? = null,
     val albumId:        String? = null,
+    val type:           String  = "songs",
 ) {
+    /** Music-video rows (catalog `music-videos` / library `library-music-videos`)
+     *  play through the fullscreen video path, not the audio player. */
+    val isMusicVideo: Boolean get() = type.contains("music-video")
+
     fun artworkUrl(size: Int) = artworkUrl
         ?.replace("{w}", "$size")
         ?.replace("{h}", "$size")
