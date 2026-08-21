@@ -68,7 +68,8 @@ browse.get("/multiroom/:id", async (c) => {
     const kids: any[] = room.relationships?.children?.data ?? [];
 
     let description: string | null = null;
-    const sections: Array<{ title: string; items: any[] }> = [];
+    // Key must be `albums` — that's what the Android HomeSection model reads.
+    const sections: Array<{ title: string; albums: any[] }> = [];
     for (const k of kids) {
       const attr = k.attributes ?? {};
       const kind = attr.editorialElementKind;
@@ -79,7 +80,7 @@ browse.get("/multiroom/:id", async (c) => {
           : (attr.description?.standard ?? attr.description?.short ?? null);
       } else if (kind === "345") {
         const items = (k.relationships?.contents?.data ?? []).map(itemFromRaw).filter(Boolean);
-        if (items.length && attr.title) sections.push({ title: attr.title, items });
+        if (items.length && attr.title) sections.push({ title: attr.title, albums: items });
       }
     }
     return c.json({ id, title: room.attributes?.title ?? "", description, sections });
@@ -111,7 +112,8 @@ browse.get("/curator/:id", async (c) => {
       ? attr.description
       : (attr.description?.standard ?? attr.description?.short ?? null);
     const items = (cur.relationships?.playlists?.data ?? []).map(itemFromRaw).filter(Boolean);
-    const sections = items.length ? [{ title: "Playlists", items }] : [];
+    // Key must be `albums` — that's what the Android HomeSection model reads.
+    const sections = items.length ? [{ title: "Playlists", albums: items }] : [];
     return c.json({ id, title: attr.name ?? "", description, sections });
   } catch (e: any) {
     return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed" }, 502);
