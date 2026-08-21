@@ -14,11 +14,20 @@ import retrofit2.HttpException
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** An editorial curator (e.g. "Formula 1", "Tomorrowland") — opens a page of its playlists. */
+data class Curator(
+    val id:         String,
+    val name:       String,
+    val isApple:    Boolean,
+    val artworkUrl: String?,
+)
+
 data class SearchResults(
-    val songs:     List<Song>   = emptyList(),
-    val albums:    List<Album>  = emptyList(),
-    val artists:   List<Artist> = emptyList(),
-    val playlists: List<Album>  = emptyList(),
+    val songs:     List<Song>    = emptyList(),
+    val albums:    List<Album>   = emptyList(),
+    val artists:   List<Artist>  = emptyList(),
+    val playlists: List<Album>   = emptyList(),
+    val curators:  List<Curator> = emptyList(),
 )
 
 @Singleton
@@ -65,7 +74,8 @@ class MusicRepository @Inject constructor(
                 runCatching { direct.search(term, limit).getOrNull()?.playlists?.map(::playlistToAlbum) }
                     .getOrNull().orEmpty()
             }).filter { it.id.startsWith("pl.") }
-            SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists)
+            val curators = res.curators.map { Curator(it.id, it.name, it.isApple, it.artworkUrl) }
+            SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists, curators = curators)
         }
     }
 
@@ -119,7 +129,10 @@ class MusicRepository @Inject constructor(
         else runCatching { api.getBrowse() }
     /** Editorial "multiroom" category page (e.g. The Sounds of Formula 1). Proxy-only for now —
      *  standalone (direct) port is a follow-up. */
-    suspend fun getMultiRoom(id: String) = runCatching { api.getMultiRoom(id) }
+    // Curator page (playlists grouped under one shelf). Proxy-only; standalone Apple
+    // search doesn't surface curators, so the section simply won't appear there.
+    suspend fun getCurator(id: String, isApple: Boolean) =
+        runCatching { api.getCurator(id, if (isApple) 1 else 0) }
 
     suspend fun getGenres() =
         if (!useProxy) direct.genres().map { g -> g.filter { it.name.isNotEmpty() && it.id != "34" } }

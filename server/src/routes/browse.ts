@@ -88,6 +88,36 @@ browse.get("/multiroom/:id", async (c) => {
   }
 });
 
+// A curator page — the normal, searchable editorial entity behind things like
+// "Formula 1" or "Tomorrowland". Two flavours share the same shape: `curators`
+// (label/brand curators) and `apple-curators` (Apple's own). Pass ?apple=1 for the
+// latter. We flatten the curator's playlists into a single shelf; same response shape
+// as /multiroom so the Category screen renders it unchanged.
+browse.get("/curator/:id", async (c) => {
+  const id = c.req.param("id");
+  const isApple = c.req.query("apple") === "1";
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  const sf = getStorefront() || "us";
+  const kind = isApple ? "apple-curators" : "curators";
+  try {
+    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/${kind}/${id}`, {
+      headers: hdrs(mut),
+      params: { include: "playlists", "limit[curators:playlists]": 10, l: "en-US", platform: "web" },
+    });
+    const cur = res.data?.data?.[0];
+    if (!cur) return c.json({ error: "not found" }, 404);
+    const attr = cur.attributes ?? {};
+    const description = typeof attr.description === "string"
+      ? attr.description
+      : (attr.description?.standard ?? attr.description?.short ?? null);
+    const items = (cur.relationships?.playlists?.data ?? []).map(itemFromRaw).filter(Boolean);
+    const sections = items.length ? [{ title: "Playlists", items }] : [];
+    return c.json({ id, title: attr.name ?? "", description, sections });
+  } catch (e: any) {
+    return c.json({ error: e?.response?.data?.errors?.[0]?.detail ?? e?.message ?? "failed" }, 502);
+  }
+});
+
 browse.get("/", async (c) => {
   const mut = c.req.header("X-Music-User-Token") || getMUT();
   const sf = getStorefront() || "us";

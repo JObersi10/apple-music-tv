@@ -34,10 +34,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.*
 import com.applemusicktv.ui.components.AlbumCard
 import com.applemusicktv.ui.viewmodel.SearchViewModel
+import com.applemusicktv.data.repository.Curator
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> }, modifier: Modifier = Modifier) {
+fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> }, onCuratorClick: (id: String, isApple: Boolean) -> Unit = { _, _ -> }, modifier: Modifier = Modifier) {
     val vm: SearchViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val recents by vm.recentSearches.collectAsState()
@@ -184,7 +185,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFFFA233B))
             }
-            state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty() || state.results!!.playlists.isNotEmpty()) -> {
+            state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty() || state.results!!.playlists.isNotEmpty() || state.results!!.curators.isNotEmpty()) -> {
                 val results = state.results!!
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                     // Top Results — the strongest hit of each kind up front, the way Apple Music leads
@@ -233,6 +234,16 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 items(results.playlists, key = { it.id }) { pl ->
                                     AlbumCard(album = pl, size = 130, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
+                                }
+                            }
+                        }
+                    }
+                    if (results.curators.isNotEmpty()) {
+                        item {
+                            Text("Categories", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                items(results.curators, key = { it.id }) { cur ->
+                                    CuratorCard(cur, onClick = { onCuratorClick(cur.id, cur.isApple) })
                                 }
                             }
                         }
@@ -456,5 +467,29 @@ private fun SearchContextItem(icon: String, label: String, onClick: () -> Unit, 
             Text(icon, fontSize = 16.sp, color = Color(0xFF888888), modifier = Modifier.width(22.dp))
             Text(label, fontSize = 15.sp, color = Color.White)
         }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun CuratorCard(cur: Curator, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(130.dp)) {
+        Surface(
+            onClick = onClick,
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1E1E20), focusedContainerColor = Color(0xFF2E2E30)),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+            modifier = Modifier.size(130.dp),
+        ) {
+            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                if (cur.artworkUrl != null) AsyncImage(
+                    model = cur.artworkUrl, contentDescription = cur.name,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                ) else Text("♪", fontSize = 40.sp, color = Color(0xFF666666))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(cur.name, fontSize = 12.sp, color = Color.White, maxLines = 2)
+        Text("Category", fontSize = 10.sp, color = Color(0xFF999999))
     }
 }

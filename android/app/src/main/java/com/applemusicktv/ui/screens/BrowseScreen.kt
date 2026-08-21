@@ -62,7 +62,6 @@ fun BrowseScreen(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
-    onCategoryClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val vm: BrowseViewModel = hiltViewModel()
@@ -101,39 +100,8 @@ fun BrowseScreen(
         contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        item {
-            // Editorial category spotlight (Apple "multiroom"). Seed entry while automatic
-            // category discovery is built out; the screen it opens is fully generic by id.
-            CategorySpotlight(
-                id = "6759406123", title = "The Sounds of Formula 1",
-                subtitle = "Playlists, DJ mixes & driver picks",
-                onClick = onCategoryClick,
-            )
-        }
         items(state.sections, key = { it.title }) { section ->
             BrowseRow(section, onAlbumClick, onPlaylistClick, playerVm)
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun CategorySpotlight(id: String, title: String, subtitle: String, onClick: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text("Categories", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
-            modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
-        Surface(
-            onClick = { onClick(id) },
-            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
-            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2C0000), focusedContainerColor = Color(0xFF4A0000)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
-            modifier = Modifier.padding(horizontal = 48.dp).fillMaxWidth().height(120.dp),
-        ) {
-            Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-                Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                Spacer(Modifier.height(4.dp))
-                Text(subtitle, fontSize = 13.sp, color = Color(0xFFE0A0A0))
-            }
         }
     }
 }

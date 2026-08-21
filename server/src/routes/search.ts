@@ -1,8 +1,12 @@
 import { Hono } from "hono"
+import axios from "axios"
 import { music } from "../index"
 import { ResourceType } from "@syncfm/applemusic-api"
+import { getMUT, getBearerToken, getStorefront } from "../auth"
 
 export const searchRoutes = new Hono()
+
+const APPLE = "https://amp-api-edge.music.apple.com"
 
 searchRoutes.get("/", async (c) => {
   const term  = c.req.query("term") ?? ""
@@ -11,13 +15,59 @@ searchRoutes.get("/", async (c) => {
     .split(",").map((t) => t.trim() as ResourceType)
   if (!term) return c.json({ error: "term is required" }, 400)
   const results = await music.Search.search({ term, limit, types })
+  const wantCurators = types.some((t) => String(t).includes("curator"))
   return c.json({
     songs:     results.results.songs?.data.map(normaliseSong) ?? [],
     albums:    results.results.albums?.data.map(normaliseAlbum) ?? [],
     artists:   results.results.artists?.data.map(normaliseArtist) ?? [],
     playlists: results.results.playlists?.data.map(normalisePlaylist) ?? [],
+    curators:  wantCurators ? await searchCurators(term) : [],
   })
 })
+
+// Curators (e.g. "Formula 1", "Tomorrowland") are editorial pages that group playlists.
+// The syncfm client doesn't expose them, so hit amp-api directly. Two flavours:
+// `curators` (brand) and `apple-curators` (Apple's own). We tag each with `isApple` so
+// the client knows which endpoint opens its page.
+async function searchCurators(term: string): Promise<any[]> {
+  const sf = getStorefront() || "us"
+  const hdrs = {
+    Authorization: `Bearer ${getBearerToken()}`,
+    "Music-User-Token": getMUT() ?? "",
+    Origin: "https://music.apple.com",
+  }
+  try {
+    // Apple only returns curators when `with=topResults` is set, and the result group
+    // keys are inconsistent (curator / curators / apple-curators). Rather than guess the
+    // key, scan every group and keep the curator-typed items.
+    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/search`, {
+      headers: hdrs,
+      // Apple only surfaces the curator group when other "bubble" types ride along —
+      // asking for curators alone returns an empty result set. artists is enough.
+      params: { term, types: "curators,apple-curators,artists", with: "topResults", limit: 6, platform: "web", l: "en-US" },
+    })
+    const groups = res.data?.results ?? {}
+    const out: any[] = []
+    const seen = new Set<string>()
+    for (const key of Object.keys(groups)) {
+      for (const item of groups[key]?.data ?? []) {
+        if (item.type !== "curators" && item.type !== "apple-curators") continue
+        if (seen.has(item.id)) continue
+        seen.add(item.id)
+        const a = item.attributes ?? {}
+        out.push({
+          id:         item.id,
+          name:       a.name ?? "Unknown",
+          isApple:    item.type === "apple-curators",
+          artworkUrl: a.artwork?.url
+            ? String(a.artwork.url).replace("{w}", "400").replace("{h}", "400").replace("{f}", "jpg")
+            : null,
+        })
+      }
+    }
+    return out
+  } catch { return [] }
+}
 
 searchRoutes.get("/suggestions", async (c) => {
   const term  = c.req.query("term") ?? ""

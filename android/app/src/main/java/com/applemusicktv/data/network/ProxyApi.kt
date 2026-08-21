@@ -85,11 +85,20 @@ data class PlaylistDto(
 }
 
 @JsonClass(generateAdapter = true)
+data class CuratorDto(
+    val id:         String,
+    val name:       String,
+    val isApple:    Boolean = false,
+    val artworkUrl: String? = null,
+)
+
+@JsonClass(generateAdapter = true)
 data class SearchResponse(
     val songs:     List<SongDto>     = emptyList(),
     val albums:    List<AlbumDto>    = emptyList(),
     val artists:   List<ArtistDto>   = emptyList(),
     val playlists: List<PlaylistDto> = emptyList(),
+    val curators:  List<CuratorDto>  = emptyList(),
 )
 
 @JsonClass(generateAdapter = true)
@@ -180,7 +189,7 @@ interface ProxyApi {
     suspend fun search(
         @Query("term")  term:  String,
         @Query("limit") limit: Int    = 20,
-        @Query("types") types: String = "songs,albums,artists,playlists",
+        @Query("types") types: String = "songs,albums,artists,playlists,curators",
     ): SearchResponse
 
     @GET("api/albums/{id}")
@@ -220,8 +229,11 @@ interface ProxyApi {
     @GET("api/browse")
     suspend fun getBrowse(): HomeResponse
 
-    @GET("api/browse/multiroom/{id}")
-    suspend fun getMultiRoom(@Path("id") id: String): MultiRoomDto
+    @GET("api/browse/curator/{id}")
+    suspend fun getCurator(
+        @Path("id") id: String,
+        @Query("apple") apple: Int = 0,
+    ): MultiRoomDto
 
     @GET("api/browse/genres")
     suspend fun getGenres(): GenresResponse
