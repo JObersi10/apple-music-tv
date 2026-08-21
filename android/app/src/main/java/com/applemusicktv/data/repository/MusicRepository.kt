@@ -117,6 +117,10 @@ class MusicRepository @Inject constructor(
     suspend fun getBrowse() =
         if (!useProxy) runCatching { sectionsOf(directBrowse.browse()) }
         else runCatching { api.getBrowse() }
+    /** Editorial "multiroom" category page (e.g. The Sounds of Formula 1). Proxy-only for now —
+     *  standalone (direct) port is a follow-up. */
+    suspend fun getMultiRoom(id: String) = runCatching { api.getMultiRoom(id) }
+
     suspend fun getGenres() =
         if (!useProxy) direct.genres().map { g -> g.filter { it.name.isNotEmpty() && it.id != "34" } }
         else runCatching { api.getGenres().genres }

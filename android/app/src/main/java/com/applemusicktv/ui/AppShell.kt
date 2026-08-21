@@ -182,6 +182,13 @@ fun AppShell(modifier: Modifier = Modifier) {
                     playerVm       = playerVm,
                     onAlbumClick   = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                    onCategoryClick = { navController.navigate(Screen.Category.route(it)) },
+                )
+            }
+            composable(Screen.Category.route) {
+                CategoryScreen(
+                    onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
                 )
             }
             composable(Screen.Library.route) {
