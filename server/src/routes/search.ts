@@ -25,10 +25,17 @@ searchRoutes.get("/", async (c) => {
   })
 })
 
-// Curators (e.g. "Formula 1", "Tomorrowland") are editorial pages that group playlists.
-// The syncfm client doesn't expose them, so hit amp-api directly. Two flavours:
-// `curators` (brand) and `apple-curators` (Apple's own). We tag each with `isApple` so
-// the client knows which endpoint opens its page.
+// Editorial "categories" behind a search — two shapes surfaced under one row:
+//  • multirooms (e.g. "The Sounds of Formula 1") — hand-built editorial pages. They only
+//    appear when `editorial-items` rides along in `types` (alone it 400s) + `with=topResults`;
+//    the item's link.url carries the real /multi-room/<id>.
+//  • curators (e.g. "Formula 1", "Tomorrowland") — playlist collections; `curators`
+//    (brand) and `apple-curators` (Apple's own).
+// Each item is tagged with `kind` so the client picks the right page route.
+function art(url: string | undefined, size = 400): string | null {
+  return url ? String(url).replace("{w}", String(size)).replace("{h}", String(size)).replace("{f}", "jpg") : null
+}
+
 async function searchCurators(term: string): Promise<any[]> {
   const sf = getStorefront() || "us"
   const hdrs = {
@@ -37,35 +44,55 @@ async function searchCurators(term: string): Promise<any[]> {
     Origin: "https://music.apple.com",
   }
   try {
-    // Apple only returns curators when `with=topResults` is set, and the result group
-    // keys are inconsistent (curator / curators / apple-curators). Rather than guess the
-    // key, scan every group and keep the curator-typed items.
+    // artists rides along because Apple only fills the editorial groups when other
+    // "bubble" types are present; the group keys are inconsistent (curator/category/…),
+    // so scan every group by item type rather than guessing keys.
     const res = await axios.get(`${APPLE}/v1/catalog/${sf}/search`, {
       headers: hdrs,
-      // Apple only surfaces the curator group when other "bubble" types ride along —
-      // asking for curators alone returns an empty result set. artists is enough.
-      params: { term, types: "curators,apple-curators,artists", with: "topResults", limit: 6, platform: "web", l: "en-US" },
+      params: {
+        term,
+        // editorial-items (multirooms) is only accepted alongside a broad type set —
+        // a short list 400s. We still only read the curator + category groups below.
+        types: "artists,albums,songs,playlists,curators,apple-curators,music-videos,stations,editorial-items",
+        with: "serverBubbles,topResults",
+        limit: 6, platform: "web", l: "en-US",
+      },
     })
     const groups = res.data?.results ?? {}
-    const out: any[] = []
+    const multirooms: any[] = []
+    const curators: any[] = []
     const seen = new Set<string>()
     for (const key of Object.keys(groups)) {
       for (const item of groups[key]?.data ?? []) {
-        if (item.type !== "curators" && item.type !== "apple-curators") continue
-        if (seen.has(item.id)) continue
-        seen.add(item.id)
         const a = item.attributes ?? {}
-        out.push({
-          id:         item.id,
-          name:       a.name ?? "Unknown",
-          isApple:    item.type === "apple-curators",
-          artworkUrl: a.artwork?.url
-            ? String(a.artwork.url).replace("{w}", "400").replace("{h}", "400").replace("{f}", "jpg")
-            : null,
-        })
+        if (item.type === "editorial-items") {
+          // Only multiroom editorial items map to a page we can open.
+          if (a.link?.feature !== "multirooms") continue
+          const m = String(a.link?.url ?? a.url ?? "").match(/multi-?room[s]?\/(\d+)/)
+          if (!m) continue
+          const id = m[1]
+          if (seen.has("mr" + id)) continue
+          seen.add("mr" + id)
+          multirooms.push({
+            id, kind: "multiroom", isApple: false,
+            name: a.editorialNotes?.name ?? a.name ?? "Unknown",
+            artworkUrl: art(a.editorialArtwork?.subscriptionCover?.url ?? a.editorialArtwork?.brandLogo?.url),
+          })
+        } else if (item.type === "curators" || item.type === "apple-curators") {
+          if (seen.has(item.id)) continue
+          seen.add(item.id)
+          curators.push({
+            id: item.id,
+            kind: item.type === "apple-curators" ? "apple-curator" : "curator",
+            isApple: item.type === "apple-curators",
+            name: a.name ?? "Unknown",
+            artworkUrl: art(a.artwork?.url),
+          })
+        }
       }
     }
-    return out
+    // Multirooms first — they're the strongest editorial match.
+    return [...multirooms, ...curators]
   } catch { return [] }
 }
 

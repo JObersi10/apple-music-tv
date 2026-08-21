@@ -88,6 +88,7 @@ data class PlaylistDto(
 data class CuratorDto(
     val id:         String,
     val name:       String,
+    val kind:       String  = "curator",   // "multiroom" | "curator" | "apple-curator"
     val isApple:    Boolean = false,
     val artworkUrl: String? = null,
 )

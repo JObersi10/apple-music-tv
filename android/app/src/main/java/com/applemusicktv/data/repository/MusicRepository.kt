@@ -18,6 +18,7 @@ import javax.inject.Singleton
 data class Curator(
     val id:         String,
     val name:       String,
+    val kind:       String,   // "multiroom" | "curator" | "apple-curator"
     val isApple:    Boolean,
     val artworkUrl: String?,
 )
@@ -74,7 +75,7 @@ class MusicRepository @Inject constructor(
                 runCatching { direct.search(term, limit).getOrNull()?.playlists?.map(::playlistToAlbum) }
                     .getOrNull().orEmpty()
             }).filter { it.id.startsWith("pl.") }
-            val curators = res.curators.map { Curator(it.id, it.name, it.isApple, it.artworkUrl) }
+            val curators = res.curators.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) }
             SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists, curators = curators)
         }
     }

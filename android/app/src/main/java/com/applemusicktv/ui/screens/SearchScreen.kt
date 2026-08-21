@@ -38,7 +38,7 @@ import com.applemusicktv.data.repository.Curator
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> }, onCuratorClick: (id: String, isApple: Boolean) -> Unit = { _, _ -> }, modifier: Modifier = Modifier) {
+fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {}, onArtistClick: (String) -> Unit = {}, onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> }, onCuratorClick: (id: String, kind: String) -> Unit = { _, _ -> }, modifier: Modifier = Modifier) {
     val vm: SearchViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
     val recents by vm.recentSearches.collectAsState()
@@ -197,7 +197,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                             // Editorial category first — it's the strongest match for terms like
                             // "formula 1" or "tomorrowland", and the one users can't find otherwise.
                             items(results.curators.take(1), key = { "top-cu-${it.id}" }) { cur ->
-                                CuratorCard(cur, size = 150, onClick = { onCuratorClick(cur.id, cur.isApple) })
+                                CuratorCard(cur, size = 150, onClick = { onCuratorClick(cur.id, cur.kind) })
                             }
                             items(results.playlists.take(2), key = { "top-pl-${it.id}" }) { pl ->
                                 AlbumCard(album = pl, size = 150, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
@@ -238,7 +238,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                             Text("Categories", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                 items(results.curators, key = { it.id }) { cur ->
-                                    CuratorCard(cur, onClick = { onCuratorClick(cur.id, cur.isApple) })
+                                    CuratorCard(cur, onClick = { onCuratorClick(cur.id, cur.kind) })
                                 }
                             }
                         }

@@ -182,7 +182,6 @@ fun AppShell(modifier: Modifier = Modifier) {
                     playerVm       = playerVm,
                     onAlbumClick   = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
-                    onCategoryClick = { navController.navigate(Screen.Category.route(it)) },
                 )
             }
             composable(Screen.Category.route) {
@@ -210,8 +209,13 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onPlaylistClick = { id, name, artworkUrl ->
                         navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
                     },
-                    onCuratorClick = { id, isApple ->
-                        navController.navigate(Screen.Category.route((if (isApple) "ac-" else "c-") + id))
+                    onCuratorClick = { id, kind ->
+                        val prefix = when (kind) {
+                            "multiroom"     -> "mr-"
+                            "apple-curator" -> "ac-"
+                            else            -> "c-"
+                        }
+                        navController.navigate(Screen.Category.route(prefix + id))
                     },
                 )
             }
