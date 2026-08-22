@@ -127,6 +127,8 @@ class MainActivity : ComponentActivity() {
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> { mvVm.prev(); return true }
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE ->
                     { mvVm.togglePlayPause(); return true }
+                // Menu brings the video fullscreen (Now Playing), never the audio screen.
+                KeyEvent.KEYCODE_MENU -> { navVm.navigateToNowPlaying(); return true }
             }
             return super.dispatchKeyEvent(event)
         }

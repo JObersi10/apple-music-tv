@@ -77,10 +77,13 @@ fun MusicVideoScreen(
     val subs = state.subtitles
     val auds = state.audioTracks
 
+    // NOTE: the video surface itself is owned by AppShell (a single persistent PlayerView that
+    // resizes between fullscreen and PiP) — this composable is only the controls overlay, so it
+    // must stay transparent. Handing the surface between two views was throwing
+    // MediaCodecVideoRenderer errors ("Can't play this video") after a PiP round-trip.
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black)
             .focusRequester(focusReq)
             .focusable()
             .onKeyEvent { ev ->
@@ -114,7 +117,13 @@ fun MusicVideoScreen(
                         controls -> { controls = false; true }
                         else -> { onExit(); true }
                     }
-                    Key.DirectionUp -> { poke(); scrub = null; focus = if (focus == MvFocus.INFO) MvFocus.SCRUB else firstButton(subs, auds); true }
+                    Key.DirectionUp -> {
+                        poke(); scrub = null
+                        // At the top button row already → don't consume, let focus escape up
+                        // to the top nav bar (so you can switch tabs from fullscreen video).
+                        if (focus in setOf(MvFocus.SUBS, MvFocus.AUDIO, MvFocus.PIP)) { false }
+                        else { focus = if (focus == MvFocus.INFO) MvFocus.SCRUB else firstButton(subs, auds); true }
+                    }
                     Key.DirectionDown -> { poke(); scrub = null; focus = if (focus == MvFocus.SCRUB) MvFocus.INFO else MvFocus.SCRUB; true }
                     Key.DirectionLeft -> {
                         poke()
@@ -147,23 +156,6 @@ fun MusicVideoScreen(
             },
         contentAlignment = Alignment.Center,
     ) {
-        val p = vm.player
-        if (p != null) {
-            AndroidView(
-                factory = {
-                    PlayerView(it).apply {
-                        useController = false
-                        setShutterBackgroundColor(android.graphics.Color.BLACK)
-                        keepScreenOn = true
-                        subtitleView?.setApplyEmbeddedStyles(true)
-                        player = p
-                    }
-                },
-                update = { it.player = p },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
         if (state.loading) CircularProgressIndicator(color = Color(0xFFFA233B))
 
         if (state.error != null) {

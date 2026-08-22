@@ -410,7 +410,9 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         state.categories.forEach { group ->
                             item {
                                 Text(group.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                // vertical contentPadding so the focused tile's border/glow isn't
+                                // sliced at the row's top/bottom edge.
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)) {
                                     items(group.items, key = { it.id }) { cur ->
                                         CategoryTile(cur.name, cur.artworkUrl) { onCuratorClick(cur.id, cur.kind) }
                                     }

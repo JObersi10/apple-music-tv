@@ -133,7 +133,12 @@ fun PlaylistDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks, 0) },
+                                onClick = {
+                                    val songs = sortedTracks.filterNot { it.isMusicVideo }
+                                    val vids  = sortedTracks.filter { it.isMusicVideo }
+                                    if (songs.isEmpty() && vids.isNotEmpty()) { vm.seedVideoQueue(vids.first()); onMusicVideoClick(vids.first()) }
+                                    else playerVm.playAlbum(songs, 0)   // videos can't stream as audio
+                                },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B), focusedContainerColor = Color(0xFFCC1A2E)),
                             ) {
@@ -142,7 +147,12 @@ fun PlaylistDetailScreen(
                                 }
                             }
                             Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true) },
+                                onClick = {
+                                    val songs = sortedTracks.filterNot { it.isMusicVideo }
+                                    val vids  = sortedTracks.filter { it.isMusicVideo }
+                                    if (songs.isEmpty() && vids.isNotEmpty()) { val v = vids.random(); vm.seedVideoQueue(v); onMusicVideoClick(v) }
+                                    else playerVm.playAlbum(songs.shuffled(), 0, shuffle = true)
+                                },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
                             ) {

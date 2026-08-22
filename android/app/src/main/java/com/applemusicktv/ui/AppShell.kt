@@ -231,26 +231,14 @@ fun AppShell(modifier: Modifier = Modifier) {
                 )
             }
             composable(Screen.NowPlaying.route) {
-                if (videoActive) {
-                    MusicVideoScreen(
-                        vm = mvVm,
-                        // PiP: leave Now Playing so the video shrinks to a corner and the rest
-                        // of the app is usable; the video stays active.
-                        onMinimize = {
-                            selectedTab = TopNavTab.ListenNow
-                            navController.navigate(Screen.Home.route) { launchSingleTop = true }
-                        },
-                        // Exit: tear the video down and drop back to the audio Now Playing.
-                        onExit = { mvVm.close() },
-                    )
-                } else {
-                    NowPlayingScreen(
-                        playerVm = playerVm,
-                        navVm = navVm,
-                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
-                        onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                    )
-                }
+                // Audio Now Playing. The video (when active) is a persistent AppShell overlay
+                // drawn on top of this route — see the video overlay below the NavHost.
+                NowPlayingScreen(
+                    playerVm = playerVm,
+                    navVm = navVm,
+                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                )
             }
             composable(Screen.Radio.route) {
                 RadioScreen(playerVm = playerVm)
@@ -417,33 +405,40 @@ fun AppShell(modifier: Modifier = Modifier) {
 
         // Nav bar on top layer (drawn after content). Hidden entirely on the
         // fullscreen music-video route so it can't steal D-pad focus.
-        // In-app PiP: a video is active but we're not on Now Playing → float a small preview
-        // in the corner. Clicking it (or the Now Playing tab) returns to fullscreen. The video
-        // never stops — the same hoisted player just rebinds its surface.
-        if (videoActive && !isOnNowPlaying) {
-            androidx.tv.material3.Surface(
-                onClick = {
-                    selectedTab = TopNavTab.NowPlaying
-                    navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
-                },
-                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = Color.Black, focusedContainerColor = Color.Black),
-                scale = androidx.tv.material3.ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp).width(300.dp).height(169.dp),
+        // Single persistent video surface. ONE PlayerView node that resizes between fullscreen
+        // (Now Playing tab) and an in-app PiP corner — never torn down while a video is active,
+        // so the codec never loses its surface (that was the "Can't play this video" crash).
+        if (videoActive) {
+            val fullscreen = isOnNowPlaying
+            Box(
+                modifier = if (fullscreen) Modifier.fillMaxSize().background(Color.Black)
+                           else Modifier.align(Alignment.BottomEnd).padding(24.dp).width(300.dp).height(169.dp)
+                               .clip(RoundedCornerShape(10.dp)).background(Color.Black),
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
-                        android.view.TextureView(ctx).apply {
-                            layoutParams = android.view.ViewGroup.LayoutParams(
-                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                            mvVm.player?.setVideoTextureView(this)
+                        androidx.media3.ui.PlayerView(ctx).apply {
+                            useController = false
+                            setShutterBackgroundColor(android.graphics.Color.BLACK)
+                            setKeepScreenOn(true)
+                            subtitleView?.setApplyEmbeddedStyles(true)
+                            player = mvVm.player
                         }
                     },
-                    update = { mvVm.player?.setVideoTextureView(it) },
+                    update = { it.player = mvVm.player },
                     modifier = Modifier.fillMaxSize(),
                 )
+                // Controls only in fullscreen. Tapping the corner returns to Now Playing.
+                if (fullscreen) {
+                    MusicVideoScreen(
+                        vm = mvVm,
+                        onMinimize = {
+                            selectedTab = TopNavTab.ListenNow
+                            navController.navigate(Screen.Home.route) { launchSingleTop = true }
+                        },
+                        onExit = { mvVm.close() },
+                    )
+                }
             }
         }
 
