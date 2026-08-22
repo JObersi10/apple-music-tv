@@ -419,36 +419,27 @@ fun AppShell(modifier: Modifier = Modifier) {
         // (Now Playing tab) and an in-app PiP corner — never torn down while a video is active,
         // so the codec never loses its surface (that was the "Can't play this video" crash).
         if (videoActive) {
-            val fullscreen = isOnNowPlaying
-            Box(
-                modifier = if (fullscreen) Modifier.fillMaxSize().background(Color.Black)
-                           else Modifier.align(Alignment.BottomEnd).padding(24.dp).width(300.dp).height(169.dp)
-                               .clip(RoundedCornerShape(10.dp)).background(Color.Black),
-            ) {
-                // Plain TextureView + setVideoTextureView — the exact approach the motion cover
-                // uses and that renders reliably. PlayerView's SurfaceView/inflated surface kept
-                // failing with "Could not find corresponding native window for surface".
-                androidx.compose.ui.viewinterop.AndroidView(
-                    factory = { ctx ->
-                        android.view.TextureView(ctx).apply {
-                            setKeepScreenOn(true)
-                            mvVm.player?.setVideoTextureView(this)
-                        }
-                    },
-                    update = { mvVm.player?.setVideoTextureView(it) },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                // Captions on their own SubtitleView, fed by the VM's cue flow.
-                if (fullscreen) {
-                    val cues by mvVm.cues.collectAsState()
+            if (isOnNowPlaying) {
+                // FULLSCREEN. Apple's MVs are HDCP-protected — secure Widevine can only render
+                // to a SurfaceView (a TextureView gives "no native window" → black). PlayerView
+                // uses a SurfaceView and also draws the subtitles. NO opaque Compose background
+                // over it, or the SurfaceView hole is hidden; PlayerView paints its own black.
+                Box(Modifier.fillMaxSize()) {
                     androidx.compose.ui.viewinterop.AndroidView(
-                        factory = { androidx.media3.ui.SubtitleView(it).apply { setApplyEmbeddedStyles(true) } },
-                        update = { it.setCues(cues) },
-                        modifier = Modifier.fillMaxSize().padding(bottom = 120.dp),
+                        factory = { ctx ->
+                            androidx.media3.ui.PlayerView(ctx).apply {
+                                useController = false
+                                setShutterBackgroundColor(android.graphics.Color.BLACK)
+                                setKeepScreenOn(true)
+                                subtitleView?.setApplyEmbeddedStyles(true)
+                                player = mvVm.player
+                            }
+                        },
+                        update = { it.player = mvVm.player },
+                        onReset = {},
+                        onRelease = { it.player = null },   // detach cleanly; audio keeps going
+                        modifier = Modifier.fillMaxSize(),
                     )
-                }
-                // Controls only in fullscreen. Tapping the corner returns to Now Playing.
-                if (fullscreen) {
                     MusicVideoScreen(
                         vm = mvVm,
                         onMinimize = {
@@ -458,6 +449,30 @@ fun AppShell(modifier: Modifier = Modifier) {
                         onExit = { mvVm.close() },
                         onFocusUp = { runCatching { navBarFocus.requestFocus() } },
                     )
+                }
+            } else {
+                // PiP: a static card (secure video can't render in a small Compose overlay).
+                // The video's audio keeps playing; tap to return to fullscreen.
+                val mvState by mvVm.state.collectAsState()
+                androidx.tv.material3.Surface(
+                    onClick = { selectedTab = TopNavTab.NowPlaying; navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true } },
+                    shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+                    colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF2C2C2E)),
+                    scale = androidx.tv.material3.ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp).width(280.dp).height(150.dp),
+                ) {
+                    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.Center) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(8.dp).clip(RoundedCornerShape(50)).background(Color(0xFFFA233B)))
+                            Spacer(Modifier.width(8.dp))
+                            androidx.compose.material3.Text("MUSIC VIDEO", color = Color(0xFF9A9A9A), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.Text(mvState.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        androidx.compose.material3.Text(mvState.artist, color = Color(0xCCFFFFFF), fontSize = 12.sp, maxLines = 1)
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.Text("OK to resume video", color = Color(0xFF777777), fontSize = 11.sp)
+                    }
                 }
             }
         }
