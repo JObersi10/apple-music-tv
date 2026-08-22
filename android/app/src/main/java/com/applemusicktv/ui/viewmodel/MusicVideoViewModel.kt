@@ -66,6 +66,11 @@ class MusicVideoViewModel @Inject constructor(
     private val _active = MutableStateFlow(false)
     val active: StateFlow<Boolean> = _active
 
+    // Live subtitle cues, pushed to a SubtitleView by the UI (we render video on a plain
+    // TextureView, which has no caption surface of its own).
+    private val _cues = MutableStateFlow<List<androidx.media3.common.text.Cue>>(emptyList())
+    val cues: StateFlow<List<androidx.media3.common.text.Cue>> = _cues
+
     var player: ExoPlayer? = null
         private set
 
@@ -189,6 +194,9 @@ class MusicVideoViewModel @Inject constructor(
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         Log.e("AMMV", "MV playback error: ${error.message}", error)
                         _state.value = _state.value.copy(loading = false, error = error.message ?: "Playback failed")
+                    }
+                    override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                        _cues.value = cueGroup.cues
                     }
                     override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                         val subs = mutableListOf(SubtitleOption("Off", -1))

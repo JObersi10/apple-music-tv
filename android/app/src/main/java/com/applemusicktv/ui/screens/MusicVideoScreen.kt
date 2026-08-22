@@ -45,6 +45,7 @@ fun MusicVideoScreen(
     vm: MusicVideoViewModel,
     onMinimize: () -> Unit,   // PiP: shrink to a corner, stay in the app
     onExit: () -> Unit,       // Back once the chrome is gone: close the video entirely
+    onFocusUp: () -> Unit,    // Up from the top button row → move focus to the nav bar
 ) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
@@ -121,7 +122,7 @@ fun MusicVideoScreen(
                         poke(); scrub = null
                         // At the top button row already → don't consume, let focus escape up
                         // to the top nav bar (so you can switch tabs from fullscreen video).
-                        if (focus in setOf(MvFocus.SUBS, MvFocus.AUDIO, MvFocus.PIP)) { false }
+                        if (focus in setOf(MvFocus.SUBS, MvFocus.AUDIO, MvFocus.PIP)) { onFocusUp(); true }
                         else { focus = if (focus == MvFocus.INFO) MvFocus.SCRUB else firstButton(subs, auds); true }
                     }
                     Key.DirectionDown -> { poke(); scrub = null; focus = if (focus == MvFocus.SCRUB) MvFocus.INFO else MvFocus.SCRUB; true }

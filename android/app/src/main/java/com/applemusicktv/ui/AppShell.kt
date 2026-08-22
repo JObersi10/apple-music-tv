@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
@@ -45,6 +46,7 @@ fun AppShell(modifier: Modifier = Modifier) {
     val navVm: NavigationViewModel = hiltViewModel()
     // Hoisted so the video survives navigation: fullscreen on Now Playing, in-app PiP elsewhere.
     val mvVm: com.applemusicktv.ui.viewmodel.MusicVideoViewModel = hiltViewModel()
+    val navBarFocus = remember { FocusRequester() }
     // Hoist LibraryViewModel so library loads on startup, not when tab is first opened
     val libraryVm: LibraryViewModel = hiltViewModel()
     // Hoisted so a server re-check from the Dev menu can refetch both screens —
@@ -423,18 +425,28 @@ fun AppShell(modifier: Modifier = Modifier) {
                            else Modifier.align(Alignment.BottomEnd).padding(24.dp).width(300.dp).height(169.dp)
                                .clip(RoundedCornerShape(10.dp)).background(Color.Black),
             ) {
+                // Plain TextureView + setVideoTextureView — the exact approach the motion cover
+                // uses and that renders reliably. PlayerView's SurfaceView/inflated surface kept
+                // failing with "Could not find corresponding native window for surface".
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
-                        (android.view.LayoutInflater.from(ctx).inflate(com.applemusicktv.R.layout.mv_player_view, null)
-                            as androidx.media3.ui.PlayerView).apply {
+                        android.view.TextureView(ctx).apply {
                             setKeepScreenOn(true)
-                            subtitleView?.setApplyEmbeddedStyles(true)
-                            player = mvVm.player
+                            mvVm.player?.setVideoTextureView(this)
                         }
                     },
-                    update = { it.player = mvVm.player },
+                    update = { mvVm.player?.setVideoTextureView(it) },
                     modifier = Modifier.fillMaxSize(),
                 )
+                // Captions on their own SubtitleView, fed by the VM's cue flow.
+                if (fullscreen) {
+                    val cues by mvVm.cues.collectAsState()
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        factory = { androidx.media3.ui.SubtitleView(it).apply { setApplyEmbeddedStyles(true) } },
+                        update = { it.setCues(cues) },
+                        modifier = Modifier.fillMaxSize().padding(bottom = 120.dp),
+                    )
+                }
                 // Controls only in fullscreen. Tapping the corner returns to Now Playing.
                 if (fullscreen) {
                     MusicVideoScreen(
@@ -444,12 +456,13 @@ fun AppShell(modifier: Modifier = Modifier) {
                             navController.navigate(Screen.Home.route) { launchSingleTop = true }
                         },
                         onExit = { mvVm.close() },
+                        onFocusUp = { runCatching { navBarFocus.requestFocus() } },
                     )
                 }
             }
         }
 
-        Box(modifier = Modifier.align(Alignment.TopCenter)) {
+        Box(modifier = Modifier.align(Alignment.TopCenter).focusRequester(navBarFocus).focusGroup()) {
             TopNavBar(
                 selected  = selectedTab,
                 isPlaying = playerState.isPlaying,
