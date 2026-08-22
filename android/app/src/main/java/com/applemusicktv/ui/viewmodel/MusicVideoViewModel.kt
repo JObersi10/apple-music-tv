@@ -101,22 +101,20 @@ class MusicVideoViewModel @Inject constructor(
 
     /** Entry point. Uses the queue set by the caller if it holds this id,
      *  otherwise falls back to a one-item queue so prev/next are simply no-ops. */
-    fun load(mvId: String, title: String, artist: String) {
-        val q = videoQueue.items
-        if (q.isEmpty() || q.none { it.id == mvId }) {
-            videoQueue.set(listOf(com.applemusicktv.media.VideoItem(mvId, title, artist)), 0)
-        }
-        val item = videoQueue.current() ?: com.applemusicktv.media.VideoItem(mvId, title, artist)
-        playItem(item.id, item.title, item.artist)
-    }
+    // The integrated queue lives in PlayerViewModel; prev/next/auto-advance ask it to move and
+    // it hands us the next video (or a song, which dismisses us). Wired by AppShell.
+    var onRequestNext: () -> Unit = {}
+    var onRequestPrev: () -> Unit = {}
 
-    /** Go to the next video in the queue; no-op at the end. */
-    fun next() { if (videoQueue.hasNext()) videoQueue.next()?.let { playItem(it.id, it.title, it.artist) } }
+    /** Play a single video (the shared queue's current item). */
+    fun load(mvId: String, title: String, artist: String) = playItem(mvId, title, artist)
 
-    /** Like the audio player: restart if we're past 3s or there's no previous, else previous video. */
+    fun next() = onRequestNext()
+
+    /** Like the audio player: restart if we're past 3s, else ask the queue for the previous item. */
     fun prev() {
-        if (!videoQueue.hasPrev() || (player?.currentPosition ?: 0) > 3000) { player?.seekTo(0); return }
-        videoQueue.prev()?.let { playItem(it.id, it.title, it.artist) }
+        if ((player?.currentPosition ?: 0) > 3000) { player?.seekTo(0); return }
+        onRequestPrev()
     }
 
     @OptIn(UnstableApi::class)
@@ -193,7 +191,7 @@ class MusicVideoViewModel @Inject constructor(
                             _state.value = _state.value.copy(loading = false, durationMs = exo.duration.coerceAtLeast(0))
                         } else if (state == Player.STATE_ENDED) {
                             // Auto-advance through the queue, exactly like the audio player.
-                            if (videoQueue.hasNext()) next()
+                            onRequestNext()   // auto-advance through the shared queue
                         }
                     }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {

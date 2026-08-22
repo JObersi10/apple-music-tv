@@ -134,10 +134,7 @@ fun PlaylistDetailScreen(
                         ) {
                             Surface(
                                 onClick = {
-                                    val songs = sortedTracks.filterNot { it.isMusicVideo }
-                                    val vids  = sortedTracks.filter { it.isMusicVideo }
-                                    if (songs.isEmpty() && vids.isNotEmpty()) { vm.seedVideoQueue(vids.first()); onMusicVideoClick(vids.first()) }
-                                    else playerVm.playAlbum(songs, 0)   // videos can't stream as audio
+                                    playerVm.playAlbum(sortedTracks, 0)   // mixed queue; videos route to the video player
                                 },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B), focusedContainerColor = Color(0xFFCC1A2E)),
@@ -148,10 +145,7 @@ fun PlaylistDetailScreen(
                             }
                             Surface(
                                 onClick = {
-                                    val songs = sortedTracks.filterNot { it.isMusicVideo }
-                                    val vids  = sortedTracks.filter { it.isMusicVideo }
-                                    if (songs.isEmpty() && vids.isNotEmpty()) { val v = vids.random(); vm.seedVideoQueue(v); onMusicVideoClick(v) }
-                                    else playerVm.playAlbum(songs.shuffled(), 0, shuffle = true)
+                                    playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true)
                                 },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
@@ -193,7 +187,7 @@ fun PlaylistDetailScreen(
                             }
                         }
                     }
-                    trackItems(sortedTracks, playerVm, { song -> vm.seedVideoQueue(song); onMusicVideoClick(song) }) { song ->
+                    trackItems(sortedTracks, playerVm) { song ->
                         val now = System.currentTimeMillis()
                         if (menuSongState == null && now - lastDismissMs > 600) menuSongState = song
                     }
@@ -255,10 +249,9 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
         @OptIn(ExperimentalTvMaterial3Api::class)
         Surface(
             onClick     = {
-                if (song.isMusicVideo) onMusicVideoClick(song)
-                // Play the audio tracks only, and start at this row's position within
-                // that filtered list — an MV id would fail the audio decrypt.
-                else playerVm.playAlbum(tracks.filter { !it.isMusicVideo }, tracks.take(idx + 1).count { !it.isMusicVideo } - 1)
+                // Mixed queue: tap plays the whole list from here; playQueueItem routes each
+                // item to the audio engine or the video player.
+                playerVm.playAlbum(tracks, idx)
             },
             onLongClick = { onLongPress(song) },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),

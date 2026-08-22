@@ -189,6 +189,13 @@ class PlayerViewModel @Inject constructor(
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state
 
+    // Integrated queue: the queue may hold music videos. When the current item is a video,
+    // the audio engine idles and this emits the video so the UI hands it to the video player.
+    // Null means the current item is a normal song (any active video should be dismissed).
+    private val _videoRequest = MutableStateFlow<Song?>(null)
+    val videoRequest: StateFlow<Song?> = _videoRequest
+    fun clearVideoRequest() { _videoRequest.value = null }
+
     /**
      * One-off user-facing messages. extraBufferCapacity so an emit from the polling
      * thread never suspends, and replay=0 so a message doesn't re-fire on rotation.
@@ -1047,6 +1054,18 @@ class PlayerViewModel @Inject constructor(
             if (idx + 1 < q.size) playQueueItem(idx + 1, skipFadeIn) 
             return
         }
+        // Music video in the queue → hand it to the video player; the audio engine idles.
+        if (song.isMusicVideo) {
+            webServer.addLog("PLR", "playQueueItem idx=$idx VIDEO ${song.title}")
+            player.pause()
+            awaitingSongStart = null
+            _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
+            saveState()
+            _videoRequest.value = song
+            return
+        }
+        _videoRequest.value = null   // audio item → dismiss any active video
+
         val full = _state.value.isFullStream
         val standalone = full && useStandalone() && song.id !in proxyOnlySongIds
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))

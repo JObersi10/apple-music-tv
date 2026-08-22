@@ -101,6 +101,24 @@ fun AppShell(modifier: Modifier = Modifier) {
     val currentRoute = currentEntry?.destination?.route
     val isOnNowPlaying = currentRoute == Screen.NowPlaying.route
     val videoActive by mvVm.active.collectAsState()
+    // Integrated queue: PlayerViewModel owns one queue of songs AND videos. When the current
+    // item is a video it emits it here; we hand it to the video player and jump to Now Playing.
+    // The video's prev/next/auto-advance drive the same queue back through PlayerViewModel.
+    val videoReq by playerVm.videoRequest.collectAsState()
+    LaunchedEffect(Unit) {
+        mvVm.onRequestNext = { playerVm.next() }
+        mvVm.onRequestPrev = { playerVm.prev() }
+    }
+    LaunchedEffect(videoReq?.id) {
+        val v = videoReq
+        if (v != null) {
+            mvVm.show(v.id, v.title, v.artistName)
+            selectedTab = TopNavTab.NowPlaying
+            navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
+        } else {
+            mvVm.close()
+        }
+    }
     // Video plays fullscreen ON the Now Playing tab; anywhere else it's an in-app PiP window.
     val videoFullscreen = videoActive && isOnNowPlaying
 
@@ -449,7 +467,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                 MusicVideoScreen(
                     vm = mvVm,
                     onMinimize = { (activity as? com.applemusicktv.MainActivity)?.enterPip() },
-                    onExit = { mvVm.close() },
+                    onExit = { playerVm.clearVideoRequest(); mvVm.close() },
                     onFocusUp = { runCatching { navBarFocus.requestFocus() } },
                     focusRequester = videoFocus,
                 )
