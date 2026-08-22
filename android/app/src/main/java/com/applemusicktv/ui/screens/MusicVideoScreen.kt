@@ -46,6 +46,7 @@ fun MusicVideoScreen(
     onMinimize: () -> Unit,   // PiP: shrink to a corner, stay in the app
     onExit: () -> Unit,       // Back once the chrome is gone: close the video entirely
     onFocusUp: () -> Unit,    // Up from the top button row → move focus to the nav bar
+    focusRequester: FocusRequester,  // owned by AppShell so the nav bar's Down can target it
 ) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
@@ -69,9 +70,8 @@ fun MusicVideoScreen(
         controls = false
     }
 
-    val focusReq = remember { FocusRequester() }
-    // Re-assert focus whenever the player is (re)built for a queue item, so keys keep working.
-    LaunchedEffect(vm.player) { runCatching { focusReq.requestFocus() } }
+    // Grab focus when the screen appears so the D-pad drives the video, not anything behind it.
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
 
     fun poke() { poke++; controls = true }
 
@@ -85,7 +85,7 @@ fun MusicVideoScreen(
     Box(
         Modifier
             .fillMaxSize()
-            .focusRequester(focusReq)
+            .focusRequester(focusRequester)
             .focusable()
             .onKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false

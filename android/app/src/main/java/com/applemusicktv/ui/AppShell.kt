@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +48,7 @@ fun AppShell(modifier: Modifier = Modifier) {
     // Hoisted so the video survives navigation: fullscreen on Now Playing, in-app PiP elsewhere.
     val mvVm: com.applemusicktv.ui.viewmodel.MusicVideoViewModel = hiltViewModel()
     val navBarFocus = remember { FocusRequester() }
+    val videoFocus = remember { FocusRequester() }
     // Hoist LibraryViewModel so library loads on startup, not when tab is first opened
     val libraryVm: LibraryViewModel = hiltViewModel()
     // Hoisted so a server re-check from the Dev menu can refetch both screens —
@@ -419,10 +421,10 @@ fun AppShell(modifier: Modifier = Modifier) {
         // (Now Playing tab) and an in-app PiP corner — never torn down while a video is active,
         // so the codec never loses its surface (that was the "Can't play this video" crash).
         // A secure (HDCP) SurfaceView can't be confined to a Compose corner — it draws across
-        // whatever screen you're on. So the video renders ONLY fullscreen on Now Playing. PiP is
-        // the OS's system PiP (works in AND out of the app; the hoisted player survives it), and
-        // navigating to another tab closes the video.
-        LaunchedEffect(isOnNowPlaying) { if (videoActive && !isOnNowPlaying) mvVm.close() }
+        // whatever screen you're on. So the video surface renders ONLY fullscreen on Now Playing.
+        // On other tabs the video KEEPS PLAYING (audio; the picture is simply not drawn) — it is
+        // not closed — and reappears when you return to Now Playing. On-screen PiP over the app
+        // isn't possible for protected video; the OS system PiP is the "picture while browsing".
         if (videoActive && isOnNowPlaying) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
             Box(Modifier.fillMaxSize()) {
@@ -449,11 +451,16 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onMinimize = { (activity as? com.applemusicktv.MainActivity)?.enterPip() },
                     onExit = { mvVm.close() },
                     onFocusUp = { runCatching { navBarFocus.requestFocus() } },
+                    focusRequester = videoFocus,
                 )
             }
         }
 
-        Box(modifier = Modifier.align(Alignment.TopCenter).focusRequester(navBarFocus).focusGroup()) {
+        Box(
+            modifier = Modifier.align(Alignment.TopCenter).focusRequester(navBarFocus).focusGroup()
+                // When a fullscreen video is up, Down from the nav bar returns to the video controls.
+                .focusProperties { if (videoActive && isOnNowPlaying) down = videoFocus },
+        ) {
             TopNavBar(
                 selected  = selectedTab,
                 isPlaying = playerState.isPlaying,
