@@ -161,6 +161,9 @@ class MusicVideoViewModel @Inject constructor(
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_READY) {
                             _state.value = _state.value.copy(loading = false, durationMs = exo.duration.coerceAtLeast(0))
+                        } else if (state == Player.STATE_ENDED) {
+                            // Auto-advance through the queue, exactly like the audio player.
+                            if (videoQueue.hasNext()) next()
                         }
                     }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {

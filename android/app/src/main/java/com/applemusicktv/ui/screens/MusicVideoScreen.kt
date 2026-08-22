@@ -4,8 +4,12 @@ import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,7 +36,7 @@ import com.applemusicktv.ui.viewmodel.SubtitleOption
 import kotlinx.coroutines.delay
 
 /** Where the D-pad focus sits in the transport row. */
-private enum class MvFocus { SCRUB, SUBS, AUDIO, PIP }
+private enum class MvFocus { INFO, SCRUB, SUBS, AUDIO, PIP }
 private enum class MvPicker { NONE, SUBS, AUDIO }
 
 @OptIn(UnstableApi::class)
@@ -54,6 +58,7 @@ fun MusicVideoScreen(
     var focus by remember { mutableStateOf(MvFocus.SCRUB) }
     var picker by remember { mutableStateOf(MvPicker.NONE) }
     var pickCursor by remember { mutableIntStateOf(0) }
+    var showInfo by remember { mutableStateOf(false) }
     var poke by remember { mutableIntStateOf(0) }
 
     // Auto-hide chrome ~5s after the last interaction — but never while paused or a picker
@@ -84,8 +89,8 @@ fun MusicVideoScreen(
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 // Remote transport keys work regardless of where focus sits — same as songs.
                 when (ev.key) {
-                    Key.MediaNext -> { vm.next(); poke(); return@onKeyEvent true }
-                    Key.MediaPrevious -> { vm.prev(); poke(); return@onKeyEvent true }
+                    Key.MediaNext, Key.MediaFastForward -> { vm.next(); poke(); return@onKeyEvent true }
+                    Key.MediaPrevious, Key.MediaRewind -> { vm.prev(); poke(); return@onKeyEvent true }
                     Key.MediaPlayPause -> { vm.togglePlayPause(); poke(); return@onKeyEvent true }
                     else -> {}
                 }
@@ -104,26 +109,35 @@ fun MusicVideoScreen(
                         else -> true
                     }
                 } else when (ev.key) {
-                    Key.Back -> { onBack(); true }
-                    Key.DirectionUp -> { poke(); focus = firstButton(subs, auds); true }
-                    Key.DirectionDown -> { poke(); focus = MvFocus.SCRUB; true }
-                    Key.DirectionLeft, Key.MediaRewind -> {
+                    // Back peels the overlay first (Apple TV behaviour): info panel, then the
+                    // chrome, and only exits the player once nothing is on screen.
+                    Key.Back -> when {
+                        showInfo -> { showInfo = false; true }
+                        controls -> { controls = false; true }
+                        else -> { onBack(); true }
+                    }
+                    Key.DirectionUp -> { poke(); focus = if (focus == MvFocus.INFO) MvFocus.SCRUB else firstButton(subs, auds); true }
+                    Key.DirectionDown -> { poke(); focus = if (focus == MvFocus.SCRUB) MvFocus.INFO else MvFocus.SCRUB; true }
+                    Key.DirectionLeft -> {
                         poke()
                         when (focus) {
                             MvFocus.SCRUB -> vm.seekBy(-10_000)
+                            MvFocus.INFO -> {}
                             else -> focus = prevButton(focus, subs, auds)
                         }; true
                     }
-                    Key.DirectionRight, Key.MediaFastForward -> {
+                    Key.DirectionRight -> {
                         poke()
                         when (focus) {
                             MvFocus.SCRUB -> vm.seekBy(10_000)
+                            MvFocus.INFO -> {}
                             else -> focus = nextButton(focus, subs, auds)
                         }; true
                     }
                     Key.DirectionCenter, Key.Enter -> {
                         poke()
                         when (focus) {
+                            MvFocus.INFO -> showInfo = !showInfo
                             MvFocus.SCRUB -> vm.togglePlayPause()
                             MvFocus.SUBS -> if (subs.isNotEmpty()) { picker = MvPicker.SUBS; pickCursor = subs.indexOfFirst { it.index == state.subtitleIndex }.coerceAtLeast(0) }
                             MvFocus.AUDIO -> if (auds.isNotEmpty()) { picker = MvPicker.AUDIO; pickCursor = auds.indexOfFirst { it.index == state.audioIndex }.coerceAtLeast(0) }
@@ -202,10 +216,36 @@ fun MusicVideoScreen(
                         ) {
                             Text(fmt(state.positionMs), color = Color.White, fontSize = 13.sp)
                             Spacer(Modifier.width(8.dp))
-                            Text(if (state.playing) "⏸" else "▶", color = Color.White, fontSize = 13.sp)
+                            PlayPauseGlyph(playing = state.playing)
                         }
                         Text("-" + fmt(dur - state.positionMs), color = Color(0xCCFFFFFF), fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterEnd))
                     }
+                    Spacer(Modifier.height(12.dp))
+                    // Info button — the only handle we have for title/artist while a video plays.
+                    Box(
+                        Modifier.clip(RoundedCornerShape(8.dp))
+                            .background(if (focus == MvFocus.INFO) Color(0x33FFFFFF) else Color.Transparent)
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text("Info", color = if (focus == MvFocus.INFO) Color.White else Color(0xB3FFFFFF),
+                            fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+
+        // Info panel
+        if (showInfo) {
+            Box(
+                Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 150.dp)
+                    .widthIn(max = 420.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xF2222222)).padding(20.dp),
+            ) {
+                Column {
+                    Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(state.artist, color = Color(0xCCFFFFFF), fontSize = 15.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Music Video", color = Color(0xFF9A9A9A), fontSize = 12.sp)
                 }
             }
         }
@@ -260,6 +300,27 @@ private fun OverlayIcon(glyph: String, focused: Boolean, active: Boolean) {
         contentAlignment = Alignment.Center,
     ) {
         Text(glyph, color = if (focused) Color.Black else if (active) Color.White else Color(0xCCFFFFFF), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** Drawn (not emoji) transport glyph. Inverted per request: a play triangle while playing,
+ *  pause bars while paused. */
+@androidx.compose.runtime.Composable
+private fun PlayPauseGlyph(playing: Boolean) {
+    Canvas(Modifier.size(13.dp)) {
+        if (playing) {
+            val path = Path().apply {
+                moveTo(size.width * 0.1f, 0f)
+                lineTo(size.width, size.height / 2f)
+                lineTo(size.width * 0.1f, size.height)
+                close()
+            }
+            drawPath(path, Color.White)
+        } else {
+            val bw = size.width * 0.3f
+            drawRect(Color.White, topLeft = Offset(size.width * 0.12f, 0f), size = Size(bw, size.height))
+            drawRect(Color.White, topLeft = Offset(size.width * 0.58f, 0f), size = Size(bw, size.height))
+        }
     }
 }
 

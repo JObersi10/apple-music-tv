@@ -257,6 +257,13 @@ class AppleDirectClient @Inject constructor() {
                     }
                 }.getOrNull()
             }
+            // CEA-608 closed captions are muxed INTO the video (no URI, just INSTREAM-ID) —
+            // e.g. Die With a Smile. ExoPlayer extracts them from the decoded video, but only
+            // if the master declares the CC group. Pass the line through verbatim.
+            val ccLine = lines.firstOrNull {
+                it.startsWith("#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS") && it.contains("INSTREAM-ID") && !it.contains("URI=")
+            }
+            val ccGroup = ccLine?.let { Regex("""GROUP-ID="([^"]+)"""").find(it)?.groupValues?.get(1) }
             // Per-track routing: the DRM callback matches each session's challenge (which
             // embeds the track's placeholder KID) to that track's license uri. Apple's
             // license then binds the real content key under a KID the samples reference.
@@ -277,11 +284,15 @@ class AppleDirectClient @Inject constructor() {
                 if (subsText != null) {
                     appendLine("#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,LANGUAGE=\"en\",URI=\"$MV_SUBS_FILE\"")
                 }
-                // Force AUDIO="aud" (and SUBTITLES="subs") to match our rendition groups.
+                if (ccLine != null) appendLine(ccLine)   // CEA-608 CC group, verbatim
+                // Force AUDIO="aud" (and SUBTITLES="subs") to match our rendition groups, and
+                // drop any CLOSED-CAPTIONS ref unless we carried the CC group through.
                 var attrs = vPick.attrs.replace(Regex("""AUDIO="[^"]+""""), "AUDIO=\"aud\"")
                     .let { if (it.contains("AUDIO=")) it else "$it,AUDIO=\"aud\"" }
                     .replace(Regex(""",?SUBTITLES="[^"]+""""), "")
+                    .replace(Regex(""",?CLOSED-CAPTIONS=(NONE|"[^"]+")"""), "")
                 if (subsText != null) attrs = "$attrs,SUBTITLES=\"subs\""
+                attrs = if (ccGroup != null) "$attrs,CLOSED-CAPTIONS=\"$ccGroup\"" else "$attrs,CLOSED-CAPTIONS=NONE"
                 appendLine("#EXT-X-STREAM-INF:$attrs")
                 appendLine(MV_VIDEO_FILE)
             }
