@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.platform.LocalContext
@@ -239,7 +240,7 @@ private fun StepPreferences(vm: OnboardingViewModel, s: com.applemusicktv.ui.vie
 }
 
 /** Which mock frame a tip draws next to its caption. */
-private enum class TipMock { LONG_PRESS, LYRICS, SCRUB, DOTS_MENU, LOADING }
+private enum class TipMock { LONG_PRESS, LYRICS, SCRUB, DOTS_MENU, LOADING, PROJECTOR, MUSIC_VIDEO }
 
 private data class TipCard(val mock: TipMock, val title: String, val body: String)
 
@@ -273,12 +274,12 @@ private fun StepTips(onScreenToggle: Boolean, nextFocus: FocusRequester, onSeenA
                 "Sleep timer, shuffle, repeat, Full-Screen Lyrics, the ambient screensaver, Picture-in-Picture — all live here.",
             ),
             TipCard(
-                TipMock.DOTS_MENU, "Projector mode fills the screen",
-                "In the ··· menu, switch on Projector mode — album colour, motion art and lyrics take over the whole TV like an ambient screensaver while the music plays.",
+                TipMock.PROJECTOR, "Projector mode — let the room breathe",
+                "An ambient mode: the lights go down to black and the album's own colours drift across the whole TV. No controls, no clutter — just the music, made a little bigger. Turn it on from the ··· menu and let it play.",
             ),
             TipCard(
-                TipMock.SCRUB, "Music videos, full-screen",
-                "Playlists and artist pages with videos play them full-screen, capped at 1080p and streamed as you watch. Look for the red MV tag.",
+                TipMock.MUSIC_VIDEO, "Music videos, full-screen",
+                "Playlists and artist pages that carry videos play them full-screen, capped at 1080p and streamed as you watch — never fully downloaded. Look for the red MV tag, and use the ⧉ button to pop it into a corner while you browse.",
             ),
         )
     }
@@ -415,6 +416,53 @@ private fun TipMockContent(mock: TipMock, pulse: Float) {
         TipMock.SCRUB -> MockScrub(pulse)
         TipMock.DOTS_MENU -> MockDotsMenu(pulse)
         TipMock.LOADING -> MockLoading(pulse)
+        TipMock.PROJECTOR -> MockProjector(pulse)
+        TipMock.MUSIC_VIDEO -> MockMusicVideo(pulse)
+    }
+}
+
+/** Ambient projector: a black screen with soft coloured blobs drifting, no chrome. */
+@Composable
+private fun MockProjector(pulse: Float) {
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(Color.Black)) {
+        val blobs = listOf(
+            Triple(0.30f, 0.35f, Color(0xFFFA233B)),
+            Triple(0.72f, 0.42f, Color(0xFF6E8BFF)),
+            Triple(0.50f, 0.74f, Color(0xFF00C2A8)),
+        )
+        blobs.forEachIndexed { i, (fx, fy, c) ->
+            val drift = (if (i % 2 == 0) pulse else 1f - pulse) * 0.06f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    0f to c.copy(alpha = 0.55f), 1f to Color.Transparent,
+                    center = androidx.compose.ui.geometry.Offset((fx + drift) * size.width, (fy - drift) * size.height),
+                    radius = size.minDimension * 0.55f,
+                ),
+                radius = size.minDimension * 0.55f,
+                center = androidx.compose.ui.geometry.Offset((fx + drift) * size.width, (fy - drift) * size.height),
+                blendMode = androidx.compose.ui.graphics.BlendMode.Screen,
+            )
+        }
+    }
+}
+
+/** A 16:9 video frame with a play glyph and a red MV tag. */
+@Composable
+private fun MockMusicVideo(pulse: Float) {
+    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)).background(Color(0xFF101014)), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth(0.82f).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF2A2A38), Color(0xFF15151C)))), contentAlignment = Alignment.Center) {
+            androidx.compose.foundation.Canvas(Modifier.size(34.dp)) {
+                val a = 0.6f + 0.4f * pulse
+                val p = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(size.width * 0.2f, 0f); lineTo(size.width, size.height / 2f); lineTo(size.width * 0.2f, size.height); close()
+                }
+                drawPath(p, Color.White.copy(alpha = a))
+            }
+        }
+        Box(Modifier.align(Alignment.TopStart).padding(18.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+            Text("MV", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
