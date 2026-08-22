@@ -74,6 +74,11 @@ class MusicVideoViewModel @Inject constructor(
     var player: ExoPlayer? = null
         private set
 
+    // Observable player handle so the UI rebinds its PlayerView when a queue skip swaps in a
+    // NEW ExoPlayer instance (the plain `player` var doesn't trigger recomposition → black).
+    private val _playerFlow = MutableStateFlow<ExoPlayer?>(null)
+    val playerFlow: StateFlow<ExoPlayer?> = _playerFlow
+
     // Held so it can be released with the player — an externally-provided DrmSessionManager
     // is NOT auto-released by ExoPlayer, and a leaked Widevine session starved the secure
     // video decoder on the next video (it played audio-only).
@@ -229,6 +234,7 @@ class MusicVideoViewModel @Inject constructor(
                     }
                 })
                 player = exo
+                _playerFlow.value = exo
                 _state.value = _state.value.copy(loading = false)
                 startProgress()
             } catch (e: Exception) {
@@ -308,6 +314,7 @@ class MusicVideoViewModel @Inject constructor(
         progressJob?.cancel()
         player?.release()
         player = null
+        _playerFlow.value = null
         drmManager?.release()
         drmManager = null
     }
