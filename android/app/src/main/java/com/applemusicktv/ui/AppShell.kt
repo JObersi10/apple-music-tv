@@ -101,6 +101,7 @@ fun AppShell(modifier: Modifier = Modifier) {
     val currentRoute = currentEntry?.destination?.route
     val isOnNowPlaying = currentRoute == Screen.NowPlaying.route
     val videoActive by mvVm.active.collectAsState()
+    val mvState by mvVm.state.collectAsState()
     // Integrated queue: PlayerViewModel owns one queue of songs AND videos. When the current
     // item is a video it emits it here; we hand it to the video player and jump to Now Playing.
     // The video's prev/next/auto-advance drive the same queue back through PlayerViewModel.
@@ -156,6 +157,13 @@ fun AppShell(modifier: Modifier = Modifier) {
     // song's Now Playing (dynamic/projector) shows instead of a video stuck on top.
     LaunchedEffect(playerState.isPlaying) {
         if (playerState.isPlaying && videoActive) mvVm.close()
+    }
+    // Prefetch the next queue item's video metadata while the current one plays (mixed queue),
+    // mirroring the audio N+1 prefetch so a song→video or video→video advance is fast.
+    LaunchedEffect(playerState.queueIndex, videoActive) {
+        if (!videoActive) return@LaunchedEffect
+        val next = playerState.queue.getOrNull(playerState.queueIndex + 1)
+        if (next?.isMusicVideo == true) mvVm.prefetch(next.id)
     }
     val keepScreenOn = playerState.isPlaying
     val activity = LocalContext.current as? Activity
@@ -477,16 +485,23 @@ fun AppShell(modifier: Modifier = Modifier) {
         // On other tabs the video KEEPS PLAYING (audio; the picture is simply not drawn) — it is
         // not closed — and reappears when you return to Now Playing. On-screen PiP over the app
         // isn't possible for protected video; the OS system PiP is the "picture while browsing".
-        if (videoActive && isOnNowPlaying) {
+        // ONE persistent PlayerView for the whole life of a video, across every tab — never
+        // recreated on navigation (recreation churned the secure decoder → black/glitch). It is
+        // simply hidden (View.GONE) whenever we're not on Now Playing: a GONE secure SurfaceView
+        // tears down its own SurfaceFlinger layer, so nothing bleeds onto Library/Browse, while
+        // the ExoPlayer keeps playing the audio. Returning to Now Playing makes it VISIBLE again
+        // and the decoder re-renders onto the fresh surface.
+        if (videoActive) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
-            Box(Modifier.fillMaxSize()) {
+            // Collapse the whole layer to a 1px node off Now Playing so it can't intercept layout
+            // or focus on the page you're actually browsing.
+            Box(if (isOnNowPlaying) Modifier.fillMaxSize() else Modifier.size(1.dp)) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
                         androidx.media3.ui.PlayerView(ctx).apply {
                             useController = false
                             setShutterBackgroundColor(android.graphics.Color.BLACK)
                             setKeepScreenOn(true)
-                            subtitleView?.setApplyEmbeddedStyles(true)
                             // Secure video renders to this SurfaceView but composited BEHIND the
                             // app's black window background (frames rendered, screen black).
                             // Media-overlay lifts it above the background.
@@ -494,22 +509,27 @@ fun AppShell(modifier: Modifier = Modifier) {
                             player = mvPlayer
                         }
                     },
-                    update = { it.player = mvPlayer },   // rebind when a skip swaps the ExoPlayer
+                    update = { pv ->
+                        pv.player = mvPlayer   // rebind when a skip swaps the ExoPlayer
+                        // Hide (and free the secure layer) off Now Playing; show on it.
+                        pv.visibility = if (isOnNowPlaying) android.view.View.VISIBLE else android.view.View.GONE
+                    },
                     onRelease = { it.player = null },
                     modifier = Modifier.fillMaxSize(),
                 )
-                MusicVideoScreen(
-                    vm = mvVm,
-                    onMinimize = { (activity as? com.applemusicktv.MainActivity)?.enterPip() },
-                    // Back leaves the SCREEN but KEEPS the video playing — pop to the previous
-                    // route (e.g. the playlist). The video renders only on Now Playing, so it's
-                    // simply hidden while its audio continues, and reappears on return. It closes
-                    // only when a regular song plays or the queue ends.
-                    onExit = { if (!navController.popBackStack()) { selectedTab = TopNavTab.ListenNow; navController.navigate(Screen.Home.route) { launchSingleTop = true } } },
-                    onFocusUp = { runCatching { navBarFocus.requestFocus() } },
-                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
-                    focusRequester = videoFocus,
-                )
+                if (isOnNowPlaying) {
+                    MusicVideoScreen(
+                        vm = mvVm,
+                        onMinimize = { (activity as? com.applemusicktv.MainActivity)?.enterPip() },
+                        // Back leaves the SCREEN but KEEPS the video playing — pop to the previous
+                        // route (e.g. the playlist). The video is hidden while its audio continues,
+                        // and reappears on return. It closes only on a regular song / queue end.
+                        onExit = { if (!navController.popBackStack()) { selectedTab = TopNavTab.ListenNow; navController.navigate(Screen.Home.route) { launchSingleTop = true } } },
+                        onFocusUp = { runCatching { navBarFocus.requestFocus() } },
+                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                        focusRequester = videoFocus,
+                    )
+                }
             }
         }
 
@@ -520,7 +540,8 @@ fun AppShell(modifier: Modifier = Modifier) {
         ) {
             TopNavBar(
                 selected  = selectedTab,
-                isPlaying = playerState.isPlaying,
+                // Waveform animates for video playback too, not just audio.
+                isPlaying = playerState.isPlaying || (videoActive && mvState.playing),
                 updateAvailable = pendingUpdate != null,
                 onSelect = { tab ->
                     selectedTab = tab

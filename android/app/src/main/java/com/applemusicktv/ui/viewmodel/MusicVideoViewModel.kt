@@ -87,6 +87,29 @@ class MusicVideoViewModel @Inject constructor(
     private var trackSelector: DefaultTrackSelector? = null
     private var progressJob: kotlinx.coroutines.Job? = null
 
+    // Prefetch: the next video's webPlayback + master/keys, resolved ahead of time so a queue
+    // advance into a video skips the ~0.3–1s network round-trip. The ExoPlayer/DRM session is
+    // still built fresh at play time (licenses are per-session); only the metadata is cached.
+    private val prefetchCache = java.util.concurrent.ConcurrentHashMap<String, com.applemusicktv.media.MusicVideoResult>()
+    private var prefetchJob: kotlinx.coroutines.Job? = null
+    private var prefetchingId: String? = null
+
+    /** Warm the next video (call with the id of the upcoming queue item, or null to no-op). */
+    fun prefetch(mvId: String?) {
+        if (mvId.isNullOrEmpty() || prefetchCache.containsKey(mvId) || prefetchingId == mvId) return
+        prefetchingId = mvId
+        prefetchJob?.cancel()
+        prefetchJob = viewModelScope.launch {
+            try {
+                val bearer = appleClient.getBearer(); val mut = mutPrefs.getMUT()
+                if (bearer.isEmpty() || mut.isEmpty()) return@launch
+                val mv = withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut) }
+                prefetchCache[mvId] = mv
+                if (prefetchCache.size > 3) prefetchCache.keys.firstOrNull { it != mvId }?.let { prefetchCache.remove(it) }
+            } catch (_: Exception) {} finally { if (prefetchingId == mvId) prefetchingId = null }
+        }
+    }
+
     /** Start (or replace) the active video. Callers seed [VideoQueue] first for prev/next. */
     fun show(mvId: String, title: String, artist: String) {
         _active.value = true
@@ -130,7 +153,9 @@ class MusicVideoViewModel @Inject constructor(
                     _state.value = _state.value.copy(loading = false, error = "Sign-in required")
                     return@launch
                 }
-                val mv = withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut) }
+                // Use the prefetched result if the queue warmed this id ahead of time.
+                val mv = prefetchCache.remove(mvId)
+                    ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut) }
 
                 // Write the corrected master + media playlists to disk; ExoPlayer plays
                 // the master via file:// and streams the mvod segments they reference.
@@ -201,6 +226,7 @@ class MusicVideoViewModel @Inject constructor(
                     }
                     override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
                         _cues.value = cueGroup.cues
+                        Log.i("AMMVsub", "cues=${cueGroup.cues.size} text=${cueGroup.cues.firstOrNull()?.text}")
                     }
                     override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                         val subs = mutableListOf(SubtitleOption("Off", -1))
@@ -224,6 +250,7 @@ class MusicVideoViewModel @Inject constructor(
                                 else -> {}
                             }
                         }
+                        Log.i("AMMVsub", "tracks text=${subs.size - 1} audio=${auds.size} sel=$subSel")
                         _state.value = _state.value.copy(
                             subtitles = if (subs.size > 1) subs else emptyList(),
                             subtitleIndex = subSel,

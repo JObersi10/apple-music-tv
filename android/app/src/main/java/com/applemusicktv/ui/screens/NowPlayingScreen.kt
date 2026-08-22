@@ -1215,7 +1215,14 @@ private fun LyricsPanel(
         if (progressMs <= activeUntil) passedIndex else -1
     } else -1
 
-    val scrollAnchor = passedIndex.coerceAtLeast(0)
+    // If the PREVIOUS line is word-synced and still within its own window (a sustained/held line
+    // that overlaps the newer line, e.g. Get Lucky), keep the scroll anchored on it so it stays
+    // on screen next to the newer line instead of being scrolled away while it's still sung.
+    val overlapPrev = if (passedIndex > 0) {
+        val p = lyrics[passedIndex - 1]
+        if (p.words.isNotEmpty() && progressMs <= p.endMs && p.endMs > lyrics[passedIndex].startMs) passedIndex - 1 else -1
+    } else -1
+    val scrollAnchor = (if (overlapPrev >= 0) overlapPrev else passedIndex).coerceAtLeast(0)
     val firstLoad = remember { mutableStateOf(true) }
 
     // Track user-initiated scrolls so auto-scroll doesn't fight them. Auto-scroll

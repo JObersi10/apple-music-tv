@@ -181,7 +181,9 @@ library.get("/playlists/:id/tracks", async (c) => {
       let offset = 0;
       while (songs.length < 2000) {
         const res = await axios.get(`https://amp-api-edge.music.apple.com/v1/catalog/${sf}/playlists/${id}/tracks`, {
-          params: { limit: 100, offset },
+          // include artists/albums so tracks (incl. music videos, which the client can't
+          // resolve lazily via the songs endpoint) carry artistId/albumId for "Go to Artist".
+          params: { limit: 100, offset, include: "artists,albums" },
           headers: appleHeaders(mut),
         });
         const batch = res.data?.data ?? [];
