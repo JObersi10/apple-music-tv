@@ -154,7 +154,7 @@ browse.get("/categories", async (c) => {
     const sections = await Promise.all(CATEGORY_ROOMS.map(async ({ title, room }) => {
       const res = await axios.get(`${APPLE}/v1/editorial/${sf}/rooms/${room}`, {
         headers: hdrs(mut),
-        params: { include: "contents", extend: "editorialArtwork", l: "en-US", platform: "web", "limit[contents]": 60 },
+        params: { include: "contents", extend: "editorialArtwork", l: "en-US", platform: "web", "limit[contents]": 200 },
       });
       const items = (res.data?.data?.[0]?.relationships?.contents?.data ?? [])
         .filter((it: any) => it.type === "apple-curators" || it.type === "curators")

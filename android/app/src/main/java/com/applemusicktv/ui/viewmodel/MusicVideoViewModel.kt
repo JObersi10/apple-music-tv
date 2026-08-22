@@ -39,6 +39,8 @@ data class MvUiState(
     val durationMs: Long    = 0,
     val subtitles:  List<SubtitleOption> = emptyList(),
     val subtitleIndex: Int = -1,   // -1 = Off
+    val audioTracks:  List<SubtitleOption> = emptyList(),
+    val audioIndex:   Int = 0,
 )
 
 /**
@@ -51,6 +53,7 @@ class MusicVideoViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val mutPrefs: com.applemusicktv.data.MutPreferences,
     private val appleClient: AppleDirectClient,
+    private val videoQueue: com.applemusicktv.media.VideoQueue,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MvUiState())
@@ -66,8 +69,29 @@ class MusicVideoViewModel @Inject constructor(
     private var trackSelector: DefaultTrackSelector? = null
     private var progressJob: kotlinx.coroutines.Job? = null
 
-    @OptIn(UnstableApi::class)
+    /** Entry point from navigation. Uses the queue set by the caller if it holds this id,
+     *  otherwise falls back to a one-item queue so prev/next are simply no-ops. */
     fun load(mvId: String, title: String, artist: String) {
+        val q = videoQueue.items
+        if (q.isEmpty() || q.none { it.id == mvId }) {
+            videoQueue.set(listOf(com.applemusicktv.media.VideoItem(mvId, title, artist)), 0)
+        }
+        val item = videoQueue.current() ?: com.applemusicktv.media.VideoItem(mvId, title, artist)
+        playItem(item.id, item.title, item.artist)
+    }
+
+    /** Go to the next video in the queue; no-op at the end. */
+    fun next() { if (videoQueue.hasNext()) videoQueue.next()?.let { playItem(it.id, it.title, it.artist) } }
+
+    /** Like the audio player: restart if we're past 3s or there's no previous, else previous video. */
+    fun prev() {
+        if (!videoQueue.hasPrev() || (player?.currentPosition ?: 0) > 3000) { player?.seekTo(0); return }
+        videoQueue.prev()?.let { playItem(it.id, it.title, it.artist) }
+    }
+
+    @OptIn(UnstableApi::class)
+    private fun playItem(mvId: String, title: String, artist: String) {
+        releasePlayer()
         _state.value = MvUiState(loading = true, title = title, artist = artist)
         viewModelScope.launch {
             try {
@@ -144,22 +168,32 @@ class MusicVideoViewModel @Inject constructor(
                         _state.value = _state.value.copy(loading = false, error = error.message ?: "Playback failed")
                     }
                     override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                        val opts = mutableListOf(SubtitleOption("Off", -1))
-                        var sel = -1
-                        var i = 0
+                        val subs = mutableListOf(SubtitleOption("Off", -1))
+                        var subSel = -1; var si = 0
+                        val auds = mutableListOf<SubtitleOption>()
+                        var audSel = 0; var ai = 0
                         for (group in tracks.groups) {
-                            if (group.type != C.TRACK_TYPE_TEXT) continue
-                            for (t in 0 until group.length) {
-                                val fmt = group.getTrackFormat(t)
-                                val name = fmt.label ?: fmt.language?.uppercase() ?: "Subtitles"
-                                opts.add(SubtitleOption(name, i))
-                                if (group.isTrackSelected(t)) sel = i
-                                i++
+                            when (group.type) {
+                                C.TRACK_TYPE_TEXT -> for (t in 0 until group.length) {
+                                    val fmt = group.getTrackFormat(t)
+                                    subs.add(SubtitleOption(fmt.label ?: fmt.language?.uppercase() ?: "Subtitles", si))
+                                    if (group.isTrackSelected(t)) subSel = si
+                                    si++
+                                }
+                                C.TRACK_TYPE_AUDIO -> for (t in 0 until group.length) {
+                                    val fmt = group.getTrackFormat(t)
+                                    auds.add(SubtitleOption(langName(fmt.language) ?: fmt.label ?: "Audio ${ai + 1}", ai))
+                                    if (group.isTrackSelected(t)) audSel = ai
+                                    ai++
+                                }
+                                else -> {}
                             }
                         }
                         _state.value = _state.value.copy(
-                            subtitles = if (opts.size > 1) opts else emptyList(),
-                            subtitleIndex = sel,
+                            subtitles = if (subs.size > 1) subs else emptyList(),
+                            subtitleIndex = subSel,
+                            audioTracks = if (auds.size > 1) auds else emptyList(),
+                            audioIndex = audSel,
                         )
                     }
                 })
@@ -201,10 +235,31 @@ class MusicVideoViewModel @Inject constructor(
         _state.value = _state.value.copy(subtitleIndex = index)
     }
 
+    /** Switch audio rendition by index (position in [MvUiState.audioTracks]). */
+    @OptIn(UnstableApi::class)
+    fun setAudio(index: Int) {
+        val exo = player ?: return
+        var ai = 0
+        for (group in exo.currentTracks.groups) {
+            if (group.type != C.TRACK_TYPE_AUDIO) continue
+            for (t in 0 until group.length) {
+                if (ai == index) {
+                    exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                        .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, t))
+                        .build()
+                    _state.value = _state.value.copy(audioIndex = index)
+                    return
+                }
+                ai++
+            }
+        }
+    }
+
     fun togglePlayPause() { player?.let { it.playWhenReady = !it.playWhenReady } }
     fun seekBy(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceAtLeast(0)) } }
 
-    fun release() {
+    /** Tear down the current player/DRM without clearing the queue (used between queue items). */
+    private fun releasePlayer() {
         progressJob?.cancel()
         player?.release()
         player = null
@@ -212,5 +267,12 @@ class MusicVideoViewModel @Inject constructor(
         drmManager = null
     }
 
+    fun release() = releasePlayer()
+
     override fun onCleared() { release() }
+
+    private fun langName(code: String?): String? {
+        if (code.isNullOrBlank() || code == "und") return null
+        return runCatching { java.util.Locale(code).displayLanguage.ifBlank { code } }.getOrDefault(code)
+    }
 }

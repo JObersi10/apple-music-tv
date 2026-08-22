@@ -133,7 +133,7 @@ fun PlaylistDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks.filter { !it.isMusicVideo }, 0) },
+                                onClick = { playerVm.playAlbum(sortedTracks, 0) },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B), focusedContainerColor = Color(0xFFCC1A2E)),
                             ) {
@@ -142,7 +142,7 @@ fun PlaylistDetailScreen(
                                 }
                             }
                             Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks.filter { !it.isMusicVideo }.shuffled(), 0, shuffle = true) },
+                                onClick = { playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true) },
                                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
                             ) {
@@ -183,7 +183,7 @@ fun PlaylistDetailScreen(
                             }
                         }
                     }
-                    trackItems(sortedTracks, playerVm, onMusicVideoClick) { song ->
+                    trackItems(sortedTracks, playerVm, { song -> vm.seedVideoQueue(song); onMusicVideoClick(song) }) { song ->
                         val now = System.currentTimeMillis()
                         if (menuSongState == null && now - lastDismissMs > 600) menuSongState = song
                     }

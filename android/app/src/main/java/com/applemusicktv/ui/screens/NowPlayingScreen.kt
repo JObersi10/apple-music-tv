@@ -277,7 +277,7 @@ fun NowPlayingScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(288.dp)
+                        .size(256.dp)
                         .clip(RoundedCornerShape(if (state.artworkRounded) 18.dp else 0.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
@@ -785,30 +785,23 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
 
     val alpha by animateFloatAsState(if (ready) 1f else 0f, tween(400), label = "motionFade")
 
+    // A raw TextureView, NOT PlayerView. PlayerView renders into a SurfaceView, which is a
+    // hole punched through the window — it does NOT honour Compose transforms and stretches
+    // by its own surface size, which is what left the thin black edge / "shrinks in" look on
+    // the static→motion handoff. A TextureView draws in the normal view layer, scales its
+    // buffer to the exact view bounds (== the cover box), so the frame fills edge-to-edge.
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
-            androidx.media3.ui.PlayerView(ctx).apply {
-                useController = false
-                // Motion art is square and so is the cover box — FILL maps it exactly with no
-                // distortion. ZOOM was leaving a black strip on the bottom/right because the
-                // video surface laid out smaller than the box, anchored top-left.
-                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
-                // Force the PlayerView (and its inner surface) to fill the whole box.
+            android.view.TextureView(ctx).apply {
                 layoutParams = android.view.ViewGroup.LayoutParams(
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 )
-                // Keep shutter black — hides the green YUV frame on surface reattach.
-                // Alpha on the outer modifier handles the fade-in instead.
-                setShutterBackgroundColor(android.graphics.Color.BLACK)
-                player = exo
+                exo.setVideoTextureView(this)
             }
         },
-        update = { view -> view.player = exo },
-        // Overscan 4% so the video surface always covers the box even if it lays out a
-        // hair small on the first frame — the parent box clip crops the overflow. Kills
-        // the thin black edge / "shrinks in" look on the static→motion handoff.
-        modifier = modifier.graphicsLayer { this.alpha = alpha; scaleX = 1.04f; scaleY = 1.04f },
+        update = { view -> exo.setVideoTextureView(view) },
+        modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
 }
 

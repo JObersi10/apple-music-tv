@@ -437,7 +437,7 @@ interface DirectAppleApi {
         @Path("id") id: String,
         @Query("include") include: String = "contents",
         @Query("extend") extend: String = "editorialArtwork",
-        @Query("limit[contents]") contentsLimit: Int = 60,
+        @Query("limit[contents]") contentsLimit: Int = 200,
         @Query("l") l: String = "en-US",
         @Query("platform") platform: String = "web",
     ): EdDataResponse

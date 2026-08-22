@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -27,10 +28,12 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.Text
 import com.applemusicktv.ui.viewmodel.MusicVideoViewModel
+import com.applemusicktv.ui.viewmodel.SubtitleOption
 import kotlinx.coroutines.delay
 
 /** Where the D-pad focus sits in the transport row. */
-private enum class MvFocus { SCRUB, SUBS, PIP }
+private enum class MvFocus { SCRUB, SUBS, AUDIO, PIP }
+private enum class MvPicker { NONE, SUBS, AUDIO }
 
 @OptIn(UnstableApi::class)
 @androidx.compose.runtime.Composable
@@ -49,23 +52,27 @@ fun MusicVideoScreen(
 
     var controls by remember { mutableStateOf(true) }
     var focus by remember { mutableStateOf(MvFocus.SCRUB) }
-    var showSubs by remember { mutableStateOf(false) }
-    var subCursor by remember { mutableIntStateOf(0) }
-    // Bump on every interaction to re-arm the auto-hide timer.
+    var picker by remember { mutableStateOf(MvPicker.NONE) }
+    var pickCursor by remember { mutableIntStateOf(0) }
     var poke by remember { mutableIntStateOf(0) }
 
-    // Auto-hide the chrome ~5s after the last interaction (never while the picker is open).
-    LaunchedEffect(poke, showSubs, state.playing) {
-        if (showSubs || !state.playing) return@LaunchedEffect
+    // Auto-hide chrome ~5s after the last interaction — but never while paused or a picker
+    // is open (Apple keeps the bar up then). Any key press re-arms via `poke`.
+    LaunchedEffect(poke, picker, state.playing) {
+        if (picker != MvPicker.NONE || !state.playing) { controls = true; return@LaunchedEffect }
         controls = true
         delay(5000)
         controls = false
     }
 
     val focusReq = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focusReq.requestFocus() } }
+    // Re-assert focus whenever the player is (re)built for a queue item, so keys keep working.
+    LaunchedEffect(vm.player) { runCatching { focusReq.requestFocus() } }
 
     fun poke() { poke++; controls = true }
+
+    val subs = state.subtitles
+    val auds = state.audioTracks
 
     Box(
         Modifier
@@ -75,50 +82,51 @@ fun MusicVideoScreen(
             .focusable()
             .onKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
-                // Subtitle picker owns keys while open.
-                if (showSubs) {
-                    val n = state.subtitles.size
+                // Remote transport keys work regardless of where focus sits — same as songs.
+                when (ev.key) {
+                    Key.MediaNext -> { vm.next(); poke(); return@onKeyEvent true }
+                    Key.MediaPrevious -> { vm.prev(); poke(); return@onKeyEvent true }
+                    Key.MediaPlayPause -> { vm.togglePlayPause(); poke(); return@onKeyEvent true }
+                    else -> {}
+                }
+                if (picker != MvPicker.NONE) {
+                    val opts: List<SubtitleOption> = if (picker == MvPicker.SUBS) subs else auds
                     when (ev.key) {
-                        Key.Back -> { showSubs = false; poke(); true }
-                        Key.DirectionUp -> { if (subCursor > 0) subCursor--; true }
-                        Key.DirectionDown -> { if (subCursor < n - 1) subCursor++; true }
+                        Key.Back -> { picker = MvPicker.NONE; poke(); true }
+                        Key.DirectionUp -> { if (pickCursor > 0) pickCursor--; true }
+                        Key.DirectionDown -> { if (pickCursor < opts.size - 1) pickCursor++; true }
                         Key.DirectionCenter, Key.Enter -> {
-                            state.subtitles.getOrNull(subCursor)?.let { vm.setSubtitle(it.index) }
-                            showSubs = false; poke(); true
+                            opts.getOrNull(pickCursor)?.let {
+                                if (picker == MvPicker.SUBS) vm.setSubtitle(it.index) else vm.setAudio(it.index)
+                            }
+                            picker = MvPicker.NONE; poke(); true
                         }
                         else -> true
                     }
                 } else when (ev.key) {
                     Key.Back -> { onBack(); true }
-                    Key.MediaPlayPause -> { vm.togglePlayPause(); poke(); true }
-                    Key.DirectionUp -> { poke(); focus = if (state.subtitles.isNotEmpty()) MvFocus.SUBS else MvFocus.PIP; true }
+                    Key.DirectionUp -> { poke(); focus = firstButton(subs, auds); true }
                     Key.DirectionDown -> { poke(); focus = MvFocus.SCRUB; true }
                     Key.DirectionLeft, Key.MediaRewind -> {
                         poke()
                         when (focus) {
                             MvFocus.SCRUB -> vm.seekBy(-10_000)
-                            MvFocus.PIP -> if (state.subtitles.isNotEmpty()) focus = MvFocus.SUBS
-                            else -> {}
+                            else -> focus = prevButton(focus, subs, auds)
                         }; true
                     }
                     Key.DirectionRight, Key.MediaFastForward -> {
                         poke()
                         when (focus) {
                             MvFocus.SCRUB -> vm.seekBy(10_000)
-                            MvFocus.SUBS -> if (state.subtitles.isNotEmpty()) focus = MvFocus.PIP
-                            else -> {}
+                            else -> focus = nextButton(focus, subs, auds)
                         }; true
                     }
                     Key.DirectionCenter, Key.Enter -> {
                         poke()
                         when (focus) {
                             MvFocus.SCRUB -> vm.togglePlayPause()
-                            MvFocus.SUBS -> {
-                                if (state.subtitles.isNotEmpty()) {
-                                    subCursor = state.subtitles.indexOfFirst { it.index == state.subtitleIndex }.coerceAtLeast(0)
-                                    showSubs = true
-                                }
-                            }
+                            MvFocus.SUBS -> if (subs.isNotEmpty()) { picker = MvPicker.SUBS; pickCursor = subs.indexOfFirst { it.index == state.subtitleIndex }.coerceAtLeast(0) }
+                            MvFocus.AUDIO -> if (auds.isNotEmpty()) { picker = MvPicker.AUDIO; pickCursor = auds.indexOfFirst { it.index == state.audioIndex }.coerceAtLeast(0) }
                             MvFocus.PIP -> (context as? com.applemusicktv.MainActivity)?.enterPip()
                         }; true
                     }
@@ -132,7 +140,7 @@ fun MusicVideoScreen(
             AndroidView(
                 factory = {
                     PlayerView(it).apply {
-                        useController = false            // our overlay is the only chrome
+                        useController = false
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
                         keepScreenOn = true
                         subtitleView?.setApplyEmbeddedStyles(true)
@@ -160,30 +168,24 @@ fun MusicVideoScreen(
             enter = fadeIn(), exit = fadeOut(),
             modifier = Modifier.align(Alignment.BottomStart).fillMaxSize(),
         ) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color(0xCC000000))),
-            ) {
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xCC000000)))) {
+                val dur = state.durationMs.coerceAtLeast(1)
+                val frac = (state.positionMs.toFloat() / dur).coerceIn(0f, 1f)
                 Column(
-                    Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .padding(horizontal = 48.dp, vertical = 40.dp),
+                    Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 48.dp, vertical = 30.dp),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(state.title, color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        // Subtitles button (only when the video actually carries captions).
-                        if (state.subtitles.isNotEmpty()) {
-                            OverlayIcon("CC", focused = focus == MvFocus.SUBS, active = state.subtitleIndex >= 0)
-                            Spacer(Modifier.width(14.dp))
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Column(Modifier.weight(1f)) {
+                            Text(state.artist, color = Color(0xCCFFFFFF), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(2.dp))
+                            Text(state.title, color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
                         }
-                        OverlayIcon("⧉", focused = focus == MvFocus.PIP, active = false)
+                        if (subs.isNotEmpty()) { OverlayIcon("CC", focus == MvFocus.SUBS, state.subtitleIndex >= 0); Spacer(Modifier.width(14.dp)) }
+                        if (auds.isNotEmpty()) { OverlayIcon("A", focus == MvFocus.AUDIO, false); Spacer(Modifier.width(14.dp)) }
+                        OverlayIcon("⧉", focus == MvFocus.PIP, false)
                     }
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(16.dp))
                     // Progress bar
-                    val dur = state.durationMs.coerceAtLeast(1)
-                    val frac = (state.positionMs.toFloat() / dur).coerceIn(0f, 1f)
                     Box(
                         Modifier.fillMaxWidth().height(if (focus == MvFocus.SCRUB) 6.dp else 4.dp)
                             .clip(RoundedCornerShape(3.dp)).background(Color(0x40FFFFFF)),
@@ -192,33 +194,41 @@ fun MusicVideoScreen(
                             .background(if (focus == MvFocus.SCRUB) Color.White else Color(0xE6FFFFFF)))
                     }
                     Spacer(Modifier.height(8.dp))
+                    // Elapsed + inline play/pause glyph, parked under the playhead; remaining at the end.
                     Box(Modifier.fillMaxWidth()) {
-                        Text(fmt(state.positionMs), color = Color.White, fontSize = 13.sp, modifier = Modifier.align(Alignment.Center))
+                        Row(
+                            Modifier.align(BiasAlignment(horizontalBias = frac * 2f - 1f, verticalBias = 0f)),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(fmt(state.positionMs), color = Color.White, fontSize = 13.sp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (state.playing) "⏸" else "▶", color = Color.White, fontSize = 13.sp)
+                        }
                         Text("-" + fmt(dur - state.positionMs), color = Color(0xCCFFFFFF), fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterEnd))
                     }
                 }
             }
         }
 
-        // ── Subtitle picker ──────────────────────────────────────────────────
-        if (showSubs) {
+        // ── Subtitle / audio picker ──────────────────────────────────────────
+        if (picker != MvPicker.NONE) {
+            val opts = if (picker == MvPicker.SUBS) subs else auds
+            val selIndex = if (picker == MvPicker.SUBS) state.subtitleIndex else state.audioIndex
             Box(
-                Modifier.align(Alignment.CenterEnd).padding(end = 60.dp, bottom = 120.dp)
+                Modifier.align(Alignment.CenterEnd).padding(end = 60.dp, bottom = 130.dp)
                     .width(240.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xF2222222)).padding(vertical = 10.dp),
             ) {
                 Column {
-                    Text("SUBTITLES", color = Color(0xFF9A9A9A), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
-                    state.subtitles.forEachIndexed { i, opt ->
-                        val on = i == subCursor
+                    Text(if (picker == MvPicker.SUBS) "SUBTITLES" else "AUDIO", color = Color(0xFF9A9A9A), fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
+                    opts.forEachIndexed { i, opt ->
                         Row(
-                            Modifier.fillMaxWidth()
-                                .background(if (on) Color(0x22FFFFFF) else Color.Transparent)
+                            Modifier.fillMaxWidth().background(if (i == pickCursor) Color(0x22FFFFFF) else Color.Transparent)
                                 .padding(horizontal = 18.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(opt.label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                            if (opt.index == state.subtitleIndex) Text("✓", color = Color.White, fontSize = 15.sp)
+                            if (opt.index == selIndex) Text("✓", color = Color.White, fontSize = 15.sp)
                         }
                     }
                 }
@@ -227,16 +237,29 @@ fun MusicVideoScreen(
     }
 }
 
+private fun firstButton(subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus =
+    if (subs.isNotEmpty()) MvFocus.SUBS else if (auds.isNotEmpty()) MvFocus.AUDIO else MvFocus.PIP
+
+private fun buttonOrder(subs: List<SubtitleOption>, auds: List<SubtitleOption>): List<MvFocus> =
+    buildList { if (subs.isNotEmpty()) add(MvFocus.SUBS); if (auds.isNotEmpty()) add(MvFocus.AUDIO); add(MvFocus.PIP) }
+
+private fun nextButton(cur: MvFocus, subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus {
+    val o = buttonOrder(subs, auds); val i = o.indexOf(cur)
+    return if (i in 0 until o.lastIndex) o[i + 1] else cur
+}
+private fun prevButton(cur: MvFocus, subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus {
+    val o = buttonOrder(subs, auds); val i = o.indexOf(cur)
+    return if (i > 0) o[i - 1] else MvFocus.SCRUB
+}
+
 /** A small circular transport button styled like the reference: filled when focused. */
 @androidx.compose.runtime.Composable
 private fun OverlayIcon(glyph: String, focused: Boolean, active: Boolean) {
     Box(
-        Modifier.size(42.dp).clip(RoundedCornerShape(50))
-            .background(if (focused) Color.White else Color(0x33FFFFFF)),
+        Modifier.size(42.dp).clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color(0x33FFFFFF)),
         contentAlignment = Alignment.Center,
     ) {
-        Text(glyph, color = if (focused) Color.Black else if (active) Color.White else Color(0xCCFFFFFF),
-            fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(glyph, color = if (focused) Color.Black else if (active) Color.White else Color(0xCCFFFFFF), fontSize = 15.sp, fontWeight = FontWeight.Bold)
     }
 }
 
