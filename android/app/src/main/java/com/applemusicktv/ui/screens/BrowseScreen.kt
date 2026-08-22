@@ -32,10 +32,13 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+data class GenreChip(val id: String, val name: String)
+
 data class BrowseUiState(
     val isLoading: Boolean           = true,
     val error:     String?           = null,
     val sections:  List<HomeSection> = emptyList(),
+    val genres:    List<GenreChip>   = emptyList(),
 )
 
 @HiltViewModel
@@ -50,14 +53,17 @@ class BrowseViewModel @Inject constructor(private val repo: MusicRepository) : V
             _state.value = BrowseUiState(isLoading = true)
             repo.getBrowse()
                 .onSuccess { resp ->
-                    _state.value = BrowseUiState(
+                    _state.value = _state.value.copy(
                         isLoading = false,
                         sections  = resp.sections.map { s ->
                             HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto))
                         },
                     )
                 }
-                .onFailure { _state.value = BrowseUiState(isLoading = false, error = it.message) }
+                .onFailure { _state.value = _state.value.copy(isLoading = false, error = it.message) }
+            repo.getGenres().onSuccess { gs ->
+                _state.value = _state.value.copy(genres = gs.map { GenreChip(it.id, it.name) })
+            }
         }
     }
 }
@@ -68,6 +74,7 @@ fun BrowseScreen(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
+    onGenreClick: (id: String, name: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val vm: BrowseViewModel = hiltViewModel()
@@ -108,6 +115,31 @@ fun BrowseScreen(
     ) {
         items(state.sections, key = { it.title }) { section ->
             BrowseRow(section, onAlbumClick, onPlaylistClick, playerVm)
+        }
+        if (state.genres.isNotEmpty()) {
+            item(key = "__genres__") { GenreChipsRow(state.genres, onGenreClick) }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun GenreChipsRow(genres: List<GenreChip>, onGenreClick: (id: String, name: String) -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Text("Genres", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+            modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(genres, key = { it.id }) { g ->
+                Surface(
+                    onClick = { onGenreClick(g.id, g.name) },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(24.dp)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFFFA233B)),
+                ) {
+                    Text(g.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+                }
+            }
         }
     }
 }

@@ -220,6 +220,22 @@ fun AppShell(modifier: Modifier = Modifier) {
                     playerVm       = playerVm,
                     onAlbumClick   = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                    onGenreClick   = { id, name -> navController.navigate(Screen.Genre.route(id, name)) },
+                )
+            }
+            composable(
+                route     = Screen.Genre.route,
+                arguments = listOf(
+                    navArgument("genreId")   { type = NavType.StringType },
+                    navArgument("genreName") { type = NavType.StringType },
+                ),
+            ) { back ->
+                val gid  = URLDecoder.decode(back.arguments?.getString("genreId")   ?: "", "UTF-8")
+                val gnm  = URLDecoder.decode(back.arguments?.getString("genreName") ?: "", "UTF-8")
+                GenreScreen(
+                    genreId = gid, genreName = gnm, playerVm = playerVm,
+                    onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
                 )
             }
             composable(Screen.Category.route) {
@@ -463,21 +479,6 @@ fun AppShell(modifier: Modifier = Modifier) {
                     update = { it.player = mvPlayer },   // rebind when a skip swaps the ExoPlayer
                     onRelease = { it.player = null },
                     modifier = Modifier.fillMaxSize(),
-                )
-                // Captions rendered in OUR OWN SubtitleView, layered above the video. PlayerView's
-                // built-in caption view sits under the media-overlay secure surface (z-order) and
-                // never shows. The ViewModel pushes live cues here; drawn below the controls.
-                val cues by mvVm.cues.collectAsState()
-                androidx.compose.ui.viewinterop.AndroidView(
-                    factory = { ctx ->
-                        androidx.media3.ui.SubtitleView(ctx).apply {
-                            setApplyEmbeddedStyles(true)
-                            setUserDefaultStyle()
-                            setUserDefaultTextSize()
-                        }
-                    },
-                    update = { it.setCues(cues) },
-                    modifier = Modifier.fillMaxSize().padding(bottom = 96.dp),
                 )
                 MusicVideoScreen(
                     vm = mvVm,

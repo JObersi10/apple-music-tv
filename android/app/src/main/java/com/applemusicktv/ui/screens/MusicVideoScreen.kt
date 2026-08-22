@@ -49,6 +49,7 @@ fun MusicVideoScreen(
     focusRequester: FocusRequester,  // owned by AppShell so the nav bar's Down can target it
 ) {
     val state by vm.state.collectAsState()
+    val cues by vm.cues.collectAsState()
     val context = LocalContext.current
 
     var controls by remember { mutableStateOf(true) }
@@ -167,6 +168,27 @@ fun MusicVideoScreen(
             }
         }
 
+        // ── Captions ─────────────────────────────────────────────────────────
+        // Rendered as Compose text in the controls layer. A native SubtitleView sits under
+        // the secure media-overlay video surface (z-order) and never shows; Compose here is
+        // the same layer as the visible controls, so captions land on top. Lifts above the
+        // transport bar when the chrome is up.
+        val captionText = cues.mapNotNull { it.text?.toString()?.trim()?.ifBlank { null } }.joinToString("\n")
+        if (captionText.isNotEmpty()) {
+            Box(
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = if (controls) 190.dp else 56.dp, start = 48.dp, end = 48.dp),
+            ) {
+                Text(
+                    captionText,
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xB3000000)).padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
+        }
+
         // ── Transport overlay ────────────────────────────────────────────────
         AnimatedVisibility(
             visible = controls && !state.loading && state.error == null,
@@ -252,7 +274,8 @@ fun MusicVideoScreen(
             val opts = if (picker == MvPicker.SUBS) subs else auds
             val selIndex = if (picker == MvPicker.SUBS) state.subtitleIndex else state.audioIndex
             Box(
-                Modifier.align(Alignment.CenterEnd).padding(end = 60.dp, bottom = 130.dp)
+                // Anchored just above the CC/audio button row (bottom-right), not floating mid-screen.
+                Modifier.align(Alignment.BottomEnd).padding(end = 48.dp, bottom = 176.dp)
                     .width(240.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xF2222222)).padding(vertical = 10.dp),
             ) {
                 Column {
