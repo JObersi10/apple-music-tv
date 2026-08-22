@@ -42,31 +42,29 @@ private enum class MvPicker { NONE, SUBS, AUDIO }
 @OptIn(UnstableApi::class)
 @androidx.compose.runtime.Composable
 fun MusicVideoScreen(
-    mvId: String,
-    title: String,
-    artist: String,
-    onBack: () -> Unit,
-    vm: MusicVideoViewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+    vm: MusicVideoViewModel,
+    onMinimize: () -> Unit,   // PiP: shrink to a corner, stay in the app
+    onExit: () -> Unit,       // Back once the chrome is gone: close the video entirely
 ) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
-
-    LaunchedEffect(mvId) { vm.load(mvId, title, artist) }
-    DisposableEffect(Unit) { onDispose { vm.release() } }
 
     var controls by remember { mutableStateOf(true) }
     var focus by remember { mutableStateOf(MvFocus.SCRUB) }
     var picker by remember { mutableStateOf(MvPicker.NONE) }
     var pickCursor by remember { mutableIntStateOf(0) }
     var showInfo by remember { mutableStateOf(false) }
+    // Scrub cursor: L/R move a ghost position, OK commits the seek — no live scrubbing,
+    // matching the Now Playing progress bar. null = not scrubbing.
+    var scrub by remember { mutableStateOf<Long?>(null) }
     var poke by remember { mutableIntStateOf(0) }
 
     // Auto-hide chrome ~5s after the last interaction — but never while paused or a picker
     // is open (Apple keeps the bar up then). Any key press re-arms via `poke`.
-    LaunchedEffect(poke, picker, state.playing) {
-        if (picker != MvPicker.NONE || !state.playing) { controls = true; return@LaunchedEffect }
+    LaunchedEffect(poke, picker, showInfo, state.playing) {
+        if (picker != MvPicker.NONE || showInfo || !state.playing) { controls = true; return@LaunchedEffect }
         controls = true
-        delay(5000)
+        delay(3000)
         controls = false
     }
 
@@ -114,14 +112,14 @@ fun MusicVideoScreen(
                     Key.Back -> when {
                         showInfo -> { showInfo = false; true }
                         controls -> { controls = false; true }
-                        else -> { onBack(); true }
+                        else -> { onExit(); true }
                     }
-                    Key.DirectionUp -> { poke(); focus = if (focus == MvFocus.INFO) MvFocus.SCRUB else firstButton(subs, auds); true }
-                    Key.DirectionDown -> { poke(); focus = if (focus == MvFocus.SCRUB) MvFocus.INFO else MvFocus.SCRUB; true }
+                    Key.DirectionUp -> { poke(); scrub = null; focus = if (focus == MvFocus.INFO) MvFocus.SCRUB else firstButton(subs, auds); true }
+                    Key.DirectionDown -> { poke(); scrub = null; focus = if (focus == MvFocus.SCRUB) MvFocus.INFO else MvFocus.SCRUB; true }
                     Key.DirectionLeft -> {
                         poke()
                         when (focus) {
-                            MvFocus.SCRUB -> vm.seekBy(-10_000)
+                            MvFocus.SCRUB -> scrub = ((scrub ?: state.positionMs) - 10_000).coerceIn(0, state.durationMs)
                             MvFocus.INFO -> {}
                             else -> focus = prevButton(focus, subs, auds)
                         }; true
@@ -129,7 +127,7 @@ fun MusicVideoScreen(
                     Key.DirectionRight -> {
                         poke()
                         when (focus) {
-                            MvFocus.SCRUB -> vm.seekBy(10_000)
+                            MvFocus.SCRUB -> scrub = ((scrub ?: state.positionMs) + 10_000).coerceIn(0, state.durationMs)
                             MvFocus.INFO -> {}
                             else -> focus = nextButton(focus, subs, auds)
                         }; true
@@ -138,10 +136,10 @@ fun MusicVideoScreen(
                         poke()
                         when (focus) {
                             MvFocus.INFO -> showInfo = !showInfo
-                            MvFocus.SCRUB -> vm.togglePlayPause()
+                            MvFocus.SCRUB -> { val s = scrub; if (s != null) { vm.seekTo(s); scrub = null } else vm.togglePlayPause() }
                             MvFocus.SUBS -> if (subs.isNotEmpty()) { picker = MvPicker.SUBS; pickCursor = subs.indexOfFirst { it.index == state.subtitleIndex }.coerceAtLeast(0) }
                             MvFocus.AUDIO -> if (auds.isNotEmpty()) { picker = MvPicker.AUDIO; pickCursor = auds.indexOfFirst { it.index == state.audioIndex }.coerceAtLeast(0) }
-                            MvFocus.PIP -> (context as? com.applemusicktv.MainActivity)?.enterPip()
+                            MvFocus.PIP -> onMinimize()
                         }; true
                     }
                     else -> false
@@ -184,7 +182,9 @@ fun MusicVideoScreen(
         ) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xCC000000)))) {
                 val dur = state.durationMs.coerceAtLeast(1)
-                val frac = (state.positionMs.toFloat() / dur).coerceIn(0f, 1f)
+                val shownPos = scrub ?: state.positionMs
+                val frac = (shownPos.toFloat() / dur).coerceIn(0f, 1f)
+                val scrubbing = scrub != null
                 Column(
                     Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 48.dp, vertical = 30.dp),
                 ) {
@@ -214,11 +214,11 @@ fun MusicVideoScreen(
                             Modifier.align(BiasAlignment(horizontalBias = frac * 2f - 1f, verticalBias = 0f)),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(fmt(state.positionMs), color = Color.White, fontSize = 13.sp)
+                            Text(fmt(shownPos), color = if (scrubbing) Color(0xFFFA233B) else Color.White, fontSize = 13.sp)
                             Spacer(Modifier.width(8.dp))
                             PlayPauseGlyph(playing = state.playing)
                         }
-                        Text("-" + fmt(dur - state.positionMs), color = Color(0xCCFFFFFF), fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterEnd))
+                        Text("-" + fmt(dur - shownPos), color = Color(0xCCFFFFFF), fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterEnd))
                     }
                     Spacer(Modifier.height(12.dp))
                     // Info button — the only handle we have for title/artist while a video plays.
@@ -234,18 +234,22 @@ fun MusicVideoScreen(
             }
         }
 
-        // Info panel
-        if (showInfo) {
-            Box(
-                Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 150.dp)
-                    .widthIn(max = 420.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xF2222222)).padding(20.dp),
-            ) {
-                Column {
-                    Text(state.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        // Info panel — slides up from the bottom with metadata + the "cool" technical read-out.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showInfo,
+            enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
+        ) {
+            Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(0f to Color.Transparent, 0.4f to Color(0xF2000000), 1f to Color(0xF2000000)))) {
+                Column(Modifier.padding(horizontal = 48.dp, vertical = 32.dp)) {
+                    Text(state.title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(4.dp))
-                    Text(state.artist, color = Color(0xCCFFFFFF), fontSize = 15.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Music Video", color = Color(0xFF9A9A9A), fontSize = 12.sp)
+                    Text(state.artist, color = Color(0xCCFFFFFF), fontSize = 16.sp)
+                    if (!state.info.isNullOrBlank()) {
+                        Spacer(Modifier.height(16.dp))
+                        Text(state.info!!, color = Color(0xCCFFFFFF), fontSize = 15.sp, lineHeight = 22.sp)
+                    }
                 }
             }
         }
@@ -322,6 +326,24 @@ private fun PlayPauseGlyph(playing: Boolean) {
             drawRect(Color.White, topLeft = Offset(size.width * 0.58f, 0f), size = Size(bw, size.height))
         }
     }
+}
+
+@androidx.compose.runtime.Composable
+private fun InfoStat(label: String, value: String) {
+    Column {
+        Text(label.uppercase(), color = Color(0xFF8A8A8A), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(value, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+private fun codecName(mime: String?): String = when {
+    mime == null -> "—"
+    mime.contains("hevc") || mime.contains("hvc") -> "HEVC"
+    mime.contains("avc") -> "H.264"
+    mime.contains("mp4a") || mime.contains("aac") -> "AAC"
+    mime.contains("ac3") -> "Dolby"
+    else -> mime.substringAfterLast('/').uppercase()
 }
 
 private fun fmt(ms: Long): String {

@@ -41,6 +41,7 @@ data class MvUiState(
     val subtitleIndex: Int = -1,   // -1 = Off
     val audioTracks:  List<SubtitleOption> = emptyList(),
     val audioIndex:   Int = 0,
+    val info:         String? = null,
 )
 
 /**
@@ -59,6 +60,12 @@ class MusicVideoViewModel @Inject constructor(
     private val _state = MutableStateFlow(MvUiState())
     val state: StateFlow<MvUiState> = _state
 
+    // Whether a video is currently loaded/active. Hoisted in AppShell so the video survives
+    // navigation: it plays fullscreen on the Now Playing tab and shrinks to an in-app PiP
+    // window on any other tab — it never gets torn down by leaving a route.
+    private val _active = MutableStateFlow(false)
+    val active: StateFlow<Boolean> = _active
+
     var player: ExoPlayer? = null
         private set
 
@@ -69,7 +76,20 @@ class MusicVideoViewModel @Inject constructor(
     private var trackSelector: DefaultTrackSelector? = null
     private var progressJob: kotlinx.coroutines.Job? = null
 
-    /** Entry point from navigation. Uses the queue set by the caller if it holds this id,
+    /** Start (or replace) the active video. Callers seed [VideoQueue] first for prev/next. */
+    fun show(mvId: String, title: String, artist: String) {
+        _active.value = true
+        load(mvId, title, artist)
+    }
+
+    /** Tear the video down entirely and mark inactive (leaves fullscreen/PiP). */
+    fun close() {
+        releasePlayer()
+        _active.value = false
+        _state.value = MvUiState(loading = false)
+    }
+
+    /** Entry point. Uses the queue set by the caller if it holds this id,
      *  otherwise falls back to a one-item queue so prev/next are simply no-ops. */
     fun load(mvId: String, title: String, artist: String) {
         val q = videoQueue.items
@@ -225,16 +245,29 @@ class MusicVideoViewModel @Inject constructor(
         }
     }
 
-    /** Off (-1) disables the text renderer; any real track enables captions. Our MV master
-     *  carries a single English rendition, so this is effectively an Off/English toggle. */
+    /** Off (-1) disables the text renderer; otherwise override to the exact text track by
+     *  index. A hard override (not a language preference) is what actually turns on CEA-608
+     *  closed captions muxed into the video (e.g. Die With a Smile). */
     @OptIn(UnstableApi::class)
     fun setSubtitle(index: Int) {
-        val sel = trackSelector ?: return
-        sel.parameters = sel.buildUponParameters()
+        val exo = player ?: return
+        var params = exo.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, index < 0)
-            .setPreferredTextLanguage(if (index < 0) null else "en")
-            .setSelectUndeterminedTextLanguage(index >= 0)
-            .build()
+        if (index >= 0) {
+            var ti = 0
+            outer@ for (group in exo.currentTracks.groups) {
+                if (group.type != C.TRACK_TYPE_TEXT) continue
+                for (t in 0 until group.length) {
+                    if (ti == index) {
+                        params = params.setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, t))
+                        break@outer
+                    }
+                    ti++
+                }
+            }
+        }
+        exo.trackSelectionParameters = params.build()
         _state.value = _state.value.copy(subtitleIndex = index)
     }
 
@@ -260,6 +293,7 @@ class MusicVideoViewModel @Inject constructor(
 
     fun togglePlayPause() { player?.let { it.playWhenReady = !it.playWhenReady } }
     fun seekBy(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceAtLeast(0)) } }
+    fun seekTo(ms: Long) { player?.seekTo(ms.coerceAtLeast(0)) }
 
     /** Tear down the current player/DRM without clearing the queue (used between queue items). */
     private fun releasePlayer() {

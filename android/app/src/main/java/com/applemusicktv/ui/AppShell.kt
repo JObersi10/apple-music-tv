@@ -43,6 +43,8 @@ fun AppShell(modifier: Modifier = Modifier) {
     var selectedTab   by remember { mutableStateOf(TopNavTab.ListenNow) }
     val playerVm: PlayerViewModel  = hiltViewModel()
     val navVm: NavigationViewModel = hiltViewModel()
+    // Hoisted so the video survives navigation: fullscreen on Now Playing, in-app PiP elsewhere.
+    val mvVm: com.applemusicktv.ui.viewmodel.MusicVideoViewModel = hiltViewModel()
     // Hoist LibraryViewModel so library loads on startup, not when tab is first opened
     val libraryVm: LibraryViewModel = hiltViewModel()
     // Hoisted so a server re-check from the Dev menu can refetch both screens —
@@ -94,15 +96,16 @@ fun AppShell(modifier: Modifier = Modifier) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
     val isOnNowPlaying = currentRoute == Screen.NowPlaying.route
-    // Music video is a fullscreen route: no top padding, no nav bar overlay.
-    val isMusicVideo = currentRoute?.startsWith("mv/") == true
+    val videoActive by mvVm.active.collectAsState()
+    // Video plays fullscreen ON the Now Playing tab; anywhere else it's an in-app PiP window.
+    val videoFullscreen = videoActive && isOnNowPlaying
 
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
-    // Pause audio while a music video is on screen; a single decoder-hungry Fire TV
-    // can't run both, and hearing the song under the video is wrong anyway.
-    LaunchedEffect(isMusicVideo) {
-        navVm.isOnMusicVideo = isMusicVideo
-        if (isMusicVideo) playerVm.pause()
+    // Whenever a video is active, media keys must drive it (not the paused audio player) —
+    // MainActivity reads this. Pause audio the moment a video starts.
+    LaunchedEffect(videoActive) {
+        navVm.isOnMusicVideo = videoActive
+        if (videoActive) playerVm.pause()
     }
 
     // Keep the screen awake ONLY while music is actually playing. When paused, drop the
@@ -173,7 +176,7 @@ fun AppShell(modifier: Modifier = Modifier) {
             startDestination = Screen.Home.route,
             modifier         = Modifier
                 .fillMaxSize()
-                .padding(top = if (isOnNowPlaying || isMusicVideo) 0.dp else navBarHeight),
+                .padding(top = if (isOnNowPlaying) 0.dp else navBarHeight),
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
@@ -228,12 +231,26 @@ fun AppShell(modifier: Modifier = Modifier) {
                 )
             }
             composable(Screen.NowPlaying.route) {
-                NowPlayingScreen(
-                    playerVm = playerVm,
-                    navVm = navVm,
-                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
-                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                )
+                if (videoActive) {
+                    MusicVideoScreen(
+                        vm = mvVm,
+                        // PiP: leave Now Playing so the video shrinks to a corner and the rest
+                        // of the app is usable; the video stays active.
+                        onMinimize = {
+                            selectedTab = TopNavTab.ListenNow
+                            navController.navigate(Screen.Home.route) { launchSingleTop = true }
+                        },
+                        // Exit: tear the video down and drop back to the audio Now Playing.
+                        onExit = { mvVm.close() },
+                    )
+                } else {
+                    NowPlayingScreen(
+                        playerVm = playerVm,
+                        navVm = navVm,
+                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                        onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    )
+                }
             }
             composable(Screen.Radio.route) {
                 RadioScreen(playerVm = playerVm)
@@ -282,22 +299,11 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onBack        = { navController.popBackStack() },
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                    onMusicVideoClick = { s -> navController.navigate(Screen.MusicVideo.route(s.id, s.title, s.artistName)) },
-                )
-            }
-            composable(
-                route     = Screen.MusicVideo.route,
-                arguments = listOf(
-                    navArgument("mvId")     { type = NavType.StringType },
-                    navArgument("mvTitle")  { type = NavType.StringType },
-                    navArgument("mvArtist") { type = NavType.StringType },
-                ),
-            ) { back ->
-                MusicVideoScreen(
-                    mvId   = URLDecoder.decode(back.arguments?.getString("mvId")     ?: "", "UTF-8"),
-                    title  = URLDecoder.decode(back.arguments?.getString("mvTitle")  ?: "", "UTF-8").trim(),
-                    artist = URLDecoder.decode(back.arguments?.getString("mvArtist") ?: "", "UTF-8").trim(),
-                    onBack = { navController.popBackStack() },
+                    onMusicVideoClick = { s ->
+                        mvVm.show(s.id, s.title, s.artistName)
+                        selectedTab = TopNavTab.NowPlaying
+                        navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
+                    },
                 )
             }
         }
@@ -411,7 +417,37 @@ fun AppShell(modifier: Modifier = Modifier) {
 
         // Nav bar on top layer (drawn after content). Hidden entirely on the
         // fullscreen music-video route so it can't steal D-pad focus.
-        if (!isMusicVideo) Box(modifier = Modifier.align(Alignment.TopCenter)) {
+        // In-app PiP: a video is active but we're not on Now Playing → float a small preview
+        // in the corner. Clicking it (or the Now Playing tab) returns to fullscreen. The video
+        // never stops — the same hoisted player just rebinds its surface.
+        if (videoActive && !isOnNowPlaying) {
+            androidx.tv.material3.Surface(
+                onClick = {
+                    selectedTab = TopNavTab.NowPlaying
+                    navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
+                },
+                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = Color.Black, focusedContainerColor = Color.Black),
+                scale = androidx.tv.material3.ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp).width(300.dp).height(169.dp),
+            ) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx ->
+                        android.view.TextureView(ctx).apply {
+                            layoutParams = android.view.ViewGroup.LayoutParams(
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            mvVm.player?.setVideoTextureView(this)
+                        }
+                    },
+                    update = { mvVm.player?.setVideoTextureView(it) },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+
+        Box(modifier = Modifier.align(Alignment.TopCenter)) {
             TopNavBar(
                 selected  = selectedTab,
                 isPlaying = playerState.isPlaying,
