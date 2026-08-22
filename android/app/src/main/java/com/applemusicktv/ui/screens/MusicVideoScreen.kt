@@ -36,7 +36,7 @@ import com.applemusicktv.ui.viewmodel.SubtitleOption
 import kotlinx.coroutines.delay
 
 /** Where the D-pad focus sits in the transport row. */
-private enum class MvFocus { INFO, SCRUB, SUBS, AUDIO, PIP }
+private enum class MvFocus { INFO, ARTIST, SCRUB, SUBS, AUDIO, PIP }
 private enum class MvPicker { NONE, SUBS, AUDIO }
 
 @OptIn(UnstableApi::class)
@@ -44,8 +44,9 @@ private enum class MvPicker { NONE, SUBS, AUDIO }
 fun MusicVideoScreen(
     vm: MusicVideoViewModel,
     onMinimize: () -> Unit,   // PiP: shrink to a corner, stay in the app
-    onExit: () -> Unit,       // Back once the chrome is gone: close the video entirely
+    onExit: () -> Unit,       // Back once the chrome is gone: leave the screen (video keeps playing)
     onFocusUp: () -> Unit,    // Up from the top button row → move focus to the nav bar
+    onArtistClick: (String) -> Unit = {},  // open the artist page from the video player
     focusRequester: FocusRequester,  // owned by AppShell so the nav bar's Down can target it
 ) {
     val state by vm.state.collectAsState()
@@ -124,9 +125,17 @@ fun MusicVideoScreen(
                         // At the top button row already → don't consume, let focus escape up
                         // to the top nav bar (so you can switch tabs from fullscreen video).
                         if (focus in setOf(MvFocus.SUBS, MvFocus.AUDIO, MvFocus.PIP)) { onFocusUp(); true }
-                        else { focus = if (focus == MvFocus.INFO) MvFocus.SCRUB else firstButton(subs, auds); true }
+                        else { focus = when (focus) {
+                            MvFocus.INFO -> if (state.artistId != null) MvFocus.ARTIST else MvFocus.SCRUB
+                            MvFocus.ARTIST -> MvFocus.SCRUB
+                            else -> firstButton(subs, auds)
+                        }; true }
                     }
-                    Key.DirectionDown -> { poke(); scrub = null; focus = if (focus == MvFocus.SCRUB) MvFocus.INFO else MvFocus.SCRUB; true }
+                    Key.DirectionDown -> { poke(); scrub = null; focus = when (focus) {
+                        MvFocus.SCRUB -> if (state.artistId != null) MvFocus.ARTIST else MvFocus.INFO
+                        MvFocus.ARTIST -> MvFocus.INFO
+                        else -> MvFocus.SCRUB
+                    }; true }
                     Key.DirectionLeft -> {
                         poke()
                         when (focus) {
@@ -147,6 +156,7 @@ fun MusicVideoScreen(
                         poke()
                         when (focus) {
                             MvFocus.INFO -> showInfo = !showInfo
+                            MvFocus.ARTIST -> state.artistId?.let { onArtistClick(it) }
                             MvFocus.SCRUB -> { val s = scrub; if (s != null) { vm.seekTo(s); scrub = null } else vm.togglePlayPause() }
                             MvFocus.SUBS -> if (subs.isNotEmpty()) { picker = MvPicker.SUBS; pickCursor = subs.indexOfFirst { it.index == state.subtitleIndex }.coerceAtLeast(0) }
                             MvFocus.AUDIO -> if (auds.isNotEmpty()) { picker = MvPicker.AUDIO; pickCursor = auds.indexOfFirst { it.index == state.audioIndex }.coerceAtLeast(0) }
@@ -205,7 +215,15 @@ fun MusicVideoScreen(
                 ) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Column(Modifier.weight(1f)) {
-                            Text(state.artist, color = Color(0xCCFFFFFF), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                            val artistFocused = focus == MvFocus.ARTIST
+                            Box(
+                                Modifier.clip(RoundedCornerShape(6.dp))
+                                    .background(if (artistFocused) Color(0x33FFFFFF) else Color.Transparent)
+                                    .padding(horizontal = if (artistFocused) 8.dp else 0.dp, vertical = if (artistFocused) 3.dp else 0.dp),
+                            ) {
+                                Text(state.artist, color = if (artistFocused) Color.White else Color(0xCCFFFFFF),
+                                    fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                            }
                             Spacer(Modifier.height(2.dp))
                             Text(state.title, color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
                         }

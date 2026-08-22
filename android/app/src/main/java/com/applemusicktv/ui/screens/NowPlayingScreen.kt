@@ -1346,7 +1346,13 @@ private fun LyricsPanel(
             // Unsynced (plain-text) lyrics come back with startMs = -1. Show them so
             // the panel isn't empty, but never highlighted and never seekable.
             val unsynced = line.startMs < 0
-            val isActive = !unsynced && idx == activeIndex
+            // Sustained overlap (Get Lucky): a WORD-SYNCED line whose own [start,end] window still
+            // covers now stays lit next to the newer line. Guarded to word-synced sources only —
+            // line-synced sources set endMs = next line's startMs, so this would light everything.
+            val overlapActive = !unsynced && line.words.isNotEmpty() &&
+                progressMs >= line.startMs && progressMs <= line.endMs &&
+                (idx + 1 >= lyrics.size || line.endMs > lyrics[idx + 1].startMs)
+            val isActive = (!unsynced && idx == activeIndex) || overlapActive
             val isPast = !unsynced && (idx < passedIndex || (idx == passedIndex && activeIndex == -1))
             // Only the active line reads the live per-frame clock (so only it recomposes
             // at 60fps). Inactive lines get a fixed value and never re-run on tick.

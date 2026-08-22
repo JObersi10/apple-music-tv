@@ -483,8 +483,13 @@ fun AppShell(modifier: Modifier = Modifier) {
                 MusicVideoScreen(
                     vm = mvVm,
                     onMinimize = { (activity as? com.applemusicktv.MainActivity)?.enterPip() },
-                    onExit = { playerVm.clearVideoRequest(); mvVm.close() },
+                    // Back leaves the SCREEN but KEEPS the video playing — pop to the previous
+                    // route (e.g. the playlist). The video renders only on Now Playing, so it's
+                    // simply hidden while its audio continues, and reappears on return. It closes
+                    // only when a regular song plays or the queue ends.
+                    onExit = { if (!navController.popBackStack()) { selectedTab = TopNavTab.ListenNow; navController.navigate(Screen.Home.route) { launchSingleTop = true } } },
                     onFocusUp = { runCatching { navBarFocus.requestFocus() } },
+                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     focusRequester = videoFocus,
                 )
             }

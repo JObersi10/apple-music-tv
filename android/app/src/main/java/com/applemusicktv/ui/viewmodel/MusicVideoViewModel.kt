@@ -42,6 +42,7 @@ data class MvUiState(
     val audioTracks:  List<SubtitleOption> = emptyList(),
     val audioIndex:   Int = 0,
     val info:         String? = null,
+    val artistId:     String? = null,
 )
 
 /**
@@ -238,7 +239,7 @@ class MusicVideoViewModel @Inject constructor(
                 // Real catalogue metadata for the Info panel — genre, release, album, composer.
                 launch {
                     withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(mvId, bearer, mut) }?.let { d ->
-                        _state.value = _state.value.copy(info = d.info)
+                        _state.value = _state.value.copy(info = d.info, artistId = d.artistId)
                     }
                 }
             } catch (e: Exception) {
