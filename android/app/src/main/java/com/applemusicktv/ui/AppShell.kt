@@ -112,6 +112,11 @@ fun AppShell(modifier: Modifier = Modifier) {
     // flag so Fire TV's own screensaver / sleep can take over (our ambient screensaver only
     // ever runs while playing).
     val playerState by playerVm.state.collectAsState()
+    // A regular song starting up takes over — the video player closes immediately so the
+    // song's Now Playing (dynamic/projector) shows instead of a video stuck on top.
+    LaunchedEffect(playerState.isPlaying) {
+        if (playerState.isPlaying && videoActive) mvVm.close()
+    }
     val keepScreenOn = playerState.isPlaying
     val activity = LocalContext.current as? Activity
     DisposableEffect(keepScreenOn) {
@@ -231,14 +236,17 @@ fun AppShell(modifier: Modifier = Modifier) {
                 )
             }
             composable(Screen.NowPlaying.route) {
-                // Audio Now Playing. The video (when active) is a persistent AppShell overlay
-                // drawn on top of this route — see the video overlay below the NavHost.
-                NowPlayingScreen(
-                    playerVm = playerVm,
-                    navVm = navVm,
-                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
-                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                )
+                // When a video is active it fills this tab via the AppShell overlay. Don't
+                // compose the audio screen behind it — its focusable controls would steal the
+                // D-pad (moving the song UI instead of the video).
+                if (!videoActive) {
+                    NowPlayingScreen(
+                        playerVm = playerVm,
+                        navVm = navVm,
+                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                        onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    )
+                }
             }
             composable(Screen.Radio.route) {
                 RadioScreen(playerVm = playerVm)
@@ -417,9 +425,8 @@ fun AppShell(modifier: Modifier = Modifier) {
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
-                        androidx.media3.ui.PlayerView(ctx).apply {
-                            useController = false
-                            setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        (android.view.LayoutInflater.from(ctx).inflate(com.applemusicktv.R.layout.mv_player_view, null)
+                            as androidx.media3.ui.PlayerView).apply {
                             setKeepScreenOn(true)
                             subtitleView?.setApplyEmbeddedStyles(true)
                             player = mvVm.player
