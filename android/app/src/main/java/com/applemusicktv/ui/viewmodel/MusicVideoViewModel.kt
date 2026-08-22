@@ -235,6 +235,12 @@ class MusicVideoViewModel @Inject constructor(
                 _playerFlow.value = exo
                 _state.value = _state.value.copy(loading = false)
                 startProgress()
+                // Real catalogue metadata for the Info panel — genre, release, album, composer.
+                launch {
+                    withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(mvId, bearer, mut) }?.let { d ->
+                        _state.value = _state.value.copy(info = d.info)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("AMMV", "MV load failed: ${e.message}", e)
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to load video")

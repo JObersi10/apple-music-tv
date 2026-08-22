@@ -73,6 +73,36 @@ class AppleDirectClient @Inject constructor() {
 
     fun clearBearerCache() { cachedBearer = "" }
 
+    /** Real catalogue metadata for the Info panel (composer, genre, release, label…). */
+    data class MvDetails(val info: String, val artistId: String?)
+
+    suspend fun getMusicVideoDetails(mvId: String, bearer: String, mut: String): MvDetails? =
+        withContext(Dispatchers.IO) {
+            try {
+                val numeric = mvId.filter { it.isDigit() }.ifEmpty { mvId }
+                val url = "https://amp-api-edge.music.apple.com/v1/catalog/us/music-videos/$numeric?l=en-US&include=artists"
+                val resp = http.newCall(Request.Builder().url(url)
+                    .addHeader("Authorization", "Bearer $bearer")
+                    .addHeader("Music-User-Token", mut)
+                    .addHeader("Origin", "https://music.apple.com").build()).execute()
+                val data = JSONObject(resp.body!!.string()).optJSONArray("data")?.optJSONObject(0) ?: return@withContext null
+                val a = data.optJSONObject("attributes") ?: JSONObject()
+                val artistId = data.optJSONObject("relationships")?.optJSONObject("artists")
+                    ?.optJSONArray("data")?.optJSONObject(0)?.optString("id")?.ifBlank { null }
+                val parts = mutableListOf<String>()
+                a.optJSONArray("genreNames")?.let { g ->
+                    if (g.length() > 0) parts.add((0 until g.length()).joinToString(", ") { g.getString(it) })
+                }
+                a.optString("releaseDate").takeIf { it.isNotBlank() }?.let { parts.add("Released $it") }
+                a.optString("albumName").takeIf { it.isNotBlank() }?.let { parts.add("From \"$it\"") }
+                a.optString("composerName").takeIf { it.isNotBlank() }?.let { parts.add("Composed by $it") }
+                a.optString("copyright").takeIf { it.isNotBlank() }?.let { parts.add(it) }
+                MvDetails(parts.joinToString("\n"), artistId)
+            } catch (e: Exception) {
+                Log.w("AMMV", "MV details fetch failed: ${e.message}"); null
+            }
+        }
+
     suspend fun getWebPlayback(songId: String, bearer: String, mut: String): WebPlaybackResult =
         withContext(Dispatchers.IO) {
             // Apple's webPlayback wants a library song under "universalLibraryId"

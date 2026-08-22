@@ -1101,6 +1101,15 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
             // patches, instead of averaging into a single tint.
             val colors4 = List(4) { i -> animatedStates[i % n].value }
             val eAmp = (energy * amp).coerceIn(0f, 2.2f)
+            // Per-corner band ride (projector-mode flavour): each corner breathes on its own
+            // frequency band on top of the shared beat, so bass thumps two corners and treble
+            // shimmers the other two — the palette pools now read the spectrum, not one pulse.
+            val bandRide = floatArrayOf(
+                band0State.value,   // top-left  → bass
+                band2State.value,   // top-right → treble
+                band1State.value,   // bot-left  → vocal/mid
+                band0State.value,   // bot-right → bass
+            )
             val beatScale = 1f + eAmp * 0.25f
             val beatAlpha = (0.60f + eAmp * 0.20f).coerceAtMost(0.95f)
             // Smaller than the old 0.62 so blobs overlap less and stay recognisably separate colours.
@@ -1119,12 +1128,15 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 Offset(lerp(0.70f, 0.98f, t1) * w, lerp(0.65f, 0.95f, t3) * h),
             ).mapIndexed { i, c -> c + nudgeOffsets[i] }
             colors4.take(blobCount).forEachIndexed { i, color ->
+                val ride = (bandRide[i] * amp).coerceIn(0f, 1.6f)
+                val rr = r * (1f + ride * 0.30f)
+                val aa = (beatAlpha + ride * 0.18f).coerceAtMost(0.98f)
                 drawCircle(
                     brush = Brush.radialGradient(
-                        listOf(color.copy(alpha = beatAlpha), color.copy(alpha = 0f)),
-                        center = centers[i], radius = r,
+                        listOf(color.copy(alpha = aa), color.copy(alpha = 0f)),
+                        center = centers[i], radius = rr,
                     ),
-                    radius = r, center = centers[i],
+                    radius = rr, center = centers[i],
                     blendMode = BlendMode.Screen,
                 )
             }
