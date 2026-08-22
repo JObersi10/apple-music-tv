@@ -128,7 +128,9 @@ function abortBackgroundJobs(exceptSongId?: string) {
 /** Decrypt a song to a seekable cache file (once), returning its path. */
 async function ensureDecrypted(songId: string, mut: string, background = false): Promise<string> {
   if (unavailableIds.has(songId)) {
-    throw new Error(`decrypt skipped: ${songId} previously reported UNAVAILABLE:3077`);
+    const err: any = new Error(`decrypt skipped: ${songId} previously reported UNAVAILABLE`);
+    err.exitCode = 2;   // 404 → permanent skip, no retry storm
+    throw err;
   }
   const out = cachePath(songId);
   if (fs.existsSync(out) && fs.statSync(out).size > 0) {
@@ -292,7 +294,12 @@ async function getStreamParams(songId: string, mut: string) {
 
   if (!asset?.URL) {
     const flavors = assets.map((a: any) => a.flavor).join(", ") || "none";
-    throw new Error(`No playable asset (flavors: ${flavors})`);
+    // No streamable asset in this storefront (preview-only / withdrawn). Cache it so we
+    // stop re-hitting webPlayback on every ExoPlayer retry, and signal a permanent skip.
+    unavailableIds.add(songId);
+    const err: any = new Error(`No playable asset (flavors: ${flavors})`);
+    err.exitCode = 2;   // treated as 404 → ExoPlayer skips without retrying
+    throw err;
   }
 
   console.log(`[stream] asset flavor=${asset.flavor} url=${asset.URL.substring(0, 80)}…`);

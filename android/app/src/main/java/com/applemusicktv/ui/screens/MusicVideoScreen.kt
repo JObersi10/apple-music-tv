@@ -124,24 +124,16 @@ fun MusicVideoScreen(
                         poke(); scrub = null
                         // At the top button row already → don't consume, let focus escape up
                         // to the top nav bar (so you can switch tabs from fullscreen video).
-                        if (focus in setOf(MvFocus.SUBS, MvFocus.AUDIO, MvFocus.PIP)) { onFocusUp(); true }
-                        else { focus = when (focus) {
-                            MvFocus.INFO -> if (state.artistId != null) MvFocus.ARTIST else MvFocus.SCRUB
-                            MvFocus.ARTIST -> MvFocus.SCRUB
-                            else -> firstButton(subs, auds)
-                        }; true }
+                        if (focus in setOf(MvFocus.ARTIST, MvFocus.SUBS, MvFocus.AUDIO, MvFocus.PIP)) { onFocusUp(); true }
+                        else { focus = if (focus == MvFocus.INFO) MvFocus.SCRUB else firstButton(state.artistId != null, subs, auds); true }
                     }
-                    Key.DirectionDown -> { poke(); scrub = null; focus = when (focus) {
-                        MvFocus.SCRUB -> if (state.artistId != null) MvFocus.ARTIST else MvFocus.INFO
-                        MvFocus.ARTIST -> MvFocus.INFO
-                        else -> MvFocus.SCRUB
-                    }; true }
+                    Key.DirectionDown -> { poke(); scrub = null; focus = if (focus == MvFocus.SCRUB) MvFocus.INFO else MvFocus.SCRUB; true }
                     Key.DirectionLeft -> {
                         poke()
                         when (focus) {
                             MvFocus.SCRUB -> scrub = ((scrub ?: state.positionMs) - 10_000).coerceIn(0, state.durationMs)
                             MvFocus.INFO -> {}
-                            else -> focus = prevButton(focus, subs, auds)
+                            else -> focus = prevButton(focus, state.artistId != null, subs, auds)
                         }; true
                     }
                     Key.DirectionRight -> {
@@ -149,7 +141,7 @@ fun MusicVideoScreen(
                         when (focus) {
                             MvFocus.SCRUB -> scrub = ((scrub ?: state.positionMs) + 10_000).coerceIn(0, state.durationMs)
                             MvFocus.INFO -> {}
-                            else -> focus = nextButton(focus, subs, auds)
+                            else -> focus = nextButton(focus, state.artistId != null, subs, auds)
                         }; true
                     }
                     Key.DirectionCenter, Key.Enter -> {
@@ -315,18 +307,18 @@ fun MusicVideoScreen(
     }
 }
 
-private fun firstButton(subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus =
-    if (subs.isNotEmpty()) MvFocus.SUBS else if (auds.isNotEmpty()) MvFocus.AUDIO else MvFocus.PIP
+private fun firstButton(hasArtist: Boolean, subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus =
+    if (hasArtist) MvFocus.ARTIST else if (subs.isNotEmpty()) MvFocus.SUBS else if (auds.isNotEmpty()) MvFocus.AUDIO else MvFocus.PIP
 
-private fun buttonOrder(subs: List<SubtitleOption>, auds: List<SubtitleOption>): List<MvFocus> =
-    buildList { if (subs.isNotEmpty()) add(MvFocus.SUBS); if (auds.isNotEmpty()) add(MvFocus.AUDIO); add(MvFocus.PIP) }
+private fun buttonOrder(hasArtist: Boolean, subs: List<SubtitleOption>, auds: List<SubtitleOption>): List<MvFocus> =
+    buildList { if (hasArtist) add(MvFocus.ARTIST); if (subs.isNotEmpty()) add(MvFocus.SUBS); if (auds.isNotEmpty()) add(MvFocus.AUDIO); add(MvFocus.PIP) }
 
-private fun nextButton(cur: MvFocus, subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus {
-    val o = buttonOrder(subs, auds); val i = o.indexOf(cur)
+private fun nextButton(cur: MvFocus, hasArtist: Boolean, subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus {
+    val o = buttonOrder(hasArtist, subs, auds); val i = o.indexOf(cur)
     return if (i in 0 until o.lastIndex) o[i + 1] else cur
 }
-private fun prevButton(cur: MvFocus, subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus {
-    val o = buttonOrder(subs, auds); val i = o.indexOf(cur)
+private fun prevButton(cur: MvFocus, hasArtist: Boolean, subs: List<SubtitleOption>, auds: List<SubtitleOption>): MvFocus {
+    val o = buttonOrder(hasArtist, subs, auds); val i = o.indexOf(cur)
     return if (i > 0) o[i - 1] else MvFocus.SCRUB
 }
 

@@ -109,12 +109,16 @@ fun AppShell(modifier: Modifier = Modifier) {
         mvVm.onRequestNext = { playerVm.next() }
         mvVm.onRequestPrev = { playerVm.prev() }
     }
-    LaunchedEffect(videoReq?.id) {
+    LaunchedEffect(videoReq?.song?.id) {
         val v = videoReq
         if (v != null) {
-            mvVm.show(v.id, v.title, v.artistName)
-            selectedTab = TopNavTab.NowPlaying
-            navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
+            mvVm.show(v.song.id, v.song.title, v.song.artistName)
+            // Only an explicit pick jumps to Now Playing. Auto-advance / skip keep the user
+            // on whatever page they're on — the video keeps playing and shows when they visit.
+            if (v.autoOpen) {
+                selectedTab = TopNavTab.NowPlaying
+                navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
+            }
         } else {
             mvVm.close()
         }
@@ -122,6 +126,20 @@ fun AppShell(modifier: Modifier = Modifier) {
     // Video plays fullscreen ON the Now Playing tab; anywhere else it's an in-app PiP window.
     val videoFullscreen = videoActive && isOnNowPlaying
 
+    // Keep the nav-bar highlight in sync with the ACTUAL route — otherwise popping back from
+    // a pushed screen (e.g. artist opened from the video player) left the white pill stuck on
+    // Now Playing. Detail routes leave the pill on whatever top tab we came from.
+    LaunchedEffect(currentRoute) {
+        when (currentRoute) {
+            Screen.Home.route      -> selectedTab = TopNavTab.ListenNow
+            Screen.Browse.route    -> selectedTab = TopNavTab.Browse
+            Screen.Library.route   -> selectedTab = TopNavTab.Library
+            Screen.Search.route    -> selectedTab = TopNavTab.Search
+            Screen.NowPlaying.route -> selectedTab = TopNavTab.NowPlaying
+            Screen.DevMenu.route   -> selectedTab = TopNavTab.Dev
+            else -> {}
+        }
+    }
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
     // Whenever a video is active, media keys must drive it (not the paused audio player) —
     // MainActivity reads this. Pause audio the moment a video starts.

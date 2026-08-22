@@ -192,8 +192,12 @@ class PlayerViewModel @Inject constructor(
     // Integrated queue: the queue may hold music videos. When the current item is a video,
     // the audio engine idles and this emits the video so the UI hands it to the video player.
     // Null means the current item is a normal song (any active video should be dismissed).
-    private val _videoRequest = MutableStateFlow<Song?>(null)
-    val videoRequest: StateFlow<Song?> = _videoRequest
+    // autoOpen=true only when the user EXPLICITLY picked the video (tapped it in a list) — that
+    // jumps to Now Playing. Auto-advance / skip keep it false so the video plays without yanking
+    // the user off whatever page they're browsing; they just see it when they visit Now Playing.
+    data class VideoRequest(val song: Song, val autoOpen: Boolean)
+    private val _videoRequest = MutableStateFlow<VideoRequest?>(null)
+    val videoRequest: StateFlow<VideoRequest?> = _videoRequest
     fun clearVideoRequest() { _videoRequest.value = null }
 
     /**
@@ -1036,7 +1040,7 @@ class PlayerViewModel @Inject constructor(
     // window while the standalone source is still building.
     @Volatile private var awaitingSongStart: String? = null
 
-    private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false) {
+    private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false, userOpened: Boolean = false) {
         val q = _state.value.queue
         if (q.isEmpty() || idx !in q.indices) {
             webServer.addLog("PLR", "playQueueItem idx=$idx out of bounds (size=${q.size}) — stopping")
@@ -1061,7 +1065,7 @@ class PlayerViewModel @Inject constructor(
             awaitingSongStart = null
             _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
             saveState()
-            _videoRequest.value = song
+            _videoRequest.value = VideoRequest(song, autoOpen = userOpened)
             return
         }
         _videoRequest.value = null   // audio item → dismiss any active video
@@ -1187,7 +1191,8 @@ class PlayerViewModel @Inject constructor(
         } else songs
         val queueIdx = if (shuffle) 0 else idx
         _state.update { it.copy(queue = queue, isFullStream = useFullStream, isShuffled = shuffle, originalQueue = if (shuffle) songs else emptyList()) }
-        playQueueItem(queueIdx)
+        // User explicitly started this list → a video here should open fullscreen Now Playing.
+        playQueueItem(queueIdx, userOpened = true)
     }
 
     fun shufflePlayPlaylist(playlistId: String) = viewModelScope.launch {
