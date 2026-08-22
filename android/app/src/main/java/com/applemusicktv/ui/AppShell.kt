@@ -464,6 +464,21 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onRelease = { it.player = null },
                     modifier = Modifier.fillMaxSize(),
                 )
+                // Captions rendered in OUR OWN SubtitleView, layered above the video. PlayerView's
+                // built-in caption view sits under the media-overlay secure surface (z-order) and
+                // never shows. The ViewModel pushes live cues here; drawn below the controls.
+                val cues by mvVm.cues.collectAsState()
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx ->
+                        androidx.media3.ui.SubtitleView(ctx).apply {
+                            setApplyEmbeddedStyles(true)
+                            setUserDefaultStyle()
+                            setUserDefaultTextSize()
+                        }
+                    },
+                    update = { it.setCues(cues) },
+                    modifier = Modifier.fillMaxSize().padding(bottom = 96.dp),
+                )
                 MusicVideoScreen(
                     vm = mvVm,
                     onMinimize = { (activity as? com.applemusicktv.MainActivity)?.enterPip() },
