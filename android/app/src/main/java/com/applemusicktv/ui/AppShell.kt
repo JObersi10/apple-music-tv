@@ -510,8 +510,11 @@ fun AppShell(modifier: Modifier = Modifier) {
                         }
                     },
                     update = { pv ->
-                        pv.player = mvPlayer   // rebind when a skip swaps the ExoPlayer
-                        // Hide (and free the secure layer) off Now Playing; show on it.
+                        // Off Now Playing: DETACH the player from the view entirely. That drops the
+                        // video output surface (the secure decoder renders nowhere → zero bleed onto
+                        // Library/Browse) while the ExoPlayer keeps playing the AUDIO. Re-attaching on
+                        // return puts the picture back. GONE alone left the secure layer on screen.
+                        pv.player = if (isOnNowPlaying) mvPlayer else null
                         pv.visibility = if (isOnNowPlaying) android.view.View.VISIBLE else android.view.View.GONE
                     },
                     onRelease = { it.player = null },

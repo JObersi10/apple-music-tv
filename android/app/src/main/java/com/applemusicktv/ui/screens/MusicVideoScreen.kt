@@ -160,7 +160,12 @@ fun MusicVideoScreen(
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (state.loading) CircularProgressIndicator(color = Color(0xFFFA233B))
+        // Loading spinner sits down at the playback bar (where play/pause lives), not dead-centre —
+        // a brief prefetch flash mid-screen was distracting.
+        if (state.loading) CircularProgressIndicator(
+            color = Color(0xFFFA233B), strokeWidth = 3.dp,
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 52.dp).size(26.dp),
+        )
 
         if (state.error != null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {

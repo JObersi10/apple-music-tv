@@ -806,6 +806,14 @@ class PlayerViewModel @Inject constructor(
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
                 orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), progressMs = posMs) }
+            // A restored music video must go to the video player, NOT the audio stream — otherwise
+            // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
+            if (song.isMusicVideo) {
+                webServer.addLog("PLR", "restoreState idx=$idx VIDEO ${song.title}")
+                player.pause()
+                _videoRequest.value = VideoRequest(song, autoOpen = false)
+                return@launch
+            }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
             val standalone = full && useStandalone()
             webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
@@ -1487,6 +1495,10 @@ class PlayerViewModel @Inject constructor(
 
     private fun prefetchSong(song: Song) {
         if (!_state.value.isFullStream) return
+        // Music videos are decrypted+played by the video player, not the audio stream route —
+        // prefetching one via /api/stream just 404s ("No playable asset"). The video player has
+        // its own prefetch (MusicVideoViewModel.prefetch), triggered from AppShell.
+        if (song.isMusicVideo) return
         // Warm lyrics for the upcoming song so they render the instant it starts.
         viewModelScope.launch {
             runCatching { repo.prefetchLyrics(song.id, song.title, song.artistName, song.durationMs / 1000) }
