@@ -166,7 +166,11 @@ data class GenreDto(val id: String, val name: String)
 data class GenresResponse(val genres: List<GenreDto> = emptyList())
 
 @JsonClass(generateAdapter = true)
-data class HomeSection(val title: String, val albums: List<AlbumDto> = emptyList())
+data class HomeSection(
+    val title: String,
+    val albums: List<AlbumDto> = emptyList(),
+    val videos: List<SongDto> = emptyList(),
+)
 
 @JsonClass(generateAdapter = true)
 data class HomeResponse(val sections: List<HomeSection> = emptyList())

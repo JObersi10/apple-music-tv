@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import axios from "axios";
 import { getMUT, getBearerToken, getStorefront } from "../auth";
-import { normaliseAlbum, normalisePlaylist } from "./search";
+import { normaliseAlbum, normalisePlaylist, normaliseSong } from "./search";
 
 const browse = new Hono();
 const APPLE = "https://amp-api-edge.music.apple.com";
@@ -338,10 +338,10 @@ browse.get("/genres/:id", async (c) => {
   const sf = getStorefront() || "us"
   const id = c.req.param("id")
   const h = hdrs()
-  const sections: Array<{ title: string; albums: any[] }> = []
+  const sections: Array<{ title: string; albums?: any[]; videos?: any[] }> = []
   try {
     const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, {
-      headers: h, params: { genre: id, types: "playlists,albums", limit: 20 },
+      headers: h, params: { genre: id, types: "playlists,albums,songs,music-videos", limit: 20 },
     })
     const playlists = (res.data?.results?.playlists?.[0]?.data ?? []).map((p: any) => {
       const pl = normalisePlaylist(p)
@@ -352,6 +352,9 @@ browse.get("/genres/:id", async (c) => {
       const al = normaliseAlbum(a)
       return al.artworkUrl ? al : null
     }).filter(Boolean)
+    // Music videos: type "music-video" is what the app routes into the video player.
+    const videos = (res.data?.results?.["music-videos"]?.[0]?.data ?? []).map(normaliseSong).filter((v: any) => v.artworkUrl)
+    if (videos.length) sections.push({ title: "Top Music Videos", videos })
     if (playlists.length) sections.push({ title: "Top Playlists", albums: playlists })
     if (albums.length) sections.push({ title: "Top Albums", albums })
   } catch {}
