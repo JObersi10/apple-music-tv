@@ -74,6 +74,7 @@ class MusicVideoViewModel @Inject constructor(
 
     // The video currently loaded — so a quality change can rebuild it at the new tier and resume.
     private var curMvId: String? = null
+    private var curAdamId: String? = null   // resolved numeric CATALOG id (library ids don't work for metadata)
     private var curTitle = ""
     private var curArtist = ""
     private var pendingSeekMs = 0L
@@ -198,6 +199,7 @@ class MusicVideoViewModel @Inject constructor(
                 val mv = prefetchCache.remove(mvId)
                     ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, qualityHeight) }
                 _state.value = _state.value.copy(availableQualities = mv.heights)
+                curAdamId = mv.adamId   // numeric catalog id for metadata/artist lookups
 
                 // Write the corrected master + media playlists to disk; ExoPlayer plays
                 // the master via file:// and streams the mvod segments they reference.
@@ -319,7 +321,7 @@ class MusicVideoViewModel @Inject constructor(
                 startProgress()
                 // Real catalogue metadata for the Info panel — genre, release, album, composer.
                 launch {
-                    withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(mvId, bearer, mut) }?.let { d ->
+                    withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(curAdamId ?: mvId, bearer, mut) }?.let { d ->
                         _state.value = _state.value.copy(info = d.info, artistId = d.artistId)
                     }
                 }
@@ -395,7 +397,7 @@ class MusicVideoViewModel @Inject constructor(
      *  (the details fetch can lag or fail, but the button stays usable). */
     fun openArtist(navigate: (String) -> Unit) {
         _state.value.artistId?.let { navigate(it); return }
-        val id = curMvId ?: return
+        val id = curAdamId ?: curMvId ?: return
         viewModelScope.launch {
             val bearer = appleClient.getBearer(); val mut = mutPrefs.getMUT()
             if (bearer.isEmpty() || mut.isEmpty()) return@launch
@@ -409,6 +411,12 @@ class MusicVideoViewModel @Inject constructor(
     // Only a RESTORE loads it paused (userPaused=true via show(startPaused=true)).
     private var userPaused = false
     fun setScreenVisible(visible: Boolean) { /* no longer gates playback — kept for callers */ }
+
+    /** Release the ExoPlayer's video output surface (audio keeps playing). Called when we leave the
+     *  Now Playing screen so the secure SurfaceFlinger layer is torn down and can't linger on other
+     *  tabs — a plain SurfaceView destroy alone left the last frame painted over Library. */
+    @OptIn(UnstableApi::class)
+    fun detachSurface() { runCatching { player?.clearVideoSurface() } }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }
     fun seekBy(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceAtLeast(0)) } }

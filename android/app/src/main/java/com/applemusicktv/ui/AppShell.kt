@@ -504,9 +504,12 @@ fun AppShell(modifier: Modifier = Modifier) {
         // fix is to keep the surface composed but push the whole layer FULLY OFF-SCREEN when we're
         // not on Now Playing: an off-screen secure layer can't overlap visible content, and never
         // being destroyed also avoids the recreate glitch. The video is paused off-screen anyway.
-        if (videoActive) {
+        // Compose the secure surface ONLY on Now Playing (destroys it off-screen), and explicitly
+        // release the ExoPlayer's video surface when leaving so no last frame lingers over Library.
+        LaunchedEffect(isOnNowPlaying) { if (!isOnNowPlaying && videoActive) mvVm.detachSurface() }
+        if (videoActive && isOnNowPlaying) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
-            Box(Modifier.fillMaxSize().then(if (isOnNowPlaying) Modifier else Modifier.offset(y = 4000.dp))) {
+            Box(Modifier.fillMaxSize()) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
                         androidx.media3.ui.PlayerView(ctx).apply {
