@@ -195,7 +195,9 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     // album and the #1 song, so the best match is one focus move away.
                     item {
                         Text("Top Results", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        // contentPadding (not Modifier.padding) so a focused, scaled card can scroll
+                        // fully into view and its halo isn't sliced at the row edges.
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 12.dp)) {
                             // Editorial category first — it's the strongest match for terms like
                             // "formula 1" or "tomorrowland", and the one users can't find otherwise.
                             items(results.curators.take(1), key = { "top-cu-${it.id}" }) { cur ->
@@ -238,7 +240,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     if (results.curators.isNotEmpty()) {
                         item {
                             Text("Categories", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp)) {
                                 items(results.curators, key = { it.id }) { cur ->
                                     CuratorCard(cur, onClick = { onCuratorClick(cur.id, cur.kind) })
                                 }
@@ -248,7 +250,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     if (results.playlists.isNotEmpty()) {
                         item {
                             Text("Playlists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp)) {
                                 items(results.playlists, key = { it.id }) { pl ->
                                     AlbumCard(album = pl, size = 130, onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
                                 }
@@ -258,7 +260,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     if (results.artists.isNotEmpty()) {
                         item {
                             Text("Artists", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, modifier = Modifier.padding(bottom = 10.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp)) {
                                 items(results.artists, key = { it.id }) { artist ->
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -387,7 +389,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                     }
                                 }
                                 Spacer(Modifier.height(10.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp)) {
                                     items(recents, key = { it }) { term ->
                                         Surface(
                                             onClick = { vm.runRecent(term) },
