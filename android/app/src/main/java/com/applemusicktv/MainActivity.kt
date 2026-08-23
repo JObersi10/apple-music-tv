@@ -78,7 +78,10 @@ class MainActivity : ComponentActivity() {
     /** Home / recents while on Now Playing → drop into PiP. Anywhere else, just keep playing. */
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if ((navVm.isOnNowPlaying || navVm.isOnMusicVideo) && !isInPictureInPictureMode) enterPip()
+        // Only drop into PiP when something is actually PLAYING — a paused song/video should just
+        // background quietly, not pop a frozen PiP tile.
+        val playing = playerVm.state.value.isPlaying || mvVm.state.value.playing
+        if ((navVm.isOnNowPlaying || navVm.isOnMusicVideo) && playing && !isInPictureInPictureMode) enterPip()
     }
 
     override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {

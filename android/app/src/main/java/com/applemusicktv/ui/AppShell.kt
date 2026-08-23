@@ -142,6 +142,11 @@ fun AppShell(modifier: Modifier = Modifier) {
         }
     }
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
+    // A video plays only while its Now Playing screen is on-screen — off it, it pauses (no
+    // background secure-video decode → less glitch, and no autoplay while browsing).
+    LaunchedEffect(isOnNowPlaying, videoActive) {
+        if (videoActive) mvVm.setScreenVisible(isOnNowPlaying)
+    }
     // Whenever a video is active, media keys must drive it (not the paused audio player) —
     // MainActivity reads this. Pause audio the moment a video starts.
     LaunchedEffect(videoActive) {

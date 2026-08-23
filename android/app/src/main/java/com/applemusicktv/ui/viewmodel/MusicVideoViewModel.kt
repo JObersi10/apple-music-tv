@@ -247,7 +247,10 @@ class MusicVideoViewModel @Inject constructor(
                     .build()
                 exo.setMediaSource(source)
                 exo.prepare()
-                exo.playWhenReady = true
+                userPaused = false
+                // Only start playing if the Now Playing screen is showing it (don't autoplay a video
+                // that auto-advanced in while the user is on another screen).
+                exo.playWhenReady = screenVisible
                 exo.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _state.value = _state.value.copy(playing = isPlaying)
@@ -400,7 +403,18 @@ class MusicVideoViewModel @Inject constructor(
         }
     }
 
-    fun togglePlayPause() { player?.let { it.playWhenReady = !it.playWhenReady } }
+    // A music video only plays while the Now Playing screen is showing it. Off-screen (auto-advanced
+    // into a video while browsing, or navigated away) it pauses — no background secure-video decode,
+    // which also cuts the exit glitchiness. AppShell drives this from isOnNowPlaying.
+    private var screenVisible = false
+    private var userPaused = false
+    fun setScreenVisible(visible: Boolean) {
+        screenVisible = visible
+        val p = player ?: return
+        p.playWhenReady = visible && !userPaused
+    }
+
+    fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }
     fun seekBy(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceAtLeast(0)) } }
     fun seekTo(ms: Long) { player?.seekTo(ms.coerceAtLeast(0)) }
 
