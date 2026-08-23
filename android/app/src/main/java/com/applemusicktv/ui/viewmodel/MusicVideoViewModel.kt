@@ -154,6 +154,9 @@ class MusicVideoViewModel @Inject constructor(
     fun show(mvId: String, title: String, artist: String, startPaused: Boolean = false) {
         _active.value = true
         userPaused = startPaused
+        // A freshly-opened video always navigates to Now Playing (autoOpen), so the surface will be
+        // there by the time the async load builds the player — start with video enabled.
+        videoDetached = false
         load(mvId, title, artist)
     }
 
@@ -238,11 +241,15 @@ class MusicVideoViewModel @Inject constructor(
                 // but this keeps a flaky WAN from ever grabbing a bigger variant.
                 val selector = DefaultTrackSelector(context).apply {
                     // Cap at 1080p and start with subtitles OFF (Apple defaults to Auto/Off too).
+                    // If we're currently off Now Playing, start audio-only — there's no surface to
+                    // draw onto, and a secure video decoder with no surface errors. attachVideo()
+                    // re-enables the track when the user returns to Now Playing.
                     parameters = buildUponParameters()
                         .setMaxVideoSize(3840, qualityHeight)
                         .setPreferredTextLanguage(null)
                         .setSelectUndeterminedTextLanguage(false)
                         .setDisabledTextTrackSelectionFlags(0)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, videoDetached)
                         .build()
                 }
                 trackSelector = selector
@@ -420,8 +427,13 @@ class MusicVideoViewModel @Inject constructor(
     // alive and playing, and DISABLE THE VIDEO TRACK. Disabling the video renderer frees the secure
     // MediaCodec (and its overlay) while the audio renderer streams on. Returning re-enables video
     // and the recomposed PlayerView reattaches the surface, so the picture comes back at position.
+    // True while we're off Now Playing: the video track is disabled so no secure surface exists.
+    // Also consulted by playItem so a queue advance into a NEW video while off-screen starts
+    // audio-only (a secure decoder with no surface to draw onto would error otherwise).
+    private var videoDetached = false
     @OptIn(UnstableApi::class)
     fun detachVideo() {
+        videoDetached = true
         val exo = player ?: return
         exo.clearVideoSurface()
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
@@ -430,6 +442,7 @@ class MusicVideoViewModel @Inject constructor(
     }
     @OptIn(UnstableApi::class)
     fun attachVideo() {
+        videoDetached = false
         val exo = player ?: return
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
