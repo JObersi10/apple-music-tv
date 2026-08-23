@@ -75,7 +75,7 @@ fun DevMenuScreen(
             // ── SOFTWARE ──────────────────────────────────────────────────
             SectionLabel("Software")
             UpdatesSection(initialUpdate)
-            PhoneServerRow(state.webServerUrl)
+            PhoneServerRow(state.webServerUrl, playerVm)
 
             // ── PLAYBACK ──────────────────────────────────────────────────
             SectionLabel("Playback")
@@ -354,17 +354,35 @@ fun DevMenuScreen(
 }
 
 @Composable
-private fun PhoneServerRow(webServerUrl: String) {
+private fun PhoneServerRow(webServerUrl: String, playerVm: PlayerViewModel) {
+    var enabled by remember { mutableStateOf(playerVm.webServerEnabled()) }
     Column(
         Modifier.fillMaxWidth().background(Color(0xFF161618), RoundedCornerShape(10.dp)).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("Phone web server", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Medium)
-        if (webServerUrl.isNotEmpty()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Phone web server", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                Text(if (enabled) "On — reachable on your network" else "Off", fontSize = 10.sp, color = Color(0xFF777777))
+            }
+            // Toggle to turn the :8080 page on/off (it's on by default).
+            Surface(
+                onClick = { enabled = !enabled; playerVm.setWebServerEnabled(enabled) },
+                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = if (enabled) Color(0xFF34C759) else Color(0xFF3A3A3C),
+                    focusedContainerColor = if (enabled) Color(0xFF4AD866) else Color(0xFF5A5A5C),
+                ),
+            ) {
+                Text(if (enabled) "On" else "Off", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            }
+        }
+        if (enabled && webServerUrl.isNotEmpty()) {
             Text("Open on your phone to set the token and change settings:", fontSize = 10.sp, color = Color(0xFF777777))
             Text(webServerUrl, fontSize = 15.sp, color = Color(0xFF6BCB77),
                 fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
-        } else {
+        } else if (enabled) {
             Text("Connect to Wi-Fi to expose the phone page.", fontSize = 10.sp, color = Color(0xFF777777))
         }
     }

@@ -687,6 +687,8 @@ class PlayerViewModel @Inject constructor(
     /** Remote type chosen in setup — overrides hardware detection for the toggle button. */
     fun remoteOverride(): String = onboardingPrefs.remoteOverride
     fun setRemoteOverride(choice: String) { onboardingPrefs.remoteOverride = choice }
+    fun webServerEnabled(): Boolean = webServer.isEnabled
+    fun setWebServerEnabled(on: Boolean) { webServer.setEnabled(on) }
 
     /** Flips true when the user asks to replay setup, so the shell can show it without a relaunch. */
     private val _replayOnboarding = MutableStateFlow(false)

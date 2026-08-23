@@ -44,7 +44,7 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
         super.onCreate()
         com.applemusicktv.util.CrashReporter.install(this)
         clearStaleCaches()
-        webServer.start(appScope)
+        webServer.boot(appScope)   // starts only if the Dev toggle is on
         // Route volume-leveling diagnostics into the APP log (so they show under App Log, not Network,
         // and stream live on the :8081 event port).
         com.applemusicktv.media.GainProcessor.logger = { tag, msg -> webServer.addLog(tag, msg) }

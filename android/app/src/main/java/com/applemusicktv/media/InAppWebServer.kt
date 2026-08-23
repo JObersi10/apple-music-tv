@@ -38,8 +38,27 @@ class InAppWebServer @Inject constructor(
     private var job: Job? = null
     private var eventJob: Job? = null
     private var appScope: CoroutineScope? = null
+    private var serverSocket: ServerSocket? = null
+    private var eventSocket: ServerSocket? = null
     val port = 8080
     val eventPort = 8081
+
+    private val wsPrefs = context.getSharedPreferences("webserver_prefs", Context.MODE_PRIVATE)
+    /** User toggle (Dev → Web Server). Default ON. */
+    val isEnabled: Boolean get() = wsPrefs.getBoolean("web_enabled", true)
+    val running: Boolean get() = job?.isActive == true
+
+    /** Called once at app start: remember the scope and start only if enabled. */
+    fun boot(scope: CoroutineScope) {
+        appScope = scope
+        if (isEnabled) start(scope)
+    }
+
+    /** Toggle from Settings — starts or stops the phone web server and persists the choice. */
+    fun setEnabled(on: Boolean) {
+        wsPrefs.edit().putBoolean("web_enabled", on).apply()
+        if (on) appScope?.let { start(it) } else stop()
+    }
 
     fun start(scope: CoroutineScope) {
         if (job?.isActive == true) return
@@ -47,19 +66,19 @@ class InAppWebServer @Inject constructor(
         // Stream network-request lines live too, so :8081 and the web page show ALL logs, not just app logs.
         NetworkLog.listener = { line -> broadcastLive(line) }
         job = scope.launch(Dispatchers.IO) {
-            val server = ServerSocket(port)
+            val server = try { ServerSocket(port).also { serverSocket = it } } catch (_: Exception) { return@launch }
             while (isActive) {
-                try { val s = server.accept(); launch { handle(s) } } catch (_: Exception) {}
+                try { val s = server.accept(); launch { handle(s) } } catch (_: Exception) { if (!isActive) break }
             }
-            server.close()
+            try { server.close() } catch (_: Exception) {}
         }
         eventJob = scope.launch(Dispatchers.IO) {
-            val server = try { ServerSocket(eventPort) } catch (e: Exception) {
+            val server = try { ServerSocket(eventPort).also { eventSocket = it } } catch (e: Exception) {
                 addLog("WARN", "Event port $eventPort in use — kill previous instance and restart")
                 return@launch
             }
             while (isActive) {
-                try { val s = server.accept(); launch { handleEvent(s) } } catch (_: Exception) {}
+                try { val s = server.accept(); launch { handleEvent(s) } } catch (_: Exception) { if (!isActive) break }
             }
             try { server.close() } catch (_: Exception) {}
         }
@@ -68,7 +87,13 @@ class InAppWebServer @Inject constructor(
         addLog("OK", "Event stream: curl http://$ip:$eventPort")
     }
 
-    fun stop() { job?.cancel(); eventJob?.cancel() }
+    // Close the sockets too — cancelling the job alone leaves accept() blocked and the port bound.
+    fun stop() {
+        job?.cancel(); eventJob?.cancel()
+        runCatching { serverSocket?.close() }; serverSocket = null
+        runCatching { eventSocket?.close() }; eventSocket = null
+        addLog("OK", "Web server stopped")
+    }
 
     fun addLog(level: String, msg: String) {
         val t = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
