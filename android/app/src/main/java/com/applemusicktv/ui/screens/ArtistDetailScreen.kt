@@ -94,9 +94,9 @@ fun ArtistDetailScreen(
             item { SectionTitle("Top Songs") }
             item {
                 Row(Modifier.padding(start = 48.dp, end = 48.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PillButton("▶  Play") { playerVm.playAlbum(state.topSongs, 0) }
-                    PillButton("⇄  Shuffle") { playerVm.playAlbum(state.topSongs.shuffled(), 0) }
-                    PillButton("📻  Station") { vm.playStation { songs -> playerVm.playAlbum(songs, 0) } }
+                    PillButton(com.applemusicktv.ui.components.Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54)) { playerVm.playAlbum(state.topSongs, 0) }
+                    PillButton(com.applemusicktv.ui.components.Glyph.SHUFFLE, "Shuffle", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) { playerVm.playAlbum(state.topSongs.shuffled(), 0) }
+                    PillButton(com.applemusicktv.ui.components.Glyph.RADIO, "Station", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) { vm.playStation { songs -> playerVm.playAlbum(songs, 0) } }
                 }
             }
             itemsIndexedTopSongs(state.topSongs, playerVm)
@@ -153,20 +153,6 @@ fun ArtistDetailScreen(
 private fun SectionTitle(title: String) {
     Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
         modifier = Modifier.padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 12.dp))
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun PillButton(label: String, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B), focusedContainerColor = Color(0xFFCC1A2E)),
-    ) {
-        Box(Modifier.padding(horizontal = 26.dp, vertical = 10.dp)) {
-            Text(label, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
-        }
-    }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

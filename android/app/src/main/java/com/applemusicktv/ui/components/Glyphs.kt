@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 
 /** Vector glyphs drawn on a Canvas — the app avoids emoji/text symbols for UI chrome
  *  (they render inconsistently across Fire TV fonts and can't be tinted or scaled cleanly). */
-enum class Glyph { PLAY, PAUSE, SHUFFLE, REPEAT, REPEAT_ONE, PLUS, PLAY_NEXT, ARTIST, ALBUM, QUEUE, CHECK, NEXT, PREV, CLOSE }
+enum class Glyph { PLAY, PAUSE, SHUFFLE, REPEAT, REPEAT_ONE, PLUS, PLAY_NEXT, ARTIST, ALBUM, QUEUE, CHECK, NEXT, PREV, CLOSE, RADIO }
 
 @Composable
 fun Icon(glyph: Glyph, size: Dp = 16.dp, color: Color = Color.White, modifier: Modifier = Modifier) {
@@ -113,6 +113,17 @@ fun Icon(glyph: Glyph, size: Dp = 16.dp, color: Color = Color.White, modifier: M
                 val s = Stroke(width = stroke * 1.15f, cap = StrokeCap.Round)
                 drawPath(Path().apply { moveTo(w * 0.22f, h * 0.22f); lineTo(w * 0.78f, h * 0.78f) }, color, style = s)
                 drawPath(Path().apply { moveTo(w * 0.78f, h * 0.22f); lineTo(w * 0.22f, h * 0.78f) }, color, style = s)
+            }
+            Glyph.RADIO -> {
+                // broadcast dot with two rising arcs
+                drawCircle(color, radius = w * 0.1f, center = androidx.compose.ui.geometry.Offset(w * 0.3f, h * 0.7f))
+                val s = Stroke(width = stroke, cap = StrokeCap.Round)
+                drawArc(color, startAngle = -90f, sweepAngle = 60f, useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(w * 0.08f, h * 0.48f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.44f, h * 0.44f), style = s)
+                drawArc(color, startAngle = -90f, sweepAngle = 60f, useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(w * 0.0f, h * 0.28f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.72f, h * 0.72f), style = s)
             }
         }
     }
