@@ -87,10 +87,13 @@ class AppleDirectClient @Inject constructor() {
                     .addHeader("Authorization", "Bearer $bearer")
                     .addHeader("Music-User-Token", mut)
                     .addHeader("Origin", "https://music.apple.com").build()).execute()
-                val data = JSONObject(resp.body!!.string()).optJSONArray("data")?.optJSONObject(0) ?: return@withContext null
+                val body = resp.body!!.string()
+                val data = JSONObject(body).optJSONArray("data")?.optJSONObject(0)
+                if (data == null) { Log.w("AMMV", "details http=${resp.code} no data: ${body.take(160)}"); return@withContext null }
                 val a = data.optJSONObject("attributes") ?: JSONObject()
                 val artistId = data.optJSONObject("relationships")?.optJSONObject("artists")
                     ?.optJSONArray("data")?.optJSONObject(0)?.optString("id")?.ifBlank { null }
+                Log.i("AMMV", "details http=${resp.code} artistId=$artistId artist=${a.optString("artistName")}")
                 val parts = mutableListOf<String>()
                 a.optJSONArray("genreNames")?.let { g ->
                     if (g.length() > 0) parts.add((0 until g.length()).joinToString(", ") { g.getString(it) })

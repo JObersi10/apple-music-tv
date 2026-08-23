@@ -127,8 +127,13 @@ class MainActivity : ComponentActivity() {
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> { mvVm.prev(); return true }
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE ->
                     { mvVm.togglePlayPause(); return true }
-                // Menu brings the video fullscreen (Now Playing), never the audio screen.
-                KeyEvent.KEYCODE_MENU -> { mvVm.toggleQueue(); return true }
+                // A video can be the current track while you browse other tabs (it keeps playing).
+                // Only toggle the in-video queue when actually ON the video screen; elsewhere Menu
+                // brings the video fullscreen (Now Playing), same as for audio.
+                KeyEvent.KEYCODE_MENU -> {
+                    if (navVm.isOnNowPlaying) mvVm.toggleQueue() else navVm.navigateToNowPlaying()
+                    return true
+                }
             }
             return super.dispatchKeyEvent(event)
         }
