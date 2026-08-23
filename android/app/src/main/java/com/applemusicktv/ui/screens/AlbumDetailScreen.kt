@@ -29,6 +29,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import com.applemusicktv.data.model.Song
+import com.applemusicktv.ui.components.Glyph
+import com.applemusicktv.ui.components.Icon
 import com.applemusicktv.ui.viewmodel.AlbumDetailViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 
@@ -104,31 +106,11 @@ fun AlbumDetailScreen(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Surface(
-                        onClick = { playerVm.playAlbum(state.tracks) },
-                        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor        = Color(0xFFFA233B),
-                            focusedContainerColor = Color(0xFFE01F33),
-                        ),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-                    ) {
-                        Box(Modifier.padding(horizontal = 28.dp, vertical = 11.dp)) {
-                            Text("▶  Play", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                        }
+                    PillButton(Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54)) {
+                        playerVm.playAlbum(state.tracks)
                     }
-                    Surface(
-                        onClick = { playerVm.playAlbum(state.tracks.shuffled(), shuffle = true) },
-                        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor        = Color(0xFF2A2A2A),
-                            focusedContainerColor = Color(0xFF3A3A3A),
-                        ),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-                    ) {
-                        Box(Modifier.padding(horizontal = 28.dp, vertical = 11.dp)) {
-                            Text("⇄  Shuffle", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                        }
+                    PillButton(Glyph.SHUFFLE, "Shuffle", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) {
+                        playerVm.playAlbum(state.tracks.shuffled(), shuffle = true)
                     }
                 }
             }
@@ -182,13 +164,13 @@ fun AlbumDetailScreen(
                 Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                AlbumContextItem("▶", "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                AlbumContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                AlbumContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
+                AlbumContextItem(Glyph.PLUS, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
                 val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
                 val goAlbum  = s.albumId ?: album.id
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                if (goArtist != null) AlbumContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(goArtist); dismissMenu() } })
-                if (goAlbum  != null) AlbumContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(goAlbum);   dismissMenu() } })
+                if (goArtist != null) AlbumContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(goArtist); dismissMenu() } })
+                if (goAlbum  != null) AlbumContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(goAlbum);   dismissMenu() } })
             }
         }
     }
@@ -198,7 +180,7 @@ fun AlbumDetailScreen(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun AlbumContextItem(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun AlbumContextItem(icon: Glyph, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -210,7 +192,9 @@ private fun AlbumContextItem(icon: String, label: String, onClick: () -> Unit, m
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(icon, fontSize = 16.sp, color = Color(0xFF888888), modifier = Modifier.width(22.dp))
+            Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
+                Icon(icon, size = 17.dp, color = Color(0xFFB0B0B4))
+            }
             Text(label, fontSize = 15.sp, color = Color.White)
         }
     }

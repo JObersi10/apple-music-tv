@@ -29,6 +29,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import com.applemusicktv.data.model.Song
+import com.applemusicktv.ui.components.Glyph
+import com.applemusicktv.ui.components.Icon
 import com.applemusicktv.ui.viewmodel.PlaylistDetailViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 
@@ -132,27 +134,11 @@ fun PlaylistDetailScreen(
                                 .padding(horizontal = 24.dp, vertical = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            Surface(
-                                onClick = {
-                                    playerVm.playAlbum(sortedTracks, 0)   // mixed queue; videos route to the video player
-                                },
-                                shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B), focusedContainerColor = Color(0xFFCC1A2E)),
-                            ) {
-                                Box(Modifier.padding(horizontal = 28.dp, vertical = 11.dp)) {
-                                    Text("▶  Play", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
+                            PillButton(Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54)) {
+                                playerVm.playAlbum(sortedTracks, 0)   // mixed queue; videos route to the video player
                             }
-                            Surface(
-                                onClick = {
-                                    playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true)
-                                },
-                                shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
-                            ) {
-                                Box(Modifier.padding(horizontal = 28.dp, vertical = 11.dp)) {
-                                    Text("⇄  Shuffle", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
+                            PillButton(Glyph.SHUFFLE, "Shuffle", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) {
+                                playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true)
                             }
                         }
                     }
@@ -227,11 +213,11 @@ fun PlaylistDetailScreen(
                 Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                PlaylistContextItem("▶", "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                PlaylistContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                PlaylistContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
+                PlaylistContextItem(Glyph.PLUS, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                s.artistId?.let { aid -> PlaylistContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(aid); dismissMenu() } }) }
-                s.albumId?.let  { alid -> PlaylistContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(alid);  dismissMenu() } }) }
+                s.artistId?.let { aid -> PlaylistContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(aid); dismissMenu() } }) }
+                s.albumId?.let  { alid -> PlaylistContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(alid);  dismissMenu() } }) }
             }
         }
     }
@@ -294,7 +280,7 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun PlaylistContextItem(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun PlaylistContextItem(icon: Glyph, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -306,8 +292,31 @@ private fun PlaylistContextItem(icon: String, label: String, onClick: () -> Unit
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(icon, fontSize = 16.sp, color = Color(0xFF888888), modifier = Modifier.width(22.dp))
+            Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
+                Icon(icon, size = 17.dp, color = Color(0xFFB0B0B4))
+            }
             Text(label, fontSize = 15.sp, color = Color.White)
+        }
+    }
+}
+
+/** Rounded Apple-style action pill with a drawn leading glyph. Grows + brightens on focus. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+internal fun PillButton(glyph: Glyph, label: String, base: Color, focusColor: Color, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(24.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = base, focusedContainerColor = focusColor),
+        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 26.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Icon(glyph, size = 15.dp, color = Color.White)
+            Text(label, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
         }
     }
 }

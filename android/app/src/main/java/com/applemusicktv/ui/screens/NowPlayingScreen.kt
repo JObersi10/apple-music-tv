@@ -81,6 +81,7 @@ import com.applemusicktv.data.network.LyricWord
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
 import com.applemusicktv.ui.viewmodel.NowPlayingBackground
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
+import com.applemusicktv.ui.components.Glyph
 import com.applemusicktv.ui.viewmodel.RepeatMode
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -327,7 +328,15 @@ fun NowPlayingScreen(
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                         colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), focusedContainerColor = Color(0x33FFFFFF)),
                         modifier = Modifier.align(Alignment.CenterEnd).size(32.dp).graphicsLayer { alpha = chromeAlpha },
-                    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("···", fontSize = 13.sp, color = Color.White) } }
+                    ) { Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        androidx.compose.foundation.Canvas(Modifier.size(18.dp)) {
+                            val r = size.minDimension * 0.07f
+                            val cy = size.height / 2f
+                            listOf(0.26f, 0.5f, 0.74f).forEach { fx ->
+                                drawCircle(Color.White, radius = r, center = androidx.compose.ui.geometry.Offset(size.width * fx, cy))
+                            }
+                        }
+                    } }
                 }
                 // No gap between title and artist — a fixed spacer here read as an abrupt
                 // collapse against the idle chrome fade. Artist sits directly under the title.
@@ -384,34 +393,35 @@ fun NowPlayingScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             if (showSleepSubmenu) {
-                                NpMenuItem("← Back", Modifier.focusRequester(menuFocus)) { showSleepSubmenu = false }
+                                NpMenuItem("Back", Modifier.focusRequester(menuFocus), icon = Glyph.PREV) { showSleepSubmenu = false }
                                 if (state.sleepTimerEndsAt != null || state.sleepAfterSong)
                                     NpMenuItem("Cancel Timer") { playerVm.cancelSleepTimer(); showOptionsMenu = false }
-                                NpMenuItem("End of Song") { playerVm.setSleepAfterSong(); showOptionsMenu = false }
+                                NpMenuItem("End of Song", checked = state.sleepAfterSong) { playerVm.setSleepAfterSong(); showOptionsMenu = false }
                                 listOf(15, 30, 45, 60).forEach { min ->
                                     NpMenuItem("$min minutes") { playerVm.setSleepTimer(min); showOptionsMenu = false }
                                 }
                             } else {
                                 val timerLabel = when {
-                                    state.sleepAfterSong -> "Sleep: End of Song ✓"
+                                    state.sleepAfterSong -> "Sleep: End of Song"
                                     state.sleepTimerEndsAt != null -> {
                                         val m = ((state.sleepTimerEndsAt!! - System.currentTimeMillis()) / 60_000).coerceAtLeast(0)
                                         "Sleep Timer (${m}m left)"
                                     }
                                     else -> "Sleep Timer"
                                 }
-                                NpMenuItem(timerLabel, Modifier.focusRequester(menuFocus)) { showSleepSubmenu = true }
+                                val timerOn = state.sleepAfterSong || state.sleepTimerEndsAt != null
+                                NpMenuItem(timerLabel, Modifier.focusRequester(menuFocus), icon = Glyph.REPEAT_ONE, checked = timerOn) { showSleepSubmenu = true }
                                 // Crossfade + Beat Pulse live in Settings now — keep this menu short.
                                 // Settings items leave the menu open so you can see the label
                                 // flip and keep cycling. Only navigation and the sleep timer
                                 // close it; Back dismisses.
-                                NpMenuItem(if (state.isShuffled) "Shuffle: On" else "Shuffle: Off") { playerVm.toggleShuffle() }
+                                NpMenuItem("Shuffle", icon = Glyph.SHUFFLE, checked = state.isShuffled) { playerVm.toggleShuffle() }
                                 val repeatLabel = when (state.repeatMode) { RepeatMode.Off -> "Repeat: Off"; RepeatMode.All -> "Repeat: All"; RepeatMode.One -> "Repeat: One" }
-                                NpMenuItem(repeatLabel) { playerVm.toggleRepeat() }
-                                if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics") { fullScreenLyrics = true; showOptionsMenu = false }
-                                NpMenuItem("Start Screensaver") { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
-                                if (song.artistId != null) NpMenuItem("Go to Artist") { onArtistClick(song.artistId); showOptionsMenu = false }
-                                if (song.albumId != null) NpMenuItem("Go to Album") { onAlbumClick(song.albumId); showOptionsMenu = false }
+                                NpMenuItem(repeatLabel, icon = if (state.repeatMode == RepeatMode.One) Glyph.REPEAT_ONE else Glyph.REPEAT, checked = state.repeatMode != RepeatMode.Off) { playerVm.toggleRepeat() }
+                                if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics", icon = Glyph.QUEUE) { fullScreenLyrics = true; showOptionsMenu = false }
+                                NpMenuItem("Start Screensaver", icon = Glyph.ALBUM) { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
+                                if (song.artistId != null) NpMenuItem("Go to Artist", icon = Glyph.ARTIST) { onArtistClick(song.artistId); showOptionsMenu = false }
+                                if (song.albumId != null) NpMenuItem("Go to Album", icon = Glyph.ALBUM) { onAlbumClick(song.albumId); showOptionsMenu = false }
                             }
                         }
                     }
@@ -1841,14 +1851,32 @@ private fun TransportButton(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun NpMenuItem(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun NpMenuItem(
+    label: String,
+    modifier: Modifier = Modifier,
+    icon: com.applemusicktv.ui.components.Glyph? = null,
+    checked: Boolean = false,
+    onClick: () -> Unit,
+) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
     ) {
-        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                Box(Modifier.width(26.dp), contentAlignment = Alignment.CenterStart) {
+                    com.applemusicktv.ui.components.Icon(icon, size = 16.dp, color = Color(0xFFC0C0C4))
+                }
+            }
+            Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.weight(1f))
+            if (checked) com.applemusicktv.ui.components.Icon(
+                com.applemusicktv.ui.components.Glyph.CHECK, size = 14.dp, color = Color(0xFFFA233B))
+        }
     }
 }
 
