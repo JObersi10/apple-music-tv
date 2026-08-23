@@ -1436,7 +1436,9 @@ class PlayerViewModel @Inject constructor(
 
     fun pause() { player.pause() }
     fun togglePlayPause() {
-        if (player.isPlaying) {
+        // Gate on playWhenReady, NOT isPlaying: while a cold track is still buffering isPlaying is
+        // false even though the user intends to play, so pressing pause used to (wrongly) start it.
+        if (player.playWhenReady) {
             player.pause()
             // The 10s auto-save only ticks while playing, so without this a pause
             // followed by the process being killed restores a stale position.
