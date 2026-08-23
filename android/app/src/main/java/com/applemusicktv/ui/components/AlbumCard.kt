@@ -25,25 +25,26 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
         onClick  = onClick,
         onLongClick = onLongClick,
         modifier = modifier.width(size.dp),
-        scale = CardDefaults.scale(focusedScale = 1.10f, pressedScale = 0.96f),
+        // Apple-style: soft scale + a gentle white halo on focus — no hard red border.
+        scale = CardDefaults.scale(focusedScale = 1.08f, pressedScale = 0.96f),
         glow  = CardDefaults.glow(
-            focusedGlow = Glow(Color(0xFFFA233B).copy(alpha = 0.5f), 14.dp)
+            focusedGlow = Glow(Color.White.copy(alpha = 0.22f), 18.dp)
         ),
         border = CardDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(2.dp, Color(0xFFFA233B)),
-                shape  = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)),
+                shape  = RoundedCornerShape(12.dp),
             )
         ),
         colors = CardDefaults.colors(
-            containerColor        = Color(0xFF161616),
-            focusedContainerColor = Color(0xFF1E1E1E),
+            containerColor        = Color.Transparent,
+            focusedContainerColor = Color.Transparent,
         ),
-        shape = CardDefaults.shape(RoundedCornerShape(8.dp)),
+        shape = CardDefaults.shape(RoundedCornerShape(12.dp)),
     ) {
         Column {
             Box(
-                modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(11.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 if (album.artworkUrl != null) {
@@ -62,19 +63,20 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
                     }
                 }
             }
-            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)) {
                 Text(
                     text  = album.title,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFFE5E5E7),
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFF2F2F5),
+                    letterSpacing = (-0.1).sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text  = album.artistName,
-                    fontSize = 10.sp,
-                    color = Color(0xFF666666),
+                    fontSize = 10.5.sp,
+                    color = Color(0xFF8A8A8E),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 2.dp),
