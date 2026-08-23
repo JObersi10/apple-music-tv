@@ -762,6 +762,9 @@ class PlayerViewModel @Inject constructor(
         // the outgoing one, so a save here pairs one song's title with another song's
         // position — which is how a restore lands on the wrong track.
         if (crossfadeInProgress) return
+        // A deferred restore hasn't loaded the player yet (position would read 0) — keep the saved
+        // state untouched until the user actually plays it.
+        if (pendingRestore != null) return
         val adapter = moshi.adapter(Song::class.java)
         val listType = Types.newParameterizedType(List::class.java, Song::class.java)
         val listAdapter = moshi.adapter<List<Song>>(listType)
@@ -820,43 +823,40 @@ class PlayerViewModel @Inject constructor(
                 _videoRequest.value = VideoRequest(song, autoOpen = false, startPaused = true)
                 return@launch
             }
-            val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
-            val standalone = full && useStandalone()
-            webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
-            usingStandalone = standalone
-            val src = if (standalone) buildStandaloneSource(song) else null
-            _state.update { it.copy(standaloneActive = src != null) }
-            if (src != null) player.setMediaSource(src, posMs)
-            else player.setMediaItem(buildMediaItem(song, uri), posMs)
-            player.prepare()
-            // Restore PAUSED — reopening the app shouldn't blast music. The user presses play.
-            player.playWhenReady = false
-
-            // Restore bypasses playQueueItem, which is where lyrics/motion normally
-            // load — so without this a restored track comes back with no lyrics.
+            // DON'T load the track into the player on restore. Loading a media item + having a live
+            // MediaSession makes Android's media-resumption auto-RESUME playback on foreground — that
+            // was the "song autoplays on open". Stash it and load only on the user's first play press.
+            webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title} — deferred (paused)")
+            pendingRestore = RestoreInfo(song, posMs, full)
+            // Lyrics/motion are just display — safe (and nice) to warm now.
             if (full) loadLyrics(song.id)
             loadMotion(song.id)
-
-            // N+1 prefetch normally happens in playQueueItem, which restore
-            // bypasses — so without this the song after a restored one is always
-            // cold and the crossfade into it always falls back to a hard cut.
-            // Wait for the restored song to be READY first: its own decrypt is
-            // cold too, and racing two decrypts delays the audio we need *now*.
-            val nextSong = queue.getOrNull(idx + 1)
-            if (full && !standalone && nextSong != null) {
-                preloadedForSongId = null
-                val deadline = System.currentTimeMillis() + 60_000
-                while (player.playbackState != Player.STATE_READY &&
-                       System.currentTimeMillis() < deadline) {
-                    delay(500)
-                }
-                if (preloadedForSongId != nextSong.id) {
-                    preloadedForSongId = nextSong.id
-                    webServer.addLog("PRE", "prefetch N+1 after restore song=${nextSong.title}")
-                    prefetchSong(nextSong)
-                }
-            }
         } catch (_: Exception) {}
+    }
+
+    /** A restored track not yet loaded into the player — loaded on the first play press so nothing
+     *  (incl. Android media resumption) can auto-start it. */
+    private data class RestoreInfo(val song: Song, val posMs: Long, val full: Boolean)
+    private var pendingRestore: RestoreInfo? = null
+
+    private fun startPendingRestore() {
+        val r = pendingRestore ?: return
+        pendingRestore = null
+        hasPlayedSomething = true
+        val standalone = r.full && useStandalone()
+        usingStandalone = standalone
+        viewModelScope.launch {
+            val src = if (standalone) buildStandaloneSource(r.song) else null
+            _state.update { it.copy(standaloneActive = src != null) }
+            val uri = if (r.full) repo.streamUrl(r.song.id) else (r.song.previewUrl ?: repo.streamUrl(r.song.id))
+            if (src != null) player.setMediaSource(src, r.posMs) else player.setMediaItem(buildMediaItem(r.song, uri), r.posMs)
+            player.prepare(); player.play()
+            val nextSong = _state.value.queue.getOrNull(_state.value.queueIndex + 1)
+            if (r.full && !standalone && nextSong != null && preloadedForSongId != nextSong.id) {
+                preloadedForSongId = nextSong.id
+                prefetchSong(nextSong)
+            }
+        }
     }
 
     fun playFromQueue(idx: Int) = playQueueItem(idx)
@@ -1057,6 +1057,7 @@ class PlayerViewModel @Inject constructor(
     @Volatile private var awaitingSongStart: String? = null
 
     private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false, userOpened: Boolean = false) {
+        pendingRestore = null   // any real queue action supersedes a deferred restore
         val q = _state.value.queue
         if (q.isEmpty() || idx !in q.indices) {
             webServer.addLog("PLR", "playQueueItem idx=$idx out of bounds (size=${q.size}) — stopping")
@@ -1441,6 +1442,8 @@ class PlayerViewModel @Inject constructor(
 
     fun pause() { player.pause() }
     fun togglePlayPause() {
+        // First play after a restore actually LOADS the stashed track (deferred so nothing auto-starts).
+        if (pendingRestore != null) { startPendingRestore(); return }
         // Gate on playWhenReady, NOT isPlaying: while a cold track is still buffering isPlaying is
         // false even though the user intends to play, so pressing pause used to (wrongly) start it.
         if (player.playWhenReady) {

@@ -237,6 +237,11 @@ fun DevMenuScreen(
                     ActionBtn("Refresh", Color(0xFF2A2A2A), small = true) { vm.refresh(); onDataRefresh() }
                     ActionBtn("Replay Setup", Color(0xFF2A2A1A), small = true) { playerVm.resetOnboarding() }
                     ActionBtn("Clear Token", Color(0xFF3A1A1A), small = true) { vm.clearMUT() }
+                    // Hard quit: stop playback + kill the process so the next launch is a true cold start.
+                    ActionBtn("Force Quit", Color(0xFF3A1A1A), small = true) {
+                        playerVm.stopPlayback()
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                    }
                 }
 
                 SectionLabel("Connection")
