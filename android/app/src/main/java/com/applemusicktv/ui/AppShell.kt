@@ -496,36 +496,30 @@ fun AppShell(modifier: Modifier = Modifier) {
         // tears down its own SurfaceFlinger layer, so nothing bleeds onto Library/Browse, while
         // the ExoPlayer keeps playing the audio. Returning to Now Playing makes it VISIBLE again
         // and the decoder re-renders onto the fresh surface.
-        if (videoActive) {
+        // Compose the secure video surface ONLY on Now Playing. A secure (HDCP) SurfaceView draws
+        // across the whole screen and, once created, its SurfaceFlinger layer lingered on Library/
+        // Browse no matter how we hid it (GONE / detach) — the "video in library" bleed. Removing
+        // the PlayerView from composition entirely off Now Playing destroys the surface, so there's
+        // nothing to bleed. The video is paused off-screen anyway (setScreenVisible), so recreating
+        // + resuming the surface on return is cheap and glitch-free.
+        if (videoActive && isOnNowPlaying) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
-            // Collapse the whole layer to a 1px node off Now Playing so it can't intercept layout
-            // or focus on the page you're actually browsing.
-            Box(if (isOnNowPlaying) Modifier.fillMaxSize() else Modifier.size(1.dp)) {
+            Box(Modifier.fillMaxSize()) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
                         androidx.media3.ui.PlayerView(ctx).apply {
                             useController = false
                             setShutterBackgroundColor(android.graphics.Color.BLACK)
                             setKeepScreenOn(true)
-                            // Secure video renders to this SurfaceView but composited BEHIND the
-                            // app's black window background (frames rendered, screen black).
-                            // Media-overlay lifts it above the background.
                             (videoSurfaceView as? android.view.SurfaceView)?.setZOrderMediaOverlay(true)
                             player = mvPlayer
                         }
                     },
-                    update = { pv ->
-                        // Off Now Playing: DETACH the player from the view entirely. That drops the
-                        // video output surface (the secure decoder renders nowhere → zero bleed onto
-                        // Library/Browse) while the ExoPlayer keeps playing the AUDIO. Re-attaching on
-                        // return puts the picture back. GONE alone left the secure layer on screen.
-                        pv.player = if (isOnNowPlaying) mvPlayer else null
-                        pv.visibility = if (isOnNowPlaying) android.view.View.VISIBLE else android.view.View.GONE
-                    },
+                    update = { it.player = mvPlayer },
                     onRelease = { it.player = null },
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (isOnNowPlaying) {
+                run {
                     MusicVideoScreen(
                         vm = mvVm,
                         // Back leaves the SCREEN but KEEPS the video playing — pop to the previous
