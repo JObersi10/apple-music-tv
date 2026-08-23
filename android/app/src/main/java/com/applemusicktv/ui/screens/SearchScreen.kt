@@ -115,8 +115,9 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF3A3A3C)),
                         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
                     ) {
-                        Text("✕", color = Color(0xFFAAAAAA), fontSize = 14.sp,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                        Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.CLOSE, size = 13.dp, color = Color(0xFFAAAAAA))
+                        }
                     }
                 }
             }
@@ -151,7 +152,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         modifier = Modifier.size(40.dp),
                     ) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("✕", color = Color(0xFFAAAAAA), fontSize = 14.sp)
+                            com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.CLOSE, size = 14.dp, color = Color(0xFFAAAAAA))
                         }
                     }
                 }

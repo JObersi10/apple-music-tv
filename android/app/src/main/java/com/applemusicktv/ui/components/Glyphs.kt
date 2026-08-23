@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 
 /** Vector glyphs drawn on a Canvas — the app avoids emoji/text symbols for UI chrome
  *  (they render inconsistently across Fire TV fonts and can't be tinted or scaled cleanly). */
-enum class Glyph { PLAY, PAUSE, SHUFFLE, REPEAT, REPEAT_ONE, PLUS, PLAY_NEXT, ARTIST, ALBUM, QUEUE, CHECK, NEXT, PREV }
+enum class Glyph { PLAY, PAUSE, SHUFFLE, REPEAT, REPEAT_ONE, PLUS, PLAY_NEXT, ARTIST, ALBUM, QUEUE, CHECK, NEXT, PREV, CLOSE }
 
 @Composable
 fun Icon(glyph: Glyph, size: Dp = 16.dp, color: Color = Color.White, modifier: Modifier = Modifier) {
@@ -109,6 +109,11 @@ fun Icon(glyph: Glyph, size: Dp = 16.dp, color: Color = Color.White, modifier: M
             Glyph.CHECK -> drawPath(Path().apply {
                 moveTo(w * 0.12f, h * 0.55f); lineTo(w * 0.4f, h * 0.82f); lineTo(w * 0.9f, h * 0.18f)
             }, color, style = Stroke(width = stroke * 1.2f, cap = StrokeCap.Round))
+            Glyph.CLOSE -> {
+                val s = Stroke(width = stroke * 1.15f, cap = StrokeCap.Round)
+                drawPath(Path().apply { moveTo(w * 0.22f, h * 0.22f); lineTo(w * 0.78f, h * 0.78f) }, color, style = s)
+                drawPath(Path().apply { moveTo(w * 0.78f, h * 0.22f); lineTo(w * 0.22f, h * 0.78f) }, color, style = s)
+            }
         }
     }
 }

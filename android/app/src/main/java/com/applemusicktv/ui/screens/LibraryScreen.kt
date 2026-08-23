@@ -243,7 +243,7 @@ private fun PlaylistCard(
                     modifier = Modifier.size(28.dp),
                 ) {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text("▶", fontSize = 9.sp, color = Color.White)
+                        com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.PLAY, size = 11.dp, color = Color.White)
                     }
                 }
             }

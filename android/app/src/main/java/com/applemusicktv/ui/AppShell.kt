@@ -391,7 +391,9 @@ fun AppShell(modifier: Modifier = Modifier) {
                         onClick = { playerVm.dismissMutExpired() },
                         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(50)),
                         colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = androidx.compose.ui.graphics.Color(0x33FFFFFF), focusedContainerColor = androidx.compose.ui.graphics.Color(0x55FFFFFF)),
-                    ) { androidx.compose.material3.Text("✕", color = androidx.compose.ui.graphics.Color.White, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) }
+                    ) { androidx.compose.foundation.layout.Box(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                        com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.CLOSE, size = 13.dp, color = androidx.compose.ui.graphics.Color.White)
+                    } }
                 }
             }
         }
