@@ -824,6 +824,8 @@ class PlayerViewModel @Inject constructor(
             if (src != null) player.setMediaSource(src, posMs)
             else player.setMediaItem(buildMediaItem(song, uri), posMs)
             player.prepare()
+            // Restore PAUSED — reopening the app shouldn't blast music. The user presses play.
+            player.playWhenReady = false
 
             // Restore bypasses playQueueItem, which is where lyrics/motion normally
             // load — so without this a restored track comes back with no lyrics.
