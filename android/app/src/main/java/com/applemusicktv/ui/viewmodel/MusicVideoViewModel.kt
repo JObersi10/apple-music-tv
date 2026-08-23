@@ -412,11 +412,26 @@ class MusicVideoViewModel @Inject constructor(
     private var userPaused = false
     fun setScreenVisible(visible: Boolean) { /* no longer gates playback — kept for callers */ }
 
-    /** Release the ExoPlayer's video output surface (audio keeps playing). Called when we leave the
-     *  Now Playing screen so the secure SurfaceFlinger layer is torn down and can't linger on other
-     *  tabs — a plain SurfaceView destroy alone left the last frame painted over Library. */
-    @OptIn(UnstableApi::class)
-    fun detachSurface() { runCatching { player?.clearVideoSurface() } }
+    // Leaving Now Playing fully RELEASES the video player (and its secure surface) — the only way
+    // to stop the last frame lingering over Library/Browse on Fire TV, where a secure SurfaceFlinger
+    // layer survives hiding/detaching/off-screening. Returning reloads it at the saved position.
+    private var suspendedPos = 0L
+    private var suspended = false
+    fun suspendForBackground() {
+        val p = player ?: return
+        suspendedPos = p.currentPosition.coerceAtLeast(0)
+        userPaused = !p.playWhenReady
+        suspended = true
+        releasePlayer()
+        _state.value = _state.value.copy(playing = false)
+    }
+    fun resumeFromBackground() {
+        if (!suspended) return
+        suspended = false
+        val id = curMvId ?: return
+        pendingSeekMs = suspendedPos
+        playItem(id, curTitle, curArtist)
+    }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }
     fun seekBy(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceAtLeast(0)) } }

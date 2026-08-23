@@ -142,10 +142,12 @@ fun AppShell(modifier: Modifier = Modifier) {
         }
     }
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
-    // A video plays only while its Now Playing screen is on-screen — off it, it pauses (no
-    // background secure-video decode → less glitch, and no autoplay while browsing).
+    // Leaving Now Playing fully releases the video (surface gone → no lingering frame over other
+    // tabs); returning reloads it at its saved spot. On Fire TV a secure surface can't be reliably
+    // hidden, so the video pauses when you leave the screen and resumes when you come back.
     LaunchedEffect(isOnNowPlaying, videoActive) {
-        if (videoActive) mvVm.setScreenVisible(isOnNowPlaying)
+        if (!videoActive) return@LaunchedEffect
+        if (isOnNowPlaying) mvVm.resumeFromBackground() else mvVm.suspendForBackground()
     }
     // Whenever a video is active, media keys must drive it (not the paused audio player) —
     // MainActivity reads this. Pause audio the moment a video starts.
@@ -458,6 +460,9 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 // which survives moveTaskToBack/finish, so without this the music kept
                                 // playing after "Exit".
                                 playerVm.stopPlayback()
+                                // Also stop a music video — it runs on its own player, so stopPlayback
+                                // (audio only) left its audio going after Exit.
+                                playerVm.clearVideoRequest(); mvVm.close()
                                 // If there's no activity to background (or the task is
                                 // already at the root), fall back to finish() so the
                                 // popup never just sits there doing nothing.
@@ -504,9 +509,6 @@ fun AppShell(modifier: Modifier = Modifier) {
         // fix is to keep the surface composed but push the whole layer FULLY OFF-SCREEN when we're
         // not on Now Playing: an off-screen secure layer can't overlap visible content, and never
         // being destroyed also avoids the recreate glitch. The video is paused off-screen anyway.
-        // Compose the secure surface ONLY on Now Playing (destroys it off-screen), and explicitly
-        // release the ExoPlayer's video surface when leaving so no last frame lingers over Library.
-        LaunchedEffect(isOnNowPlaying) { if (!isOnNowPlaying && videoActive) mvVm.detachSurface() }
         if (videoActive && isOnNowPlaying) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
             Box(Modifier.fillMaxSize()) {
