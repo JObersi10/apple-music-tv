@@ -43,7 +43,13 @@ data class MvUiState(
     val audioIndex:   Int = 0,
     val info:         String? = null,
     val artistId:     String? = null,
+    /** Max video height cap the user picked (persisted, applied to every video). */
+    val qualityHeight: Int = 1080,
 )
+
+/** Selectable max-quality tiers for music videos. Persisted globally. */
+val MV_QUALITY_TIERS = listOf(480, 720, 1080, 2160)
+fun qualityLabel(h: Int) = if (h >= 2160) "4K" else "${h}p"
 
 /**
  * Fullscreen music-video playback. A wholly separate ExoPlayer from the audio
@@ -58,8 +64,23 @@ class MusicVideoViewModel @Inject constructor(
     private val videoQueue: com.applemusicktv.media.VideoQueue,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(MvUiState())
+    private val prefs = context.getSharedPreferences("mv_prefs", Context.MODE_PRIVATE)
+    private var qualityHeight = prefs.getInt("quality_height", 1080)
+
+    private val _state = MutableStateFlow(MvUiState(qualityHeight = qualityHeight))
     val state: StateFlow<MvUiState> = _state
+
+    /** Cycle to the next quality tier (480→720→1080→4K→480), persist, apply live. */
+    @OptIn(UnstableApi::class)
+    fun cycleQuality() {
+        val i = MV_QUALITY_TIERS.indexOf(qualityHeight).let { if (it < 0) 2 else it }
+        qualityHeight = MV_QUALITY_TIERS[(i + 1) % MV_QUALITY_TIERS.size]
+        prefs.edit().putInt("quality_height", qualityHeight).apply()
+        _state.value = _state.value.copy(qualityHeight = qualityHeight)
+        trackSelector?.let { ts ->
+            ts.parameters = ts.buildUponParameters().setMaxVideoSize(3840, qualityHeight).build()
+        }
+    }
 
     // Whether a video is currently loaded/active. Hoisted in AppShell so the video survives
     // navigation: it plays fullscreen on the Now Playing tab and shrinks to an in-app PiP
@@ -71,6 +92,13 @@ class MusicVideoViewModel @Inject constructor(
     // TextureView, which has no caption surface of its own).
     private val _cues = MutableStateFlow<List<androidx.media3.common.text.Cue>>(emptyList())
     val cues: StateFlow<List<androidx.media3.common.text.Cue>> = _cues
+
+    // The Up-Next queue panel in the video player (toggled by Menu on Fire TV, or the on-screen
+    // queue button). The list itself lives in PlayerViewModel — AppShell hands it in.
+    private val _showQueue = MutableStateFlow(false)
+    val showQueue: StateFlow<Boolean> = _showQueue
+    fun toggleQueue() { _showQueue.value = !_showQueue.value }
+    fun hideQueue() { _showQueue.value = false }
 
     var player: ExoPlayer? = null
         private set
@@ -144,7 +172,7 @@ class MusicVideoViewModel @Inject constructor(
     @OptIn(UnstableApi::class)
     private fun playItem(mvId: String, title: String, artist: String) {
         releasePlayer()
-        _state.value = MvUiState(loading = true, title = title, artist = artist)
+        _state.value = MvUiState(loading = true, title = title, artist = artist, qualityHeight = qualityHeight)
         viewModelScope.launch {
             try {
                 val bearer = appleClient.getBearer()
@@ -195,7 +223,7 @@ class MusicVideoViewModel @Inject constructor(
                 val selector = DefaultTrackSelector(context).apply {
                     // Cap at 1080p and start with subtitles OFF (Apple defaults to Auto/Off too).
                     parameters = buildUponParameters()
-                        .setMaxVideoSize(1920, 1080)
+                        .setMaxVideoSize(3840, qualityHeight)
                         .setPreferredTextLanguage(null)
                         .setSelectUndeterminedTextLanguage(false)
                         .setDisabledTextTrackSelectionFlags(0)

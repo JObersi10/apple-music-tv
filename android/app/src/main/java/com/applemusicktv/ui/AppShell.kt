@@ -523,13 +523,17 @@ fun AppShell(modifier: Modifier = Modifier) {
                 if (isOnNowPlaying) {
                     MusicVideoScreen(
                         vm = mvVm,
-                        onMinimize = { (activity as? com.applemusicktv.MainActivity)?.enterPip() },
                         // Back leaves the SCREEN but KEEPS the video playing — pop to the previous
                         // route (e.g. the playlist). The video is hidden while its audio continues,
                         // and reappears on return. It closes only on a regular song / queue end.
                         onExit = { if (!navController.popBackStack()) { selectedTab = TopNavTab.ListenNow; navController.navigate(Screen.Home.route) { launchSingleTop = true } } },
                         onFocusUp = { runCatching { navBarFocus.requestFocus() } },
                         onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                        // Google TV remotes lack media keys → draw prev/play/next on screen.
+                        showOnScreenControls = com.applemusicktv.util.TvDevice.needsOnScreenMenuToggle(appContext, playerVm.remoteOverride()),
+                        queue = playerState.queue,
+                        queueIndex = playerState.queueIndex,
+                        onPickQueueItem = { playerVm.playFromQueue(it) },
                         focusRequester = videoFocus,
                     )
                 }
