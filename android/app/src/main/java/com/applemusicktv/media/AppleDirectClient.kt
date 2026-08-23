@@ -100,7 +100,7 @@ class AppleDirectClient @Inject constructor() {
                 val a = data.optJSONObject("attributes") ?: JSONObject()
                 val artistId = data.optJSONObject("relationships")?.optJSONObject("artists")
                     ?.optJSONArray("data")?.optJSONObject(0)?.optString("id")?.ifBlank { null }
-                Log.i("AMMV", "details http=${resp.code} artistId=$artistId artist=${a.optString("artistName")}")
+                Log.i("AMMV", "details resolved artistId=$artistId artist=${a.optString("artistName")}")
                 val parts = mutableListOf<String>()
                 a.optJSONArray("genreNames")?.let { g ->
                     if (g.length() > 0) parts.add((0 until g.length()).joinToString(", ") { g.getString(it) })
