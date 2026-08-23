@@ -376,6 +376,19 @@ class MusicVideoViewModel @Inject constructor(
         }
     }
 
+    /** Open the artist page. Uses the resolved id if we have it, else fetches it on demand
+     *  (the details fetch can lag or fail, but the button stays usable). */
+    fun openArtist(navigate: (String) -> Unit) {
+        _state.value.artistId?.let { navigate(it); return }
+        val id = curMvId ?: return
+        viewModelScope.launch {
+            val bearer = appleClient.getBearer(); val mut = mutPrefs.getMUT()
+            if (bearer.isEmpty() || mut.isEmpty()) return@launch
+            val d = withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(id, bearer, mut) }
+            d?.artistId?.let { _state.value = _state.value.copy(artistId = it); navigate(it) }
+        }
+    }
+
     fun togglePlayPause() { player?.let { it.playWhenReady = !it.playWhenReady } }
     fun seekBy(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceAtLeast(0)) } }
     fun seekTo(ms: Long) { player?.seekTo(ms.coerceAtLeast(0)) }

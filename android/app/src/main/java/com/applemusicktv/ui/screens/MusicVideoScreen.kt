@@ -73,10 +73,10 @@ fun MusicVideoScreen(
     val auds = state.audioTracks
 
     // Rows, top→bottom. Empty rows are skipped by up/down.
-    val rows: List<List<MvTarget>> = remember(state.artistId, auds, showOnScreenControls) {
+    val rows: List<List<MvTarget>> = remember(state.artist, auds, showOnScreenControls) {
         buildList {
             add(buildList {
-                if (state.artistId != null) add(MvTarget.ARTIST)
+                if (state.artist.isNotBlank()) add(MvTarget.ARTIST)
                 if (auds.isNotEmpty()) add(MvTarget.AUDIO)
                 add(MvTarget.QUALITY)
                 add(MvTarget.QUEUE)
@@ -161,7 +161,7 @@ fun MusicVideoScreen(
                     Key.DirectionCenter, Key.Enter -> {
                         poke()
                         when (focus) {
-                            MvTarget.ARTIST -> state.artistId?.let { onArtistClick(it) }
+                            MvTarget.ARTIST -> vm.openArtist(onArtistClick)
                             MvTarget.AUDIO -> if (auds.isNotEmpty()) { picker = MvPicker.AUDIO; pickCursor = auds.indexOfFirst { it.index == state.audioIndex }.coerceAtLeast(0) }
                             MvTarget.QUALITY -> { picker = MvPicker.QUALITY; pickCursor = MV_QUALITY_TIERS.indexOf(state.qualityHeight).coerceAtLeast(0) }
                             MvTarget.QUEUE -> { queueCursor = queueIndex.coerceAtLeast(0); vm.toggleQueue() }
