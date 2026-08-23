@@ -211,7 +211,7 @@ fun MusicVideoScreen(
                 val shownPos = scrub ?: state.positionMs
                 val frac = (shownPos.toFloat() / dur).coerceIn(0f, 1f)
                 val scrubbing = scrub != null
-                Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 52.dp, vertical = 34.dp)) {
+                Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 52.dp, end = 52.dp, top = 34.dp, bottom = 20.dp)) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Column(Modifier.weight(1f)) {
                             val artistFocused = focus == MvTarget.ARTIST
@@ -247,7 +247,7 @@ fun MusicVideoScreen(
                     // Media controls sit BELOW the playback bar — small, drawn, centred. Google TV only.
                     if (showOnScreenControls) {
                         Spacer(Modifier.height(14.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                             RoundGlyph(GlyphKind.PREV, focus == MvTarget.PREV, 40.dp)
                             Spacer(Modifier.width(18.dp))
                             RoundGlyph(if (state.playing) GlyphKind.PAUSE else GlyphKind.PLAY, focus == MvTarget.PLAYPAUSE, 48.dp)

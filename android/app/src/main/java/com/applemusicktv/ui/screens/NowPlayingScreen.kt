@@ -1215,13 +1215,6 @@ private fun LyricsPanel(
         if (progressMs <= activeUntil) passedIndex else -1
     } else -1
 
-    // Sustained/held line (Get Lucky): the PREVIOUS word-synced line whose own window still covers
-    // now while the newer line has already started. We PIN it to the top of the lyrics (a sticky
-    // line) and let the finished lines below it fade past — so a long held note stays readable.
-    val pinnedIndex = if (passedIndex > 0) {
-        val p = lyrics[passedIndex - 1]
-        if (p.words.isNotEmpty() && progressMs <= p.endMs && p.endMs > lyrics[passedIndex].startMs) passedIndex - 1 else -1
-    } else -1
     val scrollAnchor = passedIndex.coerceAtLeast(0)
     val firstLoad = remember { mutableStateOf(true) }
 
@@ -1298,27 +1291,6 @@ private fun LyricsPanel(
     // line-synced sources set endMs to the next line's startMs, so nearly every line
     // matched and one was permanently stuck at the top, fading in and out.
     Column(Modifier.fillMaxSize()) {
-    // Pinned sustained line — stays at the top while finished lines scroll/fade below it.
-    val pinned = if (pinnedIndex >= 0) lyrics.getOrNull(pinnedIndex) else null
-    androidx.compose.animation.AnimatedVisibility(
-        visible = pinned != null,
-        enter = androidx.compose.animation.fadeIn(),
-        exit = androidx.compose.animation.fadeOut(),
-    ) {
-        if (pinned != null) {
-            Box(Modifier.fillMaxWidth().padding(start = 0.dp, end = 16.dp, top = 24.dp, bottom = 6.dp)) {
-                LyricLineRow(
-                    line = pinned,
-                    isActive = true,
-                    isPast = false,
-                    progress = liveProgress,
-                    fontScale = fontScale,
-                    focusRequester = null,
-                    onSeek = { onSeek(pinned.startMs) },
-                )
-            }
-        }
-    }
     LazyColumn(
         state = listState,
         modifier = Modifier.weight(1f).padding(end = 16.dp).nestedScroll(nestedScrollConnection)
@@ -1374,10 +1346,11 @@ private fun LyricsPanel(
             // Unsynced (plain-text) lyrics come back with startMs = -1. Show them so
             // the panel isn't empty, but never highlighted and never seekable.
             val unsynced = line.startMs < 0
-            // The sustained line is rendered pinned at the top (above the list), so skip it here to
-            // avoid drawing it twice.
-            if (idx == pinnedIndex) return@items
-            val isActive = !unsynced && idx == activeIndex
+            // Sustained/held line stays lit in-flow while its own window still covers now (Get Lucky).
+            val overlapActive = !unsynced && line.words.isNotEmpty() &&
+                progressMs >= line.startMs && progressMs <= line.endMs &&
+                (idx + 1 >= lyrics.size || line.endMs > lyrics[idx + 1].startMs)
+            val isActive = (!unsynced && idx == activeIndex) || overlapActive
             val isPast = !unsynced && (idx < passedIndex || (idx == passedIndex && activeIndex == -1))
             // Only the active line reads the live per-frame clock (so only it recomposes
             // at 60fps). Inactive lines get a fixed value and never re-run on tick.

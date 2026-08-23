@@ -214,7 +214,7 @@ class AppleDirectClient @Inject constructor() {
      * demand (nothing but the tiny m3u8 files touches disk). Returns the playlist texts —
      * the caller writes the three files and plays the master via file://.
      */
-    suspend fun getMusicVideoPlayback(mvId: String, bearer: String, mut: String): MusicVideoResult =
+    suspend fun getMusicVideoPlayback(mvId: String, bearer: String, mut: String, maxHeight: Int = 1080): MusicVideoResult =
         withContext(Dispatchers.IO) {
             val numeric = mvId.replace(Regex("^[a-z]+\\."), "")
             val forms = listOf("salableAdamId", "universalLibraryId")
@@ -257,8 +257,12 @@ class AppleDirectClient @Inject constructor() {
                     variants.add(V(h, lines[i].removePrefix("#EXT-X-STREAM-INF:"), uri))
                 }
             }
-            val vPick = variants.filter { it.height in 1..1080 }.maxByOrNull { it.height }
+            // Pick the best variant at or below the requested quality; fall back to the lowest
+            // available if the video offers nothing that small.
+            val vPick = variants.filter { it.height in 1..maxHeight }.maxByOrNull { it.height }
+                ?: variants.filter { it.height > 0 }.minByOrNull { it.height }
                 ?: variants.maxByOrNull { it.height } ?: error("No video variant in MV master")
+            Log.i("AMMV", "quality cap=${maxHeight}p → picked ${vPick.height}p (avail=${variants.map { it.height }})")
 
             // The audio group this variant references, else the first/highest audio rendition.
             val wantGroup = Regex("""AUDIO="([^"]+)"""").find(vPick.attrs)?.groupValues?.get(1)

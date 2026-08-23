@@ -70,15 +70,24 @@ class MusicVideoViewModel @Inject constructor(
     private val _state = MutableStateFlow(MvUiState(qualityHeight = qualityHeight))
     val state: StateFlow<MvUiState> = _state
 
-    /** Pick a quality tier, persist it globally, and apply live to the current video. */
-    @OptIn(UnstableApi::class)
+    // The video currently loaded — so a quality change can rebuild it at the new tier and resume.
+    private var curMvId: String? = null
+    private var curTitle = ""
+    private var curArtist = ""
+    private var pendingSeekMs = 0L
+
+    /** Pick a quality tier, persist globally, and RELOAD the current video at that tier.
+     *  The MV master we build carries a single video variant (chosen by height), so there is
+     *  nothing to switch in-session — quality only changes by rebuilding the playlist. */
     fun setQuality(height: Int) {
+        if (height == qualityHeight) return
         qualityHeight = height
         prefs.edit().putInt("quality_height", qualityHeight).apply()
         _state.value = _state.value.copy(qualityHeight = qualityHeight)
-        trackSelector?.let { ts ->
-            ts.parameters = ts.buildUponParameters().setMaxVideoSize(3840, qualityHeight).build()
-        }
+        prefetchCache.clear()   // cached masters are the old quality now
+        val id = curMvId ?: return
+        pendingSeekMs = player?.currentPosition ?: 0L
+        playItem(id, curTitle, curArtist)
     }
 
     // Whether a video is currently loaded/active. Hoisted in AppShell so the video survives
@@ -130,7 +139,7 @@ class MusicVideoViewModel @Inject constructor(
             try {
                 val bearer = appleClient.getBearer(); val mut = mutPrefs.getMUT()
                 if (bearer.isEmpty() || mut.isEmpty()) return@launch
-                val mv = withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut) }
+                val mv = withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, qualityHeight) }
                 prefetchCache[mvId] = mv
                 if (prefetchCache.size > 3) prefetchCache.keys.firstOrNull { it != mvId }?.let { prefetchCache.remove(it) }
             } catch (_: Exception) {} finally { if (prefetchingId == mvId) prefetchingId = null }
@@ -171,6 +180,7 @@ class MusicVideoViewModel @Inject constructor(
     @OptIn(UnstableApi::class)
     private fun playItem(mvId: String, title: String, artist: String) {
         releasePlayer()
+        curMvId = mvId; curTitle = title; curArtist = artist
         _state.value = MvUiState(loading = true, title = title, artist = artist, qualityHeight = qualityHeight)
         viewModelScope.launch {
             try {
@@ -182,7 +192,7 @@ class MusicVideoViewModel @Inject constructor(
                 }
                 // Use the prefetched result if the queue warmed this id ahead of time.
                 val mv = prefetchCache.remove(mvId)
-                    ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut) }
+                    ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, qualityHeight) }
 
                 // Write the corrected master + media playlists to disk; ExoPlayer plays
                 // the master via file:// and streams the mvod segments they reference.
@@ -241,6 +251,8 @@ class MusicVideoViewModel @Inject constructor(
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_READY) {
+                            // Resume position after a quality-change reload.
+                            if (pendingSeekMs > 0) { exo.seekTo(pendingSeekMs); pendingSeekMs = 0 }
                             _state.value = _state.value.copy(loading = false, durationMs = exo.duration.coerceAtLeast(0))
                         } else if (state == Player.STATE_ENDED) {
                             // Auto-advance through the queue, exactly like the audio player.
