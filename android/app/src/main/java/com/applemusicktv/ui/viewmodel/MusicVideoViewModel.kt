@@ -148,9 +148,11 @@ class MusicVideoViewModel @Inject constructor(
         }
     }
 
-    /** Start (or replace) the active video. Callers seed [VideoQueue] first for prev/next. */
-    fun show(mvId: String, title: String, artist: String) {
+    /** Start (or replace) the active video. startPaused=true loads it but does NOT play (used when
+     *  restoring on app open — reopening shouldn't blast a video's audio). */
+    fun show(mvId: String, title: String, artist: String, startPaused: Boolean = false) {
         _active.value = true
+        userPaused = startPaused
         load(mvId, title, artist)
     }
 
@@ -247,10 +249,9 @@ class MusicVideoViewModel @Inject constructor(
                     .build()
                 exo.setMediaSource(source)
                 exo.prepare()
-                userPaused = false
-                // Only start playing if the Now Playing screen is showing it (don't autoplay a video
-                // that auto-advanced in while the user is on another screen).
-                exo.playWhenReady = screenVisible
+                // Play only if the screen is showing it AND the user hasn't paused / it wasn't loaded
+                // paused (restore). userPaused is set by show()/togglePlayPause, so DON'T reset it here.
+                exo.playWhenReady = screenVisible && !userPaused
                 exo.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _state.value = _state.value.copy(playing = isPlaying)

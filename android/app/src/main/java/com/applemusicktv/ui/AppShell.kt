@@ -113,7 +113,7 @@ fun AppShell(modifier: Modifier = Modifier) {
     LaunchedEffect(videoReq?.song?.id) {
         val v = videoReq
         if (v != null) {
-            mvVm.show(v.song.id, v.song.title, v.song.artistName)
+            mvVm.show(v.song.id, v.song.title, v.song.artistName, startPaused = v.startPaused)
             // Only an explicit pick jumps to Now Playing. Auto-advance / skip keep the user
             // on whatever page they're on — the video keeps playing and shows when they visit.
             if (v.autoOpen) {

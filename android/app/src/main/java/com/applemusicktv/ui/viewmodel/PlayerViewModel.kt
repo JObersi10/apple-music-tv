@@ -195,7 +195,7 @@ class PlayerViewModel @Inject constructor(
     // autoOpen=true only when the user EXPLICITLY picked the video (tapped it in a list) — that
     // jumps to Now Playing. Auto-advance / skip keep it false so the video plays without yanking
     // the user off whatever page they're browsing; they just see it when they visit Now Playing.
-    data class VideoRequest(val song: Song, val autoOpen: Boolean)
+    data class VideoRequest(val song: Song, val autoOpen: Boolean, val startPaused: Boolean = false)
     private val _videoRequest = MutableStateFlow<VideoRequest?>(null)
     val videoRequest: StateFlow<VideoRequest?> = _videoRequest
     fun clearVideoRequest() { _videoRequest.value = null }
@@ -815,7 +815,7 @@ class PlayerViewModel @Inject constructor(
             if (song.isMusicVideo) {
                 webServer.addLog("PLR", "restoreState idx=$idx VIDEO ${song.title}")
                 player.pause()
-                _videoRequest.value = VideoRequest(song, autoOpen = false)
+                _videoRequest.value = VideoRequest(song, autoOpen = false, startPaused = true)
                 return@launch
             }
             val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
