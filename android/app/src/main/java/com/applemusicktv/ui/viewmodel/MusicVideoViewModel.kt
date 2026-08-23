@@ -70,11 +70,10 @@ class MusicVideoViewModel @Inject constructor(
     private val _state = MutableStateFlow(MvUiState(qualityHeight = qualityHeight))
     val state: StateFlow<MvUiState> = _state
 
-    /** Cycle to the next quality tier (480→720→1080→4K→480), persist, apply live. */
+    /** Pick a quality tier, persist it globally, and apply live to the current video. */
     @OptIn(UnstableApi::class)
-    fun cycleQuality() {
-        val i = MV_QUALITY_TIERS.indexOf(qualityHeight).let { if (it < 0) 2 else it }
-        qualityHeight = MV_QUALITY_TIERS[(i + 1) % MV_QUALITY_TIERS.size]
+    fun setQuality(height: Int) {
+        qualityHeight = height
         prefs.edit().putInt("quality_height", qualityHeight).apply()
         _state.value = _state.value.copy(qualityHeight = qualityHeight)
         trackSelector?.let { ts ->

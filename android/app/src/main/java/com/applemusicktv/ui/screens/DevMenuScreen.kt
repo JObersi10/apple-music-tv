@@ -171,6 +171,30 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
 
+            SectionLabel("Remote")
+            var remote by remember { mutableStateOf(playerVm.remoteOverride()) }
+            val remoteOrder = listOf(
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_AUTO,
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_FIRE,
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_GOOGLE,
+            )
+            fun remoteLabel(v: String) = when (v) {
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_FIRE -> "Fire TV"
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_GOOGLE -> "Google TV"
+                else -> "Automatic"
+            }
+            fun stepRemote(dir: Int) {
+                val i = (remoteOrder.indexOf(remote).coerceAtLeast(0) + dir + remoteOrder.size) % remoteOrder.size
+                remote = remoteOrder[i]; playerVm.setRemoteOverride(remote)
+            }
+            Stepper(
+                label = "Remote type",
+                value = remoteLabel(remote),
+                sub = "Google TV shows on-screen media + queue controls; Fire TV uses the Menu key",
+                onDec = { stepRemote(-1) },
+                onInc = { stepRemote(1) },
+            )
+
             // ── A/V SYNC ──────────────────────────────────────────────────
             // One delay drives both the beat visuals and the lyric clock. A ~200 ms display baseline is
             // built in (so this normally reads 0); Automatic adds a Bluetooth estimate on top when a BT

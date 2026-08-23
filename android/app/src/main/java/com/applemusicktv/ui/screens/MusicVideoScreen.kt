@@ -2,8 +2,14 @@ package com.applemusicktv.ui.screens
 
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -25,28 +31,28 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.util.UnstableApi
 import androidx.tv.material3.Text
+import com.applemusicktv.ui.viewmodel.MV_QUALITY_TIERS
 import com.applemusicktv.ui.viewmodel.MusicVideoViewModel
-import com.applemusicktv.ui.viewmodel.SubtitleOption
 import com.applemusicktv.ui.viewmodel.qualityLabel
 import kotlinx.coroutines.delay
 
 /** One focusable control in the video player. */
-private enum class MvTarget { ARTIST, AUDIO, QUALITY, QUEUE, PREV, PLAYPAUSE, NEXT, SCRUB, INFO }
+private enum class MvTarget { ARTIST, AUDIO, QUALITY, QUEUE, SCRUB, PREV, PLAYPAUSE, NEXT }
+private enum class MvPicker { NONE, AUDIO, QUALITY }
 
 @OptIn(UnstableApi::class)
 @androidx.compose.runtime.Composable
 fun MusicVideoScreen(
     vm: MusicVideoViewModel,
-    onExit: () -> Unit,       // Back once the chrome is gone: leave the screen (video keeps playing)
-    onFocusUp: () -> Unit,    // Up from the top row → move focus to the nav bar
+    onExit: () -> Unit,
+    onFocusUp: () -> Unit,
     onArtistClick: (String) -> Unit = {},
-    showOnScreenControls: Boolean = false,  // Google TV remotes: draw prev/play/next on screen
+    showOnScreenControls: Boolean = false,   // Google TV remotes: draw prev/play/next on screen
     queue: List<com.applemusicktv.data.model.Song> = emptyList(),
     queueIndex: Int = 0,
     onPickQueueItem: (Int) -> Unit = {},
@@ -59,15 +65,14 @@ fun MusicVideoScreen(
 
     var controls by remember { mutableStateOf(true) }
     var focus by remember { mutableStateOf(MvTarget.SCRUB) }
-    var audioPicker by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf(MvPicker.NONE) }
     var pickCursor by remember { mutableIntStateOf(0) }
-    var showInfo by remember { mutableStateOf(false) }
     var scrub by remember { mutableStateOf<Long?>(null) }
     var poke by remember { mutableIntStateOf(0) }
 
     val auds = state.audioTracks
 
-    // The rows of the control layout, top→bottom. Empty rows are skipped by up/down.
+    // Rows, top→bottom. Empty rows are skipped by up/down.
     val rows: List<List<MvTarget>> = remember(state.artistId, auds, showOnScreenControls) {
         buildList {
             add(buildList {
@@ -76,9 +81,8 @@ fun MusicVideoScreen(
                 add(MvTarget.QUALITY)
                 add(MvTarget.QUEUE)
             })
-            if (showOnScreenControls) add(listOf(MvTarget.PREV, MvTarget.PLAYPAUSE, MvTarget.NEXT))
             add(listOf(MvTarget.SCRUB))
-            add(listOf(MvTarget.INFO))
+            if (showOnScreenControls) add(listOf(MvTarget.PREV, MvTarget.PLAYPAUSE, MvTarget.NEXT))
         }
     }
     fun rowOf(t: MvTarget) = rows.indexOfFirst { it.contains(t) }
@@ -94,8 +98,8 @@ fun MusicVideoScreen(
         if (c in rows[r].indices) focus = rows[r][c]
     }
 
-    LaunchedEffect(poke, audioPicker, showInfo, state.playing) {
-        if (audioPicker || showInfo || !state.playing) { controls = true; return@LaunchedEffect }
+    LaunchedEffect(poke, picker, showQueue, state.playing) {
+        if (picker != MvPicker.NONE || showQueue || !state.playing) { controls = true; return@LaunchedEffect }
         controls = true
         delay(3000)
         controls = false
@@ -125,23 +129,21 @@ fun MusicVideoScreen(
                         else -> true
                     }
                 } else if (ev.key == Key.Menu) { queueCursor = queueIndex.coerceAtLeast(0); vm.toggleQueue(); true }
-                else if (audioPicker) {
+                else if (picker != MvPicker.NONE) {
+                    val count = if (picker == MvPicker.AUDIO) auds.size else MV_QUALITY_TIERS.size
                     when (ev.key) {
-                        Key.Back -> { audioPicker = false; poke(); true }
+                        Key.Back -> { picker = MvPicker.NONE; poke(); true }
                         Key.DirectionUp -> { if (pickCursor > 0) pickCursor--; true }
-                        Key.DirectionDown -> { if (pickCursor < auds.size - 1) pickCursor++; true }
+                        Key.DirectionDown -> { if (pickCursor < count - 1) pickCursor++; true }
                         Key.DirectionCenter, Key.Enter -> {
-                            auds.getOrNull(pickCursor)?.let { vm.setAudio(it.index) }
-                            audioPicker = false; poke(); true
+                            if (picker == MvPicker.AUDIO) auds.getOrNull(pickCursor)?.let { vm.setAudio(it.index) }
+                            else MV_QUALITY_TIERS.getOrNull(pickCursor)?.let { vm.setQuality(it) }
+                            picker = MvPicker.NONE; poke(); true
                         }
                         else -> true
                     }
                 } else when (ev.key) {
-                    Key.Back -> when {
-                        showInfo -> { showInfo = false; true }
-                        controls -> { controls = false; true }
-                        else -> { onExit(); true }
-                    }
+                    Key.Back -> if (controls) { controls = false; true } else { onExit(); true }
                     Key.DirectionUp -> { poke(); scrub = null; moveRow(-1) }
                     Key.DirectionDown -> { poke(); scrub = null; moveRow(1) }
                     Key.DirectionLeft -> {
@@ -159,10 +161,9 @@ fun MusicVideoScreen(
                     Key.DirectionCenter, Key.Enter -> {
                         poke()
                         when (focus) {
-                            MvTarget.INFO -> showInfo = !showInfo
                             MvTarget.ARTIST -> state.artistId?.let { onArtistClick(it) }
-                            MvTarget.AUDIO -> if (auds.isNotEmpty()) { audioPicker = true; pickCursor = auds.indexOfFirst { it.index == state.audioIndex }.coerceAtLeast(0) }
-                            MvTarget.QUALITY -> vm.cycleQuality()
+                            MvTarget.AUDIO -> if (auds.isNotEmpty()) { picker = MvPicker.AUDIO; pickCursor = auds.indexOfFirst { it.index == state.audioIndex }.coerceAtLeast(0) }
+                            MvTarget.QUALITY -> { picker = MvPicker.QUALITY; pickCursor = MV_QUALITY_TIERS.indexOf(state.qualityHeight).coerceAtLeast(0) }
                             MvTarget.QUEUE -> { queueCursor = queueIndex.coerceAtLeast(0); vm.toggleQueue() }
                             MvTarget.PREV -> vm.prev()
                             MvTarget.PLAYPAUSE -> vm.togglePlayPause()
@@ -176,8 +177,8 @@ fun MusicVideoScreen(
         contentAlignment = Alignment.Center,
     ) {
         if (state.loading) CircularProgressIndicator(
-            color = Color(0xFFFA233B), strokeWidth = 3.dp,
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 52.dp).size(26.dp),
+            color = Color.White, strokeWidth = 3.dp,
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 52.dp, bottom = 54.dp).size(26.dp),
         )
 
         if (state.error != null) {
@@ -188,148 +189,106 @@ fun MusicVideoScreen(
             }
         }
 
-        // ── Captions (WebVTT only; muxed CEA-608 in secure video can't be extracted) ──
+        // Captions (WebVTT; muxed CEA-608 in secure video can't be extracted).
         val captionText = cues.mapNotNull { it.text?.toString()?.trim()?.ifBlank { null } }.joinToString("\n")
         if (captionText.isNotEmpty()) {
-            Box(
-                Modifier.align(Alignment.BottomCenter)
-                    .padding(bottom = if (controls) 190.dp else 56.dp, start = 48.dp, end = 48.dp),
-            ) {
+            Box(Modifier.align(Alignment.BottomCenter).padding(bottom = if (controls) 200.dp else 60.dp, start = 48.dp, end = 48.dp)) {
                 Text(captionText, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xB3000000)).padding(horizontal = 12.dp, vertical = 4.dp))
-            }
-        }
-
-        // ── On-screen media controls (Google TV) — centred, a bit below middle ──
-        if (showOnScreenControls) {
-            AnimatedVisibility(
-                visible = controls && !state.loading && state.error == null,
-                enter = fadeIn(), exit = fadeOut(),
-                modifier = Modifier.align(BiasAlignment(0f, 0.25f)),
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(22.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RoundControl("⏮", focus == MvTarget.PREV)
-                    RoundControl(if (state.playing) "⏸" else "▶", focus == MvTarget.PLAYPAUSE, big = true)
-                    RoundControl("⏭", focus == MvTarget.NEXT)
-                }
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Color(0xB3000000)).padding(horizontal = 14.dp, vertical = 6.dp))
             }
         }
 
         // ── Transport overlay ────────────────────────────────────────────────
+        val chromeVisible = controls && !state.loading && state.error == null
         AnimatedVisibility(
-            visible = controls && !state.loading && state.error == null,
-            enter = fadeIn(), exit = fadeOut(),
+            visible = chromeVisible,
+            enter = fadeIn(spring(stiffness = Spring.StiffnessMedium)),
+            exit = fadeOut(spring(stiffness = Spring.StiffnessMedium)),
             modifier = Modifier.align(Alignment.BottomStart).fillMaxSize(),
         ) {
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color(0xCC000000)))) {
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color(0xE6000000)))) {
                 val dur = state.durationMs.coerceAtLeast(1)
                 val shownPos = scrub ?: state.positionMs
                 val frac = (shownPos.toFloat() / dur).coerceIn(0f, 1f)
                 val scrubbing = scrub != null
-                Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 48.dp, vertical = 30.dp)) {
+                Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 52.dp, vertical = 34.dp)) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Column(Modifier.weight(1f)) {
                             val artistFocused = focus == MvTarget.ARTIST
                             Box(
-                                Modifier.clip(RoundedCornerShape(6.dp))
+                                Modifier.clip(RoundedCornerShape(8.dp))
                                     .background(if (artistFocused) Color(0x33FFFFFF) else Color.Transparent)
-                                    .padding(horizontal = if (artistFocused) 8.dp else 0.dp, vertical = if (artistFocused) 3.dp else 0.dp),
+                                    .padding(horizontal = if (artistFocused) 9.dp else 0.dp, vertical = if (artistFocused) 3.dp else 0.dp),
                             ) {
-                                Text(state.artist, color = if (artistFocused) Color.White else Color(0xCCFFFFFF), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                Text(state.artist, color = if (artistFocused) Color.White else Color(0xB3FFFFFF),
+                                    fontSize = 15.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.2.sp)
                             }
-                            Spacer(Modifier.height(2.dp))
-                            Text(state.title, color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(3.dp))
+                            Text(state.title, color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp)
                         }
-                        if (auds.isNotEmpty()) { OverlayIcon("A", focus == MvTarget.AUDIO, false); Spacer(Modifier.width(14.dp)) }
-                        // Quality button — cycles 480/720/1080/4K, remembered for all videos.
-                        OverlayPill(qualityLabel(state.qualityHeight), focus == MvTarget.QUALITY)
-                        Spacer(Modifier.width(14.dp))
-                        OverlayIcon("≡", focus == MvTarget.QUEUE, false)
+                        if (auds.isNotEmpty()) { PillButton("Audio", focus == MvTarget.AUDIO); Spacer(Modifier.width(10.dp)) }
+                        PillButton(qualityLabel(state.qualityHeight), focus == MvTarget.QUALITY); Spacer(Modifier.width(10.dp))
+                        RoundGlyph(GlyphKind.QUEUE, focus == MvTarget.QUEUE, 44.dp)
                     }
-                    Spacer(Modifier.height(16.dp))
-                    Box(
-                        Modifier.fillMaxWidth().height(if (focus == MvTarget.SCRUB) 6.dp else 4.dp)
-                            .clip(RoundedCornerShape(3.dp)).background(Color(0x40FFFFFF)),
-                    ) {
-                        Box(Modifier.fillMaxWidth(frac).fillMaxHeight().clip(RoundedCornerShape(3.dp))
+                    Spacer(Modifier.height(18.dp))
+                    // Progress bar
+                    val barH = if (focus == MvTarget.SCRUB) 7.dp else 4.dp
+                    Box(Modifier.fillMaxWidth().height(barH).clip(RoundedCornerShape(50)).background(Color(0x40FFFFFF))) {
+                        Box(Modifier.fillMaxWidth(frac).fillMaxHeight().clip(RoundedCornerShape(50))
                             .background(if (focus == MvTarget.SCRUB) Color.White else Color(0xE6FFFFFF)))
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(9.dp))
                     Box(Modifier.fillMaxWidth()) {
-                        Row(
-                            Modifier.align(BiasAlignment(horizontalBias = frac * 2f - 1f, verticalBias = 0f)),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(fmt(shownPos), color = if (scrubbing) Color(0xFFFA233B) else Color.White, fontSize = 13.sp)
-                            Spacer(Modifier.width(8.dp))
-                            PlayPauseGlyph(playing = state.playing)
+                        Text(fmt(shownPos), color = if (scrubbing) Color.White else Color(0xE6FFFFFF), fontSize = 13.sp,
+                            fontWeight = if (scrubbing) FontWeight.Bold else FontWeight.Medium,
+                            modifier = Modifier.align(BiasAlignment(horizontalBias = frac * 2f - 1f, verticalBias = 0f)))
+                        Text("-" + fmt(dur - shownPos), color = Color(0x99FFFFFF), fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterEnd))
+                    }
+                    // Media controls sit BELOW the playback bar — small, drawn, centred. Google TV only.
+                    if (showOnScreenControls) {
+                        Spacer(Modifier.height(14.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                            RoundGlyph(GlyphKind.PREV, focus == MvTarget.PREV, 40.dp)
+                            Spacer(Modifier.width(18.dp))
+                            RoundGlyph(if (state.playing) GlyphKind.PAUSE else GlyphKind.PLAY, focus == MvTarget.PLAYPAUSE, 48.dp)
+                            Spacer(Modifier.width(18.dp))
+                            RoundGlyph(GlyphKind.NEXT, focus == MvTarget.NEXT, 40.dp)
                         }
-                        Text("-" + fmt(dur - shownPos), color = Color(0xCCFFFFFF), fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterEnd))
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Box(
-                        Modifier.clip(RoundedCornerShape(8.dp))
-                            .background(if (focus == MvTarget.INFO) Color(0x33FFFFFF) else Color.Transparent)
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                    ) {
-                        Text("Info", color = if (focus == MvTarget.INFO) Color.White else Color(0xB3FFFFFF), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
         }
 
-        // Info panel
-        androidx.compose.animation.AnimatedVisibility(
-            visible = showInfo,
-            enter = androidx.compose.animation.slideInVertically(initialOffsetY = { it }) + fadeIn(),
-            exit = androidx.compose.animation.slideOutVertically(targetOffsetY = { it }) + fadeOut(),
-            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
+        // ── Up-Next queue panel (right side) — translucent, rounded, slides in ──
+        AnimatedVisibility(
+            visible = showQueue,
+            enter = slideInVertically(spring(stiffness = Spring.StiffnessMediumLow), initialOffsetY = { it / 6 }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it / 6 }) + fadeOut(),
+            modifier = Modifier.align(Alignment.CenterEnd),
         ) {
-            Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(0f to Color.Transparent, 0.4f to Color(0xF2000000), 1f to Color(0xF2000000)))) {
-                Column(Modifier.padding(horizontal = 48.dp, vertical = 32.dp)) {
-                    Text(state.title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(state.artist, color = Color(0xCCFFFFFF), fontSize = 16.sp)
-                    if (!state.info.isNullOrBlank()) {
-                        Spacer(Modifier.height(16.dp))
-                        Text(state.info!!, color = Color(0xCCFFFFFF), fontSize = 15.sp, lineHeight = 22.sp)
-                    }
-                }
-            }
-        }
-
-        // ── Up-Next queue panel (right side, Apple TV style) ─────────────────
-        if (showQueue) {
-            Box(
-                Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(360.dp)
-                    .background(Color(0xF21A1A1C)).padding(vertical = 24.dp),
-            ) {
-                LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
+            Box(Modifier.fillMaxHeight().padding(14.dp).width(360.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xF21C1C1E)).padding(vertical = 22.dp)) {
+                LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     item {
-                        Text("UP NEXT", color = Color(0xFF9A9A9A), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(bottom = 12.dp))
+                        Text("Up Next", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                            letterSpacing = (-0.3).sp, modifier = Modifier.padding(bottom = 14.dp))
                     }
                     itemsIndexed(queue) { i, song ->
                         val sel = i == queueCursor
                         val nowPlaying = i == queueIndex
                         Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                                .background(if (sel) Color(0x33FFFFFF) else Color.Transparent)
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                .background(if (sel) Color(0x26FFFFFF) else Color.Transparent)
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             if (song.isMusicVideo)
-                                Box(Modifier.clip(RoundedCornerShape(3.dp)).background(Color(0xFFFA233B)).padding(horizontal = 4.dp, vertical = 1.dp)) {
+                                Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 5.dp, vertical = 1.dp)) {
                                     Text("MV", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
                                 }
                             Column(Modifier.weight(1f)) {
                                 Text(song.title, color = if (nowPlaying) Color(0xFFFA233B) else Color.White, fontSize = 14.sp,
                                     fontWeight = if (nowPlaying) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
-                                Text(song.artistName, color = Color(0xFF888888), fontSize = 11.sp, maxLines = 1)
+                                Text(song.artistName, color = Color(0x99FFFFFF), fontSize = 11.sp, maxLines = 1)
                             }
                         }
                     }
@@ -337,23 +296,22 @@ fun MusicVideoScreen(
             }
         }
 
-        // ── Audio picker ─────────────────────────────────────────────────────
-        if (audioPicker) {
-            Box(
-                Modifier.align(Alignment.BottomEnd).padding(end = 48.dp, bottom = 176.dp)
-                    .width(240.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xF2222222)).padding(vertical = 10.dp),
-            ) {
+        // ── Audio / Quality picker — pops from its button (bottom-right) ──
+        AnimatedVisibility(
+            visible = picker != MvPicker.NONE,
+            enter = scaleIn(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMedium), initialScale = 0.9f) + fadeIn(),
+            exit = scaleOut(targetScale = 0.9f) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 52.dp, bottom = 190.dp),
+        ) {
+            val title = if (picker == MvPicker.AUDIO) "Audio" else "Quality"
+            Box(Modifier.width(230.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xF21C1C1E)).padding(vertical = 10.dp)) {
                 Column {
-                    Text("AUDIO", color = Color(0xFF9A9A9A), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                    Text(title, color = Color(0x99FFFFFF), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp))
-                    auds.forEachIndexed { i, opt ->
-                        Row(
-                            Modifier.fillMaxWidth().background(if (i == pickCursor) Color(0x22FFFFFF) else Color.Transparent).padding(horizontal = 18.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(opt.label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                            if (opt.index == state.audioIndex) Text("✓", color = Color.White, fontSize = 15.sp)
-                        }
+                    if (picker == MvPicker.AUDIO) {
+                        auds.forEachIndexed { i, opt -> PickerRow(opt.label, i == pickCursor, opt.index == state.audioIndex) }
+                    } else {
+                        MV_QUALITY_TIERS.forEachIndexed { i, h -> PickerRow(qualityLabel(h), i == pickCursor, h == state.qualityHeight) }
                     }
                 }
             }
@@ -361,57 +319,73 @@ fun MusicVideoScreen(
     }
 }
 
-/** A small circular transport button styled like the reference: filled when focused. */
 @androidx.compose.runtime.Composable
-private fun OverlayIcon(glyph: String, focused: Boolean, active: Boolean) {
-    Box(
-        Modifier.size(42.dp).clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color(0x33FFFFFF)),
-        contentAlignment = Alignment.Center,
+private fun PickerRow(label: String, cursor: Boolean, selected: Boolean) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp).clip(RoundedCornerShape(10.dp))
+            .background(if (cursor) Color(0x26FFFFFF) else Color.Transparent).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(glyph, color = if (focused) Color.Black else if (active) Color.White else Color(0xCCFFFFFF), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
+        if (selected) CheckGlyph()
     }
 }
 
-/** A pill button (used for the quality label). */
+/** A translucent rounded pill (audio / quality label). */
 @androidx.compose.runtime.Composable
-private fun OverlayPill(label: String, focused: Boolean) {
+private fun PillButton(label: String, focused: Boolean) {
     Box(
-        Modifier.height(42.dp).clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color(0x33FFFFFF)).padding(horizontal = 16.dp),
+        Modifier.height(44.dp).clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color(0x2EFFFFFF)).padding(horizontal = 18.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = if (focused) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = if (focused) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
-/** A large round on-screen control (Google TV prev/play/next). */
+private enum class GlyphKind { PREV, NEXT, PLAY, PAUSE, QUEUE }
+
+/** A round translucent button with a DRAWN glyph — no emoji. */
 @androidx.compose.runtime.Composable
-private fun RoundControl(glyph: String, focused: Boolean, big: Boolean = false) {
-    val sz = if (big) 66.dp else 52.dp
+private fun RoundGlyph(kind: GlyphKind, focused: Boolean, size: androidx.compose.ui.unit.Dp) {
+    val fg = if (focused) Color.Black else Color.White
     Box(
-        Modifier.size(sz).clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color(0x55000000)),
+        Modifier.size(size).clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color(0x2EFFFFFF)),
         contentAlignment = Alignment.Center,
     ) {
-        Text(glyph, color = if (focused) Color.Black else Color.White, fontSize = if (big) 26.sp else 20.sp)
-    }
-}
-
-/** Drawn (not emoji) transport glyph in the scrub row: play triangle while playing, pause bars while paused. */
-@androidx.compose.runtime.Composable
-private fun PlayPauseGlyph(playing: Boolean) {
-    Canvas(Modifier.size(13.dp)) {
-        if (playing) {
-            val path = Path().apply {
-                moveTo(size.width * 0.1f, 0f)
-                lineTo(size.width, size.height / 2f)
-                lineTo(size.width * 0.1f, size.height)
-                close()
+        Canvas(Modifier.size(size * 0.4f)) {
+            val w = this.size.width; val h = this.size.height
+            when (kind) {
+                GlyphKind.PLAY -> drawPath(Path().apply { moveTo(w * 0.12f, 0f); lineTo(w, h / 2f); lineTo(w * 0.12f, h); close() }, fg)
+                GlyphKind.PAUSE -> {
+                    val bw = w * 0.28f
+                    drawRect(fg, Offset(w * 0.14f, 0f), Size(bw, h))
+                    drawRect(fg, Offset(w * 0.58f, 0f), Size(bw, h))
+                }
+                GlyphKind.NEXT -> {
+                    drawPath(Path().apply { moveTo(0f, 0f); lineTo(w * 0.5f, h / 2f); lineTo(0f, h); close() }, fg)
+                    drawPath(Path().apply { moveTo(w * 0.45f, 0f); lineTo(w * 0.95f, h / 2f); lineTo(w * 0.45f, h); close() }, fg)
+                    drawRect(fg, Offset(w * 0.9f, 0f), Size(w * 0.12f, h))
+                }
+                GlyphKind.PREV -> {
+                    drawRect(fg, Offset(0f, 0f), Size(w * 0.12f, h))
+                    drawPath(Path().apply { moveTo(w * 0.55f, 0f); lineTo(w * 0.1f, h / 2f); lineTo(w * 0.55f, h); close() }, fg)
+                    drawPath(Path().apply { moveTo(w, 0f); lineTo(w * 0.55f, h / 2f); lineTo(w, h); close() }, fg)
+                }
+                GlyphKind.QUEUE -> {
+                    val sw = h * 0.16f
+                    for (r in 0..2) drawRect(fg, Offset(0f, r * h * 0.42f), Size(w, sw))
+                }
             }
-            drawPath(path, Color.White)
-        } else {
-            val bw = size.width * 0.3f
-            drawRect(Color.White, topLeft = Offset(size.width * 0.12f, 0f), size = Size(bw, size.height))
-            drawRect(Color.White, topLeft = Offset(size.width * 0.58f, 0f), size = Size(bw, size.height))
         }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun CheckGlyph() {
+    Canvas(Modifier.size(14.dp)) {
+        val w = size.width; val h = size.height
+        val p = Path().apply { moveTo(w * 0.1f, h * 0.55f); lineTo(w * 0.4f, h * 0.85f); lineTo(w * 0.95f, h * 0.15f) }
+        drawPath(p, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(width = h * 0.14f))
     }
 }
 
