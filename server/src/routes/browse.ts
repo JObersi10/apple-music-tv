@@ -206,7 +206,7 @@ browse.get("/", async (c) => {
   const mut = c.req.header("X-Music-User-Token") || getMUT();
   const sf = getStorefront() || "us";
   const h = hdrs(mut);
-  const sections: Array<{ title: string; albums: any[] }> = [];
+  const sections: Array<{ title: string; albums?: any[]; videos?: any[] }> = [];
 
   // 1. Charts: trending songs
   try {
@@ -263,6 +263,17 @@ browse.get("/", async (c) => {
         albums: chart.data.map((item: any) => { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }).filter(Boolean),
       });
     }
+  } catch {}
+
+  // 3b. Music Videos — the charted music-video shelf (routes into the fullscreen video player).
+  try {
+    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, {
+      params: { types: "music-videos", limit: 24 },
+      headers: h,
+    });
+    const chart = res.data?.results?.["music-videos"]?.[0];
+    const videos = (chart?.data ?? []).map(normaliseSong).filter((v: any) => v.artworkUrl);
+    if (videos.length) sections.push({ title: chart?.name || "Music Videos", videos });
   } catch {}
 
   // 4. Editorial playlists by category keyword search

@@ -10,6 +10,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -32,13 +33,17 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-data class GenreChip(val id: String, val name: String)
+/** A Browse shelf — albums/playlists OR a music-video row (mirrors Apple's Browse page). */
+data class BrowseShelf(
+    val title: String,
+    val albums: List<com.applemusicktv.data.model.Album> = emptyList(),
+    val videos: List<com.applemusicktv.data.model.Song> = emptyList(),
+)
 
 data class BrowseUiState(
     val isLoading: Boolean           = true,
     val error:     String?           = null,
-    val sections:  List<HomeSection> = emptyList(),
-    val genres:    List<GenreChip>   = emptyList(),
+    val shelves:   List<BrowseShelf> = emptyList(),
 )
 
 @HiltViewModel
@@ -55,15 +60,12 @@ class BrowseViewModel @Inject constructor(private val repo: MusicRepository) : V
                 .onSuccess { resp ->
                     _state.value = _state.value.copy(
                         isLoading = false,
-                        sections  = resp.sections.map { s ->
-                            HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto))
+                        shelves = resp.sections.map { s ->
+                            BrowseShelf(s.title, s.albums.map(repo::albumFromDto), s.videos.map(repo::songFromDto))
                         },
                     )
                 }
                 .onFailure { _state.value = _state.value.copy(isLoading = false, error = it.message) }
-            repo.getGenres().onSuccess { gs ->
-                _state.value = _state.value.copy(genres = gs.map { GenreChip(it.id, it.name) })
-            }
         }
     }
 }
@@ -101,7 +103,7 @@ fun BrowseScreen(
         return
     }
 
-    if (state.sections.isEmpty()) {
+    if (state.shelves.isEmpty()) {
         Box(modifier.fillMaxSize(), Alignment.Center) {
             Text("No content available", color = Color(0xFF555555), fontSize = 14.sp)
         }
@@ -113,31 +115,41 @@ fun BrowseScreen(
         contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        items(state.sections, key = { it.title }) { section ->
-            BrowseRow(section, onAlbumClick, onPlaylistClick, playerVm)
-        }
-        if (state.genres.isNotEmpty()) {
-            item(key = "__genres__") { GenreChipsRow(state.genres, onGenreClick) }
+        items(state.shelves, key = { it.title }) { shelf ->
+            if (shelf.videos.isNotEmpty()) BrowseVideoRow(shelf.title, shelf.videos, playerVm)
+            else BrowseRow(shelf.title, shelf.albums, onAlbumClick, onPlaylistClick, playerVm)
         }
     }
 }
 
+/** Music-video shelf: wide 16:9 thumbnails; tapping plays the shelf into the fullscreen player. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun GenreChipsRow(genres: List<GenreChip>, onGenreClick: (id: String, name: String) -> Unit) {
+private fun BrowseVideoRow(title: String, videos: List<com.applemusicktv.data.model.Song>, playerVm: PlayerViewModel) {
     Column(Modifier.fillMaxWidth()) {
-        Text("Genres", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+        Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
             modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(genres, key = { it.id }) { g ->
+        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            items(videos.size) { idx ->
+                val v = videos[idx]
                 Surface(
-                    onClick = { onGenreClick(g.id, g.name) },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(24.dp)),
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFFFA233B)),
+                    onClick = { playerVm.playAlbum(videos, idx) },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                    colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
                 ) {
-                    Text(g.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+                    Column(Modifier.width(230.dp)) {
+                        Box(Modifier.width(230.dp).height(129.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1A1A1A))) {
+                            if (v.artworkUrl != null)
+                                AsyncImage(model = v.artworkUrl(480), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            Box(Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 5.dp, vertical = 1.dp)) {
+                                Text("MV", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(v.title, fontSize = 12.5.sp, color = Color(0xFFF2F2F5), maxLines = 1, fontWeight = FontWeight.SemiBold)
+                        Text(v.artistName, fontSize = 10.5.sp, color = Color(0xFF8A8A8E), maxLines = 1)
+                    }
                 }
             }
         }
@@ -146,24 +158,25 @@ private fun GenreChipsRow(genres: List<GenreChip>, onGenreClick: (id: String, na
 
 @Composable
 private fun BrowseRow(
-    section: HomeSection,
+    title: String,
+    albums: List<com.applemusicktv.data.model.Album>,
     onAlbumClick: (String) -> Unit,
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
     playerVm: PlayerViewModel? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text       = section.title,
+            text       = title,
             fontSize   = 18.sp,
             fontWeight = FontWeight.SemiBold,
             color      = Color.White,
             modifier   = Modifier.padding(start = 48.dp, bottom = 14.dp),
         )
         LazyRow(
-            contentPadding        = PaddingValues(horizontal = 48.dp),
+            contentPadding        = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            items(section.albums, key = { it.id }) { album ->
+            items(albums, key = { it.id }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
                 val isSong = album.type == "songs"
                 AlbumCard(album = album, size = 130, onClick = {
