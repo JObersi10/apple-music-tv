@@ -1643,7 +1643,7 @@ private fun QueuePanel(
                         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("◆", fontSize = 9.sp, color = Color(0xFFFA233B), modifier = Modifier.width(20.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(song.title, fontSize = 13.sp, color = Color(0xFFDDDDDD), maxLines = 1)
+                                Text(song.title + if (song.isMusicVideo) " (MV)" else "", fontSize = 13.sp, color = Color(0xFFDDDDDD), maxLines = 1)
                                 Text(song.artistName, fontSize = 11.sp, color = Color(0xFFAAAAAA), maxLines = 1)
                             }
                             Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
@@ -1701,7 +1701,7 @@ private fun QueuePanel(
                             modifier = Modifier.width(20.dp),
                         )
                         Column(Modifier.weight(1f)) {
-                            Text(song.title, fontSize = 13.sp, color = if (isCurrent || isMoving) Color.White else Color(0xFFDDDDDD), maxLines = 1, fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal)
+                            Text(song.title + if (song.isMusicVideo) " (MV)" else "", fontSize = 13.sp, color = if (isCurrent || isMoving) Color.White else Color(0xFFDDDDDD), maxLines = 1, fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal)
                             Text(song.artistName, fontSize = 11.sp, color = Color(0xFFAAAAAA), maxLines = 1)
                         }
                         Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))

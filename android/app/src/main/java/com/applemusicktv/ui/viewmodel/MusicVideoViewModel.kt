@@ -249,9 +249,9 @@ class MusicVideoViewModel @Inject constructor(
                     .build()
                 exo.setMediaSource(source)
                 exo.prepare()
-                // Play only if the screen is showing it AND the user hasn't paused / it wasn't loaded
-                // paused (restore). userPaused is set by show()/togglePlayPause, so DON'T reset it here.
-                exo.playWhenReady = screenVisible && !userPaused
+                // Play unless the user paused / it was loaded paused (restore). Keeps playing across
+                // tabs like a song. userPaused is set by show()/togglePlayPause — DON'T reset it here.
+                exo.playWhenReady = !userPaused
                 exo.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _state.value = _state.value.copy(playing = isPlaying)
@@ -404,16 +404,11 @@ class MusicVideoViewModel @Inject constructor(
         }
     }
 
-    // A music video only plays while the Now Playing screen is showing it. Off-screen (auto-advanced
-    // into a video while browsing, or navigated away) it pauses — no background secure-video decode,
-    // which also cuts the exit glitchiness. AppShell drives this from isOnNowPlaying.
-    private var screenVisible = false
+    // A music video keeps playing (audio) across tabs just like a song — the picture is simply
+    // hidden (its secure surface is parked off-screen by AppShell) and reappears on Now Playing.
+    // Only a RESTORE loads it paused (userPaused=true via show(startPaused=true)).
     private var userPaused = false
-    fun setScreenVisible(visible: Boolean) {
-        screenVisible = visible
-        val p = player ?: return
-        p.playWhenReady = visible && !userPaused
-    }
+    fun setScreenVisible(visible: Boolean) { /* no longer gates playback — kept for callers */ }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }
     fun seekBy(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceAtLeast(0)) } }

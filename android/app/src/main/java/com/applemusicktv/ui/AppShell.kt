@@ -163,10 +163,11 @@ fun AppShell(modifier: Modifier = Modifier) {
     LaunchedEffect(playerState.isPlaying) {
         if (playerState.isPlaying && videoActive) mvVm.close()
     }
-    // Prefetch the next queue item's video metadata while the current one plays (mixed queue),
-    // mirroring the audio N+1 prefetch so a song→video or video→video advance is fast.
-    LaunchedEffect(playerState.queueIndex, videoActive) {
-        if (!videoActive) return@LaunchedEffect
+    // Prefetch the next queue item's video metadata whenever it's a video — whether the current
+    // track is a song or a video — so a song→video or video→video advance is fast. This runs in
+    // parallel with PlayerViewModel's audio N+1 prefetch (which skips video items), so the two
+    // prefetch paths cover the whole mixed queue together.
+    LaunchedEffect(playerState.queueIndex, playerState.queue) {
         val next = playerState.queue.getOrNull(playerState.queueIndex + 1)
         if (next?.isMusicVideo == true) mvVm.prefetch(next.id)
     }
