@@ -37,6 +37,8 @@ data class MusicVideoResult(
     val keyUri:     String = "",
     /** placeholder-KID (hex) → license uri, so the callback routes per track. */
     val keyMap:     Map<String, String> = emptyMap(),
+    /** The video heights this MV actually offers (from the master), ascending. */
+    val heights:    List<Int> = emptyList(),
 )
 
 @Singleton
@@ -331,7 +333,8 @@ class AppleDirectClient @Inject constructor() {
                 appendLine(MV_VIDEO_FILE)
             }
             Log.i("AMMV", "mv=$adamId picked ${vPick.height}p variant; rewrote v+a playlists keyUri=${keyUri.take(36)}")
-            MusicVideoResult(adamId = adamId, masterText = master, videoText = videoText, audioText = audioText, subsText = subsText, keyUri = keyUri, keyMap = keyMap)
+            val heights = variants.map { it.height }.filter { it > 0 }.distinct().sorted()
+            MusicVideoResult(adamId = adamId, masterText = master, videoText = videoText, audioText = audioText, subsText = subsText, keyUri = keyUri, keyMap = keyMap, heights = heights)
         }
 
     /**

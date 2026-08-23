@@ -71,6 +71,9 @@ fun MusicVideoScreen(
     var poke by remember { mutableIntStateOf(0) }
 
     val auds = state.audioTracks
+    // Only the resolutions THIS video actually offers (from its master); fall back to the
+    // standard tiers until they load.
+    val qualities = state.availableQualities.ifEmpty { MV_QUALITY_TIERS }
 
     // Rows, top→bottom. Empty rows are skipped by up/down.
     val rows: List<List<MvTarget>> = remember(state.artist, auds, showOnScreenControls) {
@@ -130,14 +133,14 @@ fun MusicVideoScreen(
                     }
                 } else if (ev.key == Key.Menu) { queueCursor = queueIndex.coerceAtLeast(0); vm.toggleQueue(); true }
                 else if (picker != MvPicker.NONE) {
-                    val count = if (picker == MvPicker.AUDIO) auds.size else MV_QUALITY_TIERS.size
+                    val count = if (picker == MvPicker.AUDIO) auds.size else qualities.size
                     when (ev.key) {
                         Key.Back -> { picker = MvPicker.NONE; poke(); true }
                         Key.DirectionUp -> { if (pickCursor > 0) pickCursor--; true }
                         Key.DirectionDown -> { if (pickCursor < count - 1) pickCursor++; true }
                         Key.DirectionCenter, Key.Enter -> {
                             if (picker == MvPicker.AUDIO) auds.getOrNull(pickCursor)?.let { vm.setAudio(it.index) }
-                            else MV_QUALITY_TIERS.getOrNull(pickCursor)?.let { vm.setQuality(it) }
+                            else qualities.getOrNull(pickCursor)?.let { vm.setQuality(it) }
                             picker = MvPicker.NONE; poke(); true
                         }
                         else -> true
@@ -163,7 +166,7 @@ fun MusicVideoScreen(
                         when (focus) {
                             MvTarget.ARTIST -> vm.openArtist(onArtistClick)
                             MvTarget.AUDIO -> if (auds.isNotEmpty()) { picker = MvPicker.AUDIO; pickCursor = auds.indexOfFirst { it.index == state.audioIndex }.coerceAtLeast(0) }
-                            MvTarget.QUALITY -> { picker = MvPicker.QUALITY; pickCursor = MV_QUALITY_TIERS.indexOf(state.qualityHeight).coerceAtLeast(0) }
+                            MvTarget.QUALITY -> { picker = MvPicker.QUALITY; pickCursor = qualities.indexOf(state.qualityHeight).coerceAtLeast(0) }
                             MvTarget.QUEUE -> { queueCursor = queueIndex.coerceAtLeast(0); vm.toggleQueue() }
                             MvTarget.PREV -> vm.prev()
                             MvTarget.PLAYPAUSE -> vm.togglePlayPause()
@@ -311,7 +314,7 @@ fun MusicVideoScreen(
                     if (picker == MvPicker.AUDIO) {
                         auds.forEachIndexed { i, opt -> PickerRow(opt.label, i == pickCursor, opt.index == state.audioIndex) }
                     } else {
-                        MV_QUALITY_TIERS.forEachIndexed { i, h -> PickerRow(qualityLabel(h), i == pickCursor, h == state.qualityHeight) }
+                        qualities.forEachIndexed { i, h -> PickerRow(qualityLabel(h), i == pickCursor, h == state.qualityHeight) }
                     }
                 }
             }

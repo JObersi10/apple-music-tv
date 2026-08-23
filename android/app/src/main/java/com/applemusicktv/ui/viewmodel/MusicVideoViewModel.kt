@@ -45,6 +45,8 @@ data class MvUiState(
     val artistId:     String? = null,
     /** Max video height cap the user picked (persisted, applied to every video). */
     val qualityHeight: Int = 1080,
+    /** The heights THIS video actually offers (from its master), ascending. */
+    val availableQualities: List<Int> = emptyList(),
 )
 
 /** Selectable max-quality tiers for music videos. Persisted globally. */
@@ -193,6 +195,7 @@ class MusicVideoViewModel @Inject constructor(
                 // Use the prefetched result if the queue warmed this id ahead of time.
                 val mv = prefetchCache.remove(mvId)
                     ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, qualityHeight) }
+                _state.value = _state.value.copy(availableQualities = mv.heights)
 
                 // Write the corrected master + media playlists to disk; ExoPlayer plays
                 // the master via file:// and streams the mvod segments they reference.
@@ -261,6 +264,14 @@ class MusicVideoViewModel @Inject constructor(
                     }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         Log.e("AMMV", "MV playback error: ${error.message}", error)
+                        // Decoder can't handle the chosen tier (e.g. this Fire TV rejects secure 4K
+                        // HEVC 10-bit) → step DOWN one quality tier and reload, instead of just failing.
+                        val lower = MV_QUALITY_TIERS.filter { it < qualityHeight }.maxOrNull()
+                        if (lower != null && curMvId != null) {
+                            Log.w("AMMV", "decoder failed at ${qualityHeight}p → falling back to ${lower}p")
+                            setQuality(lower)   // captures current position + reloads at the lower tier
+                            return
+                        }
                         _state.value = _state.value.copy(loading = false, error = error.message ?: "Playback failed")
                     }
                     override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
