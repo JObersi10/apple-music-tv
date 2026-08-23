@@ -496,15 +496,15 @@ fun AppShell(modifier: Modifier = Modifier) {
         // tears down its own SurfaceFlinger layer, so nothing bleeds onto Library/Browse, while
         // the ExoPlayer keeps playing the audio. Returning to Now Playing makes it VISIBLE again
         // and the decoder re-renders onto the fresh surface.
-        // Compose the secure video surface ONLY on Now Playing. A secure (HDCP) SurfaceView draws
-        // across the whole screen and, once created, its SurfaceFlinger layer lingered on Library/
-        // Browse no matter how we hid it (GONE / detach) — the "video in library" bleed. Removing
-        // the PlayerView from composition entirely off Now Playing destroys the surface, so there's
-        // nothing to bleed. The video is paused off-screen anyway (setScreenVisible), so recreating
-        // + resuming the surface on return is cheap and glitch-free.
-        if (videoActive && isOnNowPlaying) {
+        // Secure video surface. A secure (HDCP) SurfaceView draws across the whole screen, and once
+        // created its SurfaceFlinger layer LINGERS on Library/Browse no matter how we hide it
+        // (GONE / detach / removing from composition) — the "video in library" bleed. The reliable
+        // fix is to keep the surface composed but push the whole layer FULLY OFF-SCREEN when we're
+        // not on Now Playing: an off-screen secure layer can't overlap visible content, and never
+        // being destroyed also avoids the recreate glitch. The video is paused off-screen anyway.
+        if (videoActive) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
-            Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().then(if (isOnNowPlaying) Modifier else Modifier.offset(y = 4000.dp))) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
                         androidx.media3.ui.PlayerView(ctx).apply {
@@ -519,7 +519,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onRelease = { it.player = null },
                     modifier = Modifier.fillMaxSize(),
                 )
-                run {
+                if (isOnNowPlaying) {
                     MusicVideoScreen(
                         vm = mvVm,
                         // Back leaves the SCREEN but KEEPS the video playing — pop to the previous
