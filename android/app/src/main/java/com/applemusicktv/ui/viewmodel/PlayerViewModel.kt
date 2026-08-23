@@ -532,6 +532,9 @@ class PlayerViewModel @Inject constructor(
         }
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
             val pos = player.currentPosition
+            // Preserve the user's play/pause intent across error recovery — a restored-paused track
+            // that fails standalone and retries via proxy must NOT auto-start playing.
+            val wasPlaying = player.playWhenReady
             val song = _state.value.currentSong?.title ?: "?"
             webServer.addLog("ERR", "${error.errorCodeName} pos=${pos}ms song=$song cfade=$crossfadeInProgress cause=${error.cause?.message}")
             // Silence looks like a crash otherwise — say why we skipped.
@@ -569,7 +572,7 @@ class PlayerViewModel @Inject constructor(
                 val cur = s.queue.getOrNull(s.queueIndex)
                 if (cur != null) {
                     player.setMediaItem(buildMediaItem(cur, repo.streamUrl(cur.id)))
-                    player.prepare(); player.volume = 1f; player.play()
+                    player.prepare(); player.volume = 1f; player.playWhenReady = wasPlaying
                     return
                 }
             }

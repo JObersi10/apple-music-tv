@@ -68,10 +68,15 @@ fun TopNavBar(
     ) {
         Surface(
             shape  = RoundedCornerShape(50),
-            colors = SurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E)),
+            // Translucent material rather than a flat bar — reads as a floating pill.
+            colors = SurfaceDefaults.colors(containerColor = Color(0xE61C1C1E)),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color(0x14FFFFFF), 0.5f to Color.Transparent))
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
@@ -99,7 +104,8 @@ fun TopNavBar(
                             Text(
                                 text       = tab.label,
                                 fontSize   = 13.sp,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                letterSpacing = if (isSelected) (-0.1).sp else 0.sp,
                                 color      = textColor,
                             )
                             if (tab == TopNavTab.NowPlaying && isPlaying && !isSelected) {
