@@ -412,25 +412,29 @@ class MusicVideoViewModel @Inject constructor(
     private var userPaused = false
     fun setScreenVisible(visible: Boolean) { /* no longer gates playback — kept for callers */ }
 
-    // Leaving Now Playing fully RELEASES the video player (and its secure surface) — the only way
-    // to stop the last frame lingering over Library/Browse on Fire TV, where a secure SurfaceFlinger
-    // layer survives hiding/detaching/off-screening. Returning reloads it at the saved position.
-    private var suspendedPos = 0L
-    private var suspended = false
-    fun suspendForBackground() {
-        val p = player ?: return
-        suspendedPos = p.currentPosition.coerceAtLeast(0)
-        userPaused = !p.playWhenReady
-        suspended = true
-        releasePlayer()
-        _state.value = _state.value.copy(playing = false)
+    // Leaving Now Playing must NOT stop the audio — a music video keeps playing across tabs just
+    // like a song. But a secure (HDCP) SurfaceView's SurfaceFlinger layer LINGERS over Library/
+    // Browse no matter how the View is hidden (GONE / detach / off-screen / removing the AndroidView
+    // all bled). The only thing that reliably tears the secure layer down is releasing the secure
+    // video DECODER — but releasing the whole player also kills the audio. So: keep the ExoPlayer
+    // alive and playing, and DISABLE THE VIDEO TRACK. Disabling the video renderer frees the secure
+    // MediaCodec (and its overlay) while the audio renderer streams on. Returning re-enables video
+    // and the recomposed PlayerView reattaches the surface, so the picture comes back at position.
+    @OptIn(UnstableApi::class)
+    fun detachVideo() {
+        val exo = player ?: return
+        exo.clearVideoSurface()
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
+            .build()
     }
-    fun resumeFromBackground() {
-        if (!suspended) return
-        suspended = false
-        val id = curMvId ?: return
-        pendingSeekMs = suspendedPos
-        playItem(id, curTitle, curArtist)
+    @OptIn(UnstableApi::class)
+    fun attachVideo() {
+        val exo = player ?: return
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+            .build()
+        // Surface itself is reattached by the recomposed PlayerView (update { it.player = exo }).
     }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }

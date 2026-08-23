@@ -142,12 +142,13 @@ fun AppShell(modifier: Modifier = Modifier) {
         }
     }
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
-    // Leaving Now Playing fully releases the video (surface gone → no lingering frame over other
-    // tabs); returning reloads it at its saved spot. On Fire TV a secure surface can't be reliably
-    // hidden, so the video pauses when you leave the screen and resumes when you come back.
+    // Leaving Now Playing keeps the video's AUDIO playing (like a song) but disables the video
+    // track — that frees the secure decoder and its SurfaceFlinger overlay so nothing bleeds onto
+    // Library/Browse. Returning re-enables video and the recomposed PlayerView reattaches the
+    // surface, so the picture comes back at position without ever stopping the audio.
     LaunchedEffect(isOnNowPlaying, videoActive) {
         if (!videoActive) return@LaunchedEffect
-        if (isOnNowPlaying) mvVm.resumeFromBackground() else mvVm.suspendForBackground()
+        if (isOnNowPlaying) mvVm.attachVideo() else mvVm.detachVideo()
     }
     // Whenever a video is active, media keys must drive it (not the paused audio player) —
     // MainActivity reads this. Pause audio the moment a video starts.
@@ -497,18 +498,14 @@ fun AppShell(modifier: Modifier = Modifier) {
         // On other tabs the video KEEPS PLAYING (audio; the picture is simply not drawn) — it is
         // not closed — and reappears when you return to Now Playing. On-screen PiP over the app
         // isn't possible for protected video; the OS system PiP is the "picture while browsing".
-        // ONE persistent PlayerView for the whole life of a video, across every tab — never
-        // recreated on navigation (recreation churned the secure decoder → black/glitch). It is
-        // simply hidden (View.GONE) whenever we're not on Now Playing: a GONE secure SurfaceView
-        // tears down its own SurfaceFlinger layer, so nothing bleeds onto Library/Browse, while
-        // the ExoPlayer keeps playing the audio. Returning to Now Playing makes it VISIBLE again
-        // and the decoder re-renders onto the fresh surface.
-        // Secure video surface. A secure (HDCP) SurfaceView draws across the whole screen, and once
-        // created its SurfaceFlinger layer LINGERS on Library/Browse no matter how we hide it
-        // (GONE / detach / removing from composition) — the "video in library" bleed. The reliable
-        // fix is to keep the surface composed but push the whole layer FULLY OFF-SCREEN when we're
-        // not on Now Playing: an off-screen secure layer can't overlap visible content, and never
-        // being destroyed also avoids the recreate glitch. The video is paused off-screen anyway.
+        // Secure video surface — the "video in library" bleed. A secure (HDCP) SurfaceView draws
+        // across the WHOLE screen and its SurfaceFlinger overlay LINGERS on Library/Browse no matter
+        // how the View is hidden (GONE / detach / off-screen / removing the AndroidView all bled).
+        // What actually tears the overlay down is freeing the secure video DECODER. So the surface
+        // is composed ONLY on Now Playing (this gate); leaving the screen ALSO disables the video
+        // track (mvVm.detachVideo(), via the LaunchedEffect above), which releases the secure codec
+        // + overlay while the ExoPlayer keeps playing the AUDIO. Returning re-enables video and this
+        // PlayerView is recomposed, reattaching the surface so the picture returns at position.
         if (videoActive && isOnNowPlaying) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
             Box(Modifier.fillMaxSize()) {
