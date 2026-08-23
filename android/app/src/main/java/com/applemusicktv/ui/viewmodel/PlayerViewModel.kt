@@ -1506,6 +1506,10 @@ class PlayerViewModel @Inject constructor(
     fun seekForward() { webServer.addLog("PLR", "seekForward pos=${player.currentPosition}"); player.seekTo((player.currentPosition + 15_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }
     fun seekBack()    { webServer.addLog("PLR", "seekBack pos=${player.currentPosition}"); player.seekTo((player.currentPosition - 15_000L).coerceAtLeast(0L)) }
 
+    /** Public warm-up for the next AUDIO song — used by AppShell while a VIDEO is playing (the
+     *  audio engine's own N+1 prefetch is idle then, so a video→song advance would be cold). */
+    fun prefetchAudio(song: Song) { if (!song.isMusicVideo) prefetchSong(song) }
+
     private fun prefetchSong(song: Song) {
         if (!_state.value.isFullStream) return
         // Music videos are decrypted+played by the video player, not the audio stream route —

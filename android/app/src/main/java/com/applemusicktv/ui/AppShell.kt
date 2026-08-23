@@ -167,9 +167,10 @@ fun AppShell(modifier: Modifier = Modifier) {
     // track is a song or a video — so a song→video or video→video advance is fast. This runs in
     // parallel with PlayerViewModel's audio N+1 prefetch (which skips video items), so the two
     // prefetch paths cover the whole mixed queue together.
-    LaunchedEffect(playerState.queueIndex, playerState.queue) {
-        val next = playerState.queue.getOrNull(playerState.queueIndex + 1)
-        if (next?.isMusicVideo == true) mvVm.prefetch(next.id)
+    LaunchedEffect(playerState.queueIndex, playerState.queue, videoActive) {
+        val next = playerState.queue.getOrNull(playerState.queueIndex + 1) ?: return@LaunchedEffect
+        if (next.isMusicVideo) mvVm.prefetch(next.id)
+        else if (videoActive) playerVm.prefetchAudio(next)   // video playing → warm the next song
     }
     val keepScreenOn = playerState.isPlaying
     val activity = LocalContext.current as? Activity

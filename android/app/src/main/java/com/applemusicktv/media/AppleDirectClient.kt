@@ -82,14 +82,21 @@ class AppleDirectClient @Inject constructor() {
         withContext(Dispatchers.IO) {
             try {
                 val numeric = mvId.filter { it.isDigit() }.ifEmpty { mvId }
-                val url = "https://amp-api-edge.music.apple.com/v1/catalog/us/music-videos/$numeric?l=en-US&include=artists"
-                val resp = http.newCall(Request.Builder().url(url)
-                    .addHeader("Authorization", "Bearer $bearer")
-                    .addHeader("Music-User-Token", mut)
-                    .addHeader("Origin", "https://music.apple.com").build()).execute()
-                val body = resp.body!!.string()
-                val data = JSONObject(body).optJSONArray("data")?.optJSONObject(0)
-                if (data == null) { Log.w("AMMV", "details http=${resp.code} no data: ${body.take(160)}"); return@withContext null }
+                // The id resolves for playback but may live under EITHER catalog type — try
+                // music-videos, then songs, then albums — until one returns metadata + artists.
+                var data: JSONObject? = null
+                for (type in listOf("music-videos", "songs", "albums")) {
+                    val url = "https://amp-api-edge.music.apple.com/v1/catalog/us/$type/$numeric?l=en-US&include=artists"
+                    val resp = http.newCall(Request.Builder().url(url)
+                        .addHeader("Authorization", "Bearer $bearer")
+                        .addHeader("Music-User-Token", mut)
+                        .addHeader("Origin", "https://music.apple.com").build()).execute()
+                    val body = resp.body!!.string()
+                    val d = JSONObject(body).optJSONArray("data")?.optJSONObject(0)
+                    if (d != null) { data = d; break }
+                    Log.i("AMMV", "details $type http=${resp.code} miss")
+                }
+                if (data == null) { Log.w("AMMV", "details: no metadata for $numeric on any type"); return@withContext null }
                 val a = data.optJSONObject("attributes") ?: JSONObject()
                 val artistId = data.optJSONObject("relationships")?.optJSONObject("artists")
                     ?.optJSONArray("data")?.optJSONObject(0)?.optString("id")?.ifBlank { null }
