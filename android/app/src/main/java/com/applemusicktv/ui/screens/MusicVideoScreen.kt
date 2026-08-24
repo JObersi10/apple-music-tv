@@ -245,7 +245,11 @@ fun MusicVideoScreen(
                         Text(fmt(shownPos), color = if (scrubbing) Color.White else Color(0xE6FFFFFF), fontSize = 13.sp,
                             fontWeight = if (scrubbing) FontWeight.Bold else FontWeight.Medium,
                             modifier = Modifier.align(BiasAlignment(horizontalBias = frac * 2f - 1f, verticalBias = 0f)))
-                        Text("-" + fmt(dur - shownPos), color = Color(0x99FFFFFF), fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterEnd))
+                        // The elapsed readout tracks the bar position; near the end it slides into the
+                        // fixed remaining label. Fade remaining out (0.85→0.95) so they never overlap.
+                        val endAlpha = ((0.85f - frac) / 0.10f).coerceIn(0f, 1f)
+                        Text("-" + fmt(dur - shownPos), color = Color(0x99FFFFFF).copy(alpha = 0.6f * endAlpha),
+                            fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterEnd))
                     }
                     // Media controls sit BELOW the playback bar — small, drawn, centred. Google TV only.
                     if (showOnScreenControls) {

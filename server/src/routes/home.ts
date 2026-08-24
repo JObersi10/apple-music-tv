@@ -62,8 +62,9 @@ home.get("/", async (c) => {
         headers: h,
       });
       for (const rec of (res.data?.data ?? [])) {
-        const title: string = rec.attributes?.title?.stringForDisplay ?? "";
-        if (!title) continue;
+        const title: string = rec.attributes?.title?.stringForDisplay
+          ?? rec.attributes?.reason?.stringForDisplay
+          ?? "For You";
         const contents: any[] = rec.relationships?.contents?.data ?? [];
         const items = contents.map((item: any) => {
           if (item.type === "stations") return null;   // not playable yet
