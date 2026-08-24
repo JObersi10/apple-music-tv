@@ -31,14 +31,20 @@ class CategoryViewModel @Inject constructor(
     private val rawId = savedState.get<String>("categoryId") ?: ""
     private val isApple = rawId.startsWith("ac-")
     private val isMultiRoom = rawId.startsWith("mr-")
-    private val realId = rawId.removePrefix("ac-").removePrefix("c-").removePrefix("mr-")
+    // "room-<id>" is a plain editorial room — the "More" (see all) page at the end of a Browse shelf.
+    private val isRoom = rawId.startsWith("room-")
+    private val realId = rawId.removePrefix("ac-").removePrefix("c-").removePrefix("mr-").removePrefix("room-")
     private val _state = MutableStateFlow(CategoryUiState())
     val state: StateFlow<CategoryUiState> = _state
 
     init { if (realId.isNotEmpty()) load() }
 
     private fun load() = viewModelScope.launch {
-        (if (isMultiRoom) repo.getMultiRoom(realId) else repo.getCurator(realId, isApple))
+        (when {
+            isRoom      -> repo.getRoom(realId)
+            isMultiRoom -> repo.getMultiRoom(realId)
+            else        -> repo.getCurator(realId, isApple)
+        })
             .onSuccess { d ->
                 _state.value = CategoryUiState(
                     isLoading = false, title = d.title, description = d.description,

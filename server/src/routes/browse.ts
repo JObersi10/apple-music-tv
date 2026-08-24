@@ -54,6 +54,29 @@ async function fetchPlaylist(sf: string, id: string, mut?: string): Promise<any 
 // The web app fetches it from /v1/editorial/{sf}/multirooms/{id}; children are
 // "editorial-elements" — kind 404 = hero (title+description), 345 = a content shelf,
 // 405 = an external link (skipped).
+// A plain editorial ROOM — the "see all" page behind a Browse shelf's "More" card. Contents are a
+// flat list (room 6503108310 "Daily Top 100" = 100 country playlists), so it returns one section.
+browse.get("/room/:id", async (c) => {
+  const id = c.req.param("id");
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  const sf = getStorefront() || "us";
+  try {
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/rooms/${id}`, {
+      headers: hdrs(mut),
+      params: { include: "contents", extend: "editorialArtwork", "limit[contents]": 200, l: "en-US", platform: "web", "art[url]": "f" },
+    });
+    const room = res.data?.data?.[0];
+    const title: string = room?.attributes?.title ?? room?.attributes?.name ?? "";
+    const items = (room?.relationships?.contents?.data ?? []).map((it: any) =>
+      it.type === "playlists" ? playlistCard(it) : itemFromRaw(it)).filter(Boolean);
+    return c.json({ id, title, description: null, artworkUrl: null,
+      sections: items.length ? [{ title, albums: items }] : [] });
+  } catch (e: any) {
+    console.warn("[browse] room failed:", e?.response?.status, e?.message);
+    return c.json({ id, title: "", sections: [] });
+  }
+});
+
 browse.get("/multiroom/:id", async (c) => {
   const id = c.req.param("id");
   const mut = c.req.header("X-Music-User-Token") || getMUT();
@@ -267,9 +290,13 @@ browse.get("/", async (c) => {
       // Radio/interview shelves — nothing playable here yet.
       if (types.has("stations") || types.has("uploaded-videos")) continue;
 
+      // The editorial-element's own id IS its room id (verified: "Daily Top 100" -> 6503108310,
+      // matching music.apple.com/us/room/6503108310). Sent so the row can end in a "More" card.
+      const roomId: string | undefined = k.id;
+
       if ([...types].every((t) => t === "music-videos")) {
         const videos = contents.map(normaliseSong).filter((v: any) => v.artworkUrl);
-        if (videos.length) sections.push({ title, videos });
+        if (videos.length) sections.push({ title, videos, roomId });
         continue;
       }
 
@@ -278,7 +305,7 @@ browse.get("/", async (c) => {
         if (it.type === "playlists") return playlistCard(it);
         return itemFromRaw(it);
       }).filter(Boolean);
-      if (albums.length) sections.push({ title, albums });
+      if (albums.length) sections.push({ title, albums, roomId });
     }
   } catch (e: any) {
     console.warn("[browse] editorial grouping failed:", e?.response?.status, e?.message);

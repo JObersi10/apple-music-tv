@@ -72,11 +72,54 @@ home.get("/", async (c) => {
           if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName, type: "playlists" } : null; }
           return itemFromRaw(item);
         }).filter(Boolean);
-        if (items.length > 0) sections.push({ title, albums: items });
+        if (items.length > 0) {
+          // ONLY "Playlists Made for You" animates (Get Up!/Chill/Your Essentials…) — the one row
+          // Apple animates on the web Home. Every animated card costs the TV a video decoder.
+          if (/^Playlists Made for You/i.test(title)) {
+            await Promise.all(items.map(async (it: any) => {
+              try {
+                const r = await axios.get(`${APPLE}/v1/catalog/${sf}/playlists/${it.id}`, {
+                  params: { extend: "editorialVideo" }, headers: h,
+                });
+                const ev = r.data?.data?.[0]?.attributes?.editorialVideo;
+                it.motionUrl = (ev?.motionSquareVideo1x1 ?? ev?.motionDetailSquare)?.video ?? null;
+              } catch { /* motion art is optional polish */ }
+            }));
+          }
+          sections.push({ title, albums: items });
+        }
       }
     } catch (e: any) {
       console.warn("[home] recommendations failed:", e?.response?.status, e?.message);
     }
+  }
+
+  // "Find Your Mood" — Apple's Moods & Activities editorial room, same shelf the web Home shows
+  // under the personalized feed. Cards carry the CategoryScreen id prefix so tapping opens that page.
+  try {
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/rooms/6456176472`, {
+      headers: h,
+      params: { include: "contents", extend: "editorialArtwork", l: "en-US", platform: "web", "art[url]": "f" },
+    });
+    const drop = /rewind|replay|year in|wrapped/i;
+    const items = (res.data?.data?.[0]?.relationships?.contents?.data ?? [])
+      .filter((it: any) => it.type === "apple-curators" || it.type === "curators")
+      .filter((it: any) => !drop.test(it.attributes?.name ?? ""))
+      .map((it: any) => {
+        const a = it.attributes ?? {};
+        const ea = a.editorialArtwork ?? {};
+        const url = artUrl(ea.subscriptionCover?.url ?? ea.brandLogo?.url ?? a.artwork?.url, 600);
+        if (!url) return null;
+        return {
+          id: (it.type === "apple-curators" ? "ac-" : "c-") + it.id,
+          title: (a.name ?? "Unknown").replace(/^Apple Music (?=\S)/, "").replace(/^Apple (?=\S)/, ""),
+          artistName: "", artworkUrl: url, type: "curators",
+          artworkBgColor: null, releaseDate: null, trackCount: 0,
+        };
+      }).filter(Boolean);
+    if (items.length) sections.push({ title: "Find Your Mood", albums: items });
+  } catch (e: any) {
+    console.warn("[home] moods failed:", e?.response?.status, e?.message);
   }
 
   // Charts + new releases fill in when there's no MUT (logged-out) or the rec feed was thin.

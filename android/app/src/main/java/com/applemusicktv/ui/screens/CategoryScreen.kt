@@ -91,8 +91,12 @@ fun CategoryScreen(
                 }
                 items(state.sections, key = { it.title }) { section ->
                     Column {
-                        Text(section.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
-                            color = Color.White, modifier = Modifier.padding(bottom = 10.dp, start = 8.dp))
+                        // A single-shelf room (a "More" see-all page) names its shelf after the room,
+                        // so the heading would print twice — show it once.
+                        if (!section.title.equals(state.title, ignoreCase = true)) {
+                            Text(section.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                                color = Color.White, modifier = Modifier.padding(bottom = 10.dp, start = 8.dp))
+                        }
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             // Room on all sides so the focus glow/scale never clips.

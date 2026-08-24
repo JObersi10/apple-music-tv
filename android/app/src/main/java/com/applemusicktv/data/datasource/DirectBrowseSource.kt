@@ -77,7 +77,14 @@ class DirectBrowseSource @Inject constructor(
                         .mapNotNull { it as? Map<*, *> }
                         .filter { it["type"] != "stations" }   // not playable yet
                         .mapNotNull(::itemFromRaw)
-                    if (items.isNotEmpty()) sections += title to items
+                    if (items.isNotEmpty()) {
+                        // ONLY the "Playlists Made for You" shelf animates (Get Up!/Chill/Your
+                        // Essentials…). Apple ships motion art for lots of things, but animating every
+                        // row would be noise — and each card costs an extra request + a video decoder.
+                        val withMotion = if (title.startsWith("Playlists Made for You", ignoreCase = true))
+                            items.map { it.copy(motionUrl = motionForPlaylist(it.id)) } else items
+                        sections += title to withMotion
+                    }
                 }
                 android.util.Log.i("AMHome", "recommendation sections=${sections.size}")
             }.onFailure { android.util.Log.w("AMHome", "recommendations failed: ${it.message}") }
@@ -109,6 +116,17 @@ class DirectBrowseSource @Inject constructor(
         }
         return sections
     }
+
+    /** Square motion-artwork loop for a playlist, or null. Apple exposes it as
+     *  `attributes.editorialVideo.motionSquareVideo1x1.video` — a plain (unencrypted) mvod HLS URL,
+     *  the same kind the Now Playing motion cover already plays. */
+    private suspend fun motionForPlaylist(id: String): String? = runCatching {
+        val raw = api.catalogPlaylistWithMotion(sf, id)
+        val attrs = ((raw["data"] as? List<*>)?.firstOrNull() as? Map<*, *>)?.get("attributes") as? Map<*, *>
+        val ev = attrs?.get("editorialVideo") as? Map<*, *> ?: return null
+        val pick = (ev["motionSquareVideo1x1"] ?: ev["motionDetailSquare"]) as? Map<*, *>
+        pick?.get("video") as? String
+    }.getOrNull()
 
     /** A song rendered as a card — type "songs" so BrowseRow routes it to playback, not detail. */
     private fun songCard(m: Map<*, *>): AlbumDto? {
@@ -172,9 +190,13 @@ class DirectBrowseSource @Inject constructor(
                 if (maps.isEmpty()) continue
                 val types = maps.mapNotNull { it["type"] as? String }.toSet()
                 if (types.contains("stations") || types.contains("uploaded-videos")) continue
+                // The editorial-element's own id IS its room id (verified: "Daily Top 100" -> 6503108310,
+                // the same id as music.apple.com/us/room/6503108310). Carried so the row can end in a
+                // "More" card that opens the full room.
+                val roomId = kk["id"] as? String
                 if (types.isNotEmpty() && types.all { it == "music-videos" }) {
                     val videos = maps.mapNotNull(::videoCard)
-                    if (videos.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, videos = videos)
+                    if (videos.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, videos = videos, roomId = roomId)
                     continue
                 }
                 val albums = maps.mapNotNull { m ->
@@ -183,7 +205,7 @@ class DirectBrowseSource @Inject constructor(
                         else -> itemFromRaw(m)   // albums + playlists (playlist id prefix routes correctly)
                     }
                 }
-                if (albums.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, albums)
+                if (albums.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, albums, roomId = roomId)
             }
         }
         // Fallback: charts, so the tab is never blank if the editorial page fails.

@@ -140,6 +140,11 @@ class MusicRepository @Inject constructor(
         else runCatching { api.getCurator(id, if (isApple) 1 else 0) }
 
     // Editorial multiroom page (hand-built shelves; hero blurb on proxy only).
+    /** A plain editorial room — the "see all" page opened by a shelf's "More" card. */
+    suspend fun getRoom(id: String) =
+        if (!useProxy) runCatching { direct.getRoom(id) }
+        else runCatching { api.getRoom(id) }
+
     suspend fun getMultiRoom(id: String) =
         if (!useProxy) runCatching { direct.getMultiRoom(id) }
         else runCatching { api.getMultiRoom(id) }
@@ -277,6 +282,7 @@ class MusicRepository @Inject constructor(
         recordLabel    = dto.recordLabel,
         copyright      = dto.copyright,
         editorialNotes = dto.editorialNotes,
+        motionUrl      = dto.motionUrl,
     )
 
     /** Search playlists render as album-style cards; the "pl.*" id routes to the playlist screen. */

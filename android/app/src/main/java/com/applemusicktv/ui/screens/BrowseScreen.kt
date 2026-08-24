@@ -38,6 +38,8 @@ data class BrowseShelf(
     val title: String,
     val albums: List<com.applemusicktv.data.model.Album> = emptyList(),
     val videos: List<com.applemusicktv.data.model.Song> = emptyList(),
+    /** Apple editorial room behind this shelf — when set the row ends with a "More" see-all card. */
+    val roomId: String? = null,
 )
 
 data class BrowseUiState(
@@ -61,7 +63,7 @@ class BrowseViewModel @Inject constructor(private val repo: MusicRepository) : V
                     _state.value = _state.value.copy(
                         isLoading = false,
                         shelves = resp.sections.map { s ->
-                            BrowseShelf(s.title, s.albums.map(repo::albumFromDto), s.videos.map(repo::songFromDto))
+                            BrowseShelf(s.title, s.albums.map(repo::albumFromDto), s.videos.map(repo::songFromDto), s.roomId)
                         },
                     )
                 }
@@ -77,6 +79,8 @@ fun BrowseScreen(
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
     onGenreClick: (id: String, name: String) -> Unit = { _, _ -> },
+    /** Opens a shelf's full editorial room (the trailing "More" card). */
+    onSeeAll: (roomId: String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val vm: BrowseViewModel = hiltViewModel()
@@ -117,7 +121,8 @@ fun BrowseScreen(
     ) {
         items(state.shelves, key = { it.title }) { shelf ->
             if (shelf.videos.isNotEmpty()) BrowseVideoRow(shelf.title, shelf.videos, playerVm)
-            else BrowseRow(shelf.title, shelf.albums, onAlbumClick, onPlaylistClick, playerVm)
+            else BrowseRow(shelf.title, shelf.albums, onAlbumClick, onPlaylistClick, playerVm,
+                shelf.roomId, onSeeAll)
         }
     }
 }
@@ -163,6 +168,8 @@ private fun BrowseRow(
     onAlbumClick: (String) -> Unit,
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
     playerVm: PlayerViewModel? = null,
+    roomId: String? = null,
+    onSeeAll: (String) -> Unit = {},
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -187,6 +194,41 @@ private fun BrowseRow(
                     }
                 })
             }
+            // "More" — opens the shelf's full editorial room (e.g. Daily Top 100 → all 100 country
+            // lists). Only shown when Apple actually gave this shelf a room.
+            if (roomId != null) {
+                item(key = "more-$roomId") { SeeAllCard(size = 130) { onSeeAll(roomId) } }
+            }
         }
+    }
+}
+
+/** The trailing "More →" card at the end of a shelf: a chevron over a subtle tile. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SeeAllCard(size: Int, onClick: () -> Unit) {
+    Column(modifier = Modifier.width(size.dp)) {
+        androidx.tv.material3.Card(
+            onClick = onClick,
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+            scale = androidx.tv.material3.CardDefaults.scale(focusedScale = 1.08f),
+            glow = androidx.tv.material3.CardDefaults.glow(
+                focusedGlow = androidx.tv.material3.Glow(Color.White.copy(alpha = 0.22f), 18.dp)),
+            border = androidx.tv.material3.CardDefaults.border(
+                focusedBorder = androidx.tv.material3.Border(
+                    border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp))),
+            colors = androidx.tv.material3.CardDefaults.colors(
+                containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF2A2A2E)),
+            shape = androidx.tv.material3.CardDefaults.shape(
+                androidx.compose.foundation.shape.RoundedCornerShape(12.dp)),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                com.applemusicktv.ui.components.Icon(
+                    com.applemusicktv.ui.components.Glyph.NEXT, size = 26.dp, color = Color.White)
+            }
+        }
+        Text("More", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFF2F2F5),
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
     }
 }

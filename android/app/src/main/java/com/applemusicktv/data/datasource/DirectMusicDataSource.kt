@@ -140,6 +140,19 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
 
     // Multiroom hero blurb is skipped on the direct path (its description is a string|object
     // union that the typed parser can't take); shelves are what matter.
+    /** A plain editorial ROOM — the "see all" page behind a Browse shelf. Its contents are a flat
+     *  list (e.g. room 6503108310 "Daily Top 100" = 100 country playlists), so it renders as one
+     *  section. This is what the "More" card at the end of a shelf opens. */
+    suspend fun getRoom(id: String): MultiRoomDto {
+        val room = api.edRoom(storefront, id).data.firstOrNull() ?: return MultiRoomDto(id = id)
+        val items = room.relationships?.contents?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
+        val title = room.attributes?.title ?: room.attributes?.name ?: ""
+        return MultiRoomDto(
+            id = id, title = title,
+            sections = if (items.isEmpty()) emptyList() else listOf(HomeSection(title, items)),
+        )
+    }
+
     suspend fun getMultiRoom(id: String): MultiRoomDto {
         val room = api.edMultiRoom(storefront, id).data.firstOrNull()
             ?: return MultiRoomDto(id = id)

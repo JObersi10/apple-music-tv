@@ -5,9 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -21,10 +26,14 @@ import com.applemusicktv.data.model.Album
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: () -> Unit = {}, modifier: Modifier = Modifier) {
+    // Motion artwork (Playlists Made for You) plays while the card is focused — see MotionArtwork
+    // for why it isn't five decoders at once.
+    var focused by remember { mutableStateOf(false) }
     Card(
         onClick  = onClick,
         onLongClick = onLongClick,
-        modifier = modifier.width(size.dp),
+        modifier = modifier.width(size.dp)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus },
         // Apple-style: soft scale + a gentle white halo on focus — no hard red border.
         scale = CardDefaults.scale(focusedScale = 1.08f, pressedScale = 0.96f),
         glow  = CardDefaults.glow(
@@ -54,6 +63,9 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
                         contentScale       = ContentScale.Crop,
                         modifier           = Modifier.fillMaxSize(),
                     )
+                    if (album.motionUrl != null) {
+                        MotionArtwork(album.motionUrl, play = focused, modifier = Modifier.fillMaxSize())
+                    }
                 } else {
                     Box(
                         modifier = Modifier.fillMaxSize().background(Color(album.color)),

@@ -37,6 +37,9 @@ data class AlbumDto(
     val copyright:      String?      = null,
     val editorialNotes: String?      = null,
     val isMasteredForItunes: Boolean = false,
+    /** Square motion-artwork HLS loop (Apple `editorialVideo.motionSquareVideo1x1`). Only populated
+     *  for shelves we deliberately animate — today just "Playlists Made for You". */
+    val motionUrl:      String?      = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -170,6 +173,9 @@ data class HomeSection(
     val title: String,
     val albums: List<AlbumDto> = emptyList(),
     val videos: List<SongDto> = emptyList(),
+    /** Apple editorial ROOM id for this shelf (the editorial-element's own id). When present the row
+     *  ends with a "More" card that opens the full room — e.g. Daily Top 100 → all 100 country lists. */
+    val roomId: String? = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -248,6 +254,9 @@ interface ProxyApi {
         @Path("id") id: String,
         @Query("apple") apple: Int = 0,
     ): MultiRoomDto
+
+    @GET("api/browse/room/{id}")
+    suspend fun getRoom(@Path("id") id: String): MultiRoomDto
 
     @GET("api/browse/multiroom/{id}")
     suspend fun getMultiRoom(@Path("id") id: String): MultiRoomDto
