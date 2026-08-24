@@ -65,11 +65,13 @@ class DirectBrowseSource @Inject constructor(
         if (hasMut) {
             runCatching {
                 val raw = api.recommendationsRaw(limit = 40)
-                for (rec in (raw["data"] as? List<*>).orEmpty()) {
+                val recs = (raw["data"] as? List<*>).orEmpty()
+                android.util.Log.i("AMHome", "recommendations recs=${recs.size}")
+                for (rec in recs) {
                     val r = rec as? Map<*, *> ?: continue
                     val attrs = r["attributes"] as? Map<*, *> ?: emptyMap<String, Any>()
-                    val title = ((attrs["title"] as? Map<*, *>)?.get("stringForDisplay") as? String) ?: continue
-                    if (title.isEmpty()) continue
+                    val title = ((attrs["title"] as? Map<*, *>)?.get("stringForDisplay") as? String)
+                        ?: (attrs["title"] as? String) ?: "For You"
                     val contents = ((r["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)?.get("data")
                     val items = (contents as? List<*>).orEmpty()
                         .mapNotNull { it as? Map<*, *> }
@@ -77,7 +79,8 @@ class DirectBrowseSource @Inject constructor(
                         .mapNotNull(::itemFromRaw)
                     if (items.isNotEmpty()) sections += title to items
                 }
-            }
+                android.util.Log.i("AMHome", "recommendation sections=${sections.size}")
+            }.onFailure { android.util.Log.w("AMHome", "recommendations failed: ${it.message}") }
         }
 
         // Fallback for logged-out / thin feed: charts so Home is never empty.

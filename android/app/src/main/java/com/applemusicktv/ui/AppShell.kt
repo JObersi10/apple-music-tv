@@ -500,15 +500,17 @@ fun AppShell(modifier: Modifier = Modifier) {
         // On other tabs the video KEEPS PLAYING (audio; the picture is simply not drawn) — it is
         // not closed — and reappears when you return to Now Playing. On-screen PiP over the app
         // isn't possible for protected video; the OS system PiP is the "picture while browsing".
-        // Secure video surface — the "video in library" bleed. A secure (HDCP) SurfaceView draws
-        // across the WHOLE screen and its SurfaceFlinger overlay LINGERS on Library/Browse no matter
-        // how the View is hidden (GONE / detach / off-screen / removing the AndroidView all bled).
-        // What actually tears the overlay down is freeing the secure video DECODER. So the surface
-        // is composed ONLY on Now Playing (this gate); leaving the screen ALSO disables the video
-        // track (mvVm.detachVideo(), via the LaunchedEffect above), which releases the secure codec
-        // + overlay while the ExoPlayer keeps playing the AUDIO. Returning re-enables video and this
-        // PlayerView is recomposed, reattaching the surface so the picture returns at position.
-        if (videoActive && isOnNowPlaying) {
+        // Secure video surface — the "video in library" bleed, finally understood. A secure (HDCP)
+        // SurfaceView is a whole-screen hardware overlay. The bleed was Compose DISPOSING that
+        // SurfaceView when we left Now Playing (the old `&& isOnNowPlaying` gate): on Fire TV,
+        // destroying a SurfaceView mid-secure-frame ORPHANS its SurfaceFlinger layer, which then
+        // lingers as a frozen top overlay over Library/Browse (the black flash on return is a new
+        // surface replacing it). The fix: keep the PlayerView COMPOSED the entire time a video is
+        // active (gate on videoActive only) and merely toggle VISIBILITY. The view keeps managing
+        // its layer, so GONE reaps it cleanly instead of orphaning it. detachVideo() (via the
+        // LaunchedEffect above) disables the video track off-screen so the secure decoder stops while
+        // audio keeps playing; attachVideo() re-enables it on return.
+        if (videoActive) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
             Box(Modifier.fillMaxSize()) {
                 androidx.compose.ui.viewinterop.AndroidView(
@@ -521,7 +523,18 @@ fun AppShell(modifier: Modifier = Modifier) {
                             player = mvPlayer
                         }
                     },
-                    update = { it.player = mvPlayer },
+                    // On Now Playing: attach the player + show. Off Now Playing: detach the player
+                    // (clears its video surface) and GONE the view — but the SurfaceView stays in the
+                    // hierarchy so its secure layer is torn down properly, never orphaned.
+                    update = { pv ->
+                        if (isOnNowPlaying) {
+                            pv.player = mvPlayer
+                            pv.visibility = android.view.View.VISIBLE
+                        } else {
+                            pv.player = null
+                            pv.visibility = android.view.View.GONE
+                        }
+                    },
                     onRelease = { it.player = null },
                     modifier = Modifier.fillMaxSize(),
                 )

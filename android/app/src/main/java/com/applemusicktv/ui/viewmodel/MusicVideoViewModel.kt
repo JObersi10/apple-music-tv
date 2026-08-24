@@ -456,32 +456,30 @@ class MusicVideoViewModel @Inject constructor(
     // audio only blips ~0.3s. Returning rebuilds WITH video at the current position; the recomposed
     // PlayerView attaches the surface. videoDetached also guards a queue advance into a new video
     // while off-screen (playItem starts it audio-only).
+    // The library bleed was Compose DISPOSING the secure SurfaceView when we left Now Playing —
+    // on Fire TV that orphans the secure SurfaceFlinger layer (it lingers as a frozen top overlay).
+    // Fix (in AppShell): the PlayerView stays composed the whole time a video is active and only
+    // toggles VISIBILITY, so the view keeps managing its layer and SurfaceFlinger reaps it cleanly.
+    // Here we just disable the video track off-screen so the secure decoder stops (a secure decoder
+    // with a detached surface would error) while the audio renderer keeps the sound going.
     private var videoDetached = false
+    @OptIn(UnstableApi::class)
     fun detachVideo() {
         if (videoDetached) return
         videoDetached = true
-        val exo = player
-        val mv = curMv
-        val pos = exo?.currentPosition?.coerceAtLeast(0) ?: 0L
-        val pwr = exo?.playWhenReady ?: !userPaused
-        // ALWAYS release the current (video) player — that's the only thing that reliably tears down
-        // the secure overlay on Fire TV. Then rebuild audio-only to keep the sound going. If we have
-        // no resolved playback yet (curMv null, still loading), just release: never leave a live
-        // secure player behind, since THAT is the library bleed.
-        Log.i("AMMV", "detachVideo: release+rebuild audio-only (haveMv=${mv != null}) pos=$pos")
-        releasePlayer()
-        if (mv != null) buildAndPlay(mv, curBearer, curMut, disableVideo = true, seekMs = pos, playWhenReady = pwr)
-        else _state.value = _state.value.copy(playing = false)
+        val exo = player ?: return
+        Log.i("AMMV", "detachVideo: disable video track, keep audio")
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
     }
+    @OptIn(UnstableApi::class)
     fun attachVideo() {
         if (!videoDetached) return
         videoDetached = false
-        val exo = player
-        val mv = curMv ?: return
-        val pos = exo?.currentPosition?.coerceAtLeast(0) ?: pendingSeekMs
-        val pwr = exo?.playWhenReady ?: !userPaused
-        Log.i("AMMV", "attachVideo: rebuild WITH video pos=$pos")
-        buildAndPlay(mv, curBearer, curMut, disableVideo = false, seekMs = pos, playWhenReady = pwr)
+        val exo = player ?: return
+        Log.i("AMMV", "attachVideo: re-enable video track")
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
     }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }
