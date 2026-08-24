@@ -538,7 +538,12 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 useController = false
                                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                                 setKeepScreenOn(true)
-                                (videoSurfaceView as? android.view.SurfaceView)?.setZOrderMediaOverlay(true)
+                                // DO NOT setZOrderMediaOverlay/OnTop(true). That puts the secure SurfaceView
+                                // on a hardware plane ABOVE the window, which bleeds over Library and can't be
+                                // reaped by any View teardown. DEFAULT z-order sits it BEHIND the window,
+                                // punching a hole only where mounted — unmounting it off Now Playing removes
+                                // the hole, so nothing can draw over other tabs.
+                                (videoSurfaceView as? android.view.SurfaceView)?.setZOrderMediaOverlay(false)
                                 player = mvPlayer
                             }
                         },
