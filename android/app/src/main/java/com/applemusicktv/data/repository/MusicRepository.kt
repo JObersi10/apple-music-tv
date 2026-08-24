@@ -130,7 +130,7 @@ class MusicRepository @Inject constructor(
         )
 
     suspend fun getBrowse() =
-        if (!useProxy) runCatching { sectionsOf(directBrowse.browse()) }
+        if (!useProxy) runCatching { com.applemusicktv.data.network.HomeResponse(directBrowse.browse()) }
         else runCatching { api.getBrowse() }
     /** Editorial "multiroom" category page (e.g. The Sounds of Formula 1). Proxy-only for now —
      *  standalone (direct) port is a follow-up. */

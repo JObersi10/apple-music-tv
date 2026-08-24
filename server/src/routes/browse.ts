@@ -202,132 +202,99 @@ async function groupingSections(sf: string, groupingId: string, mut?: string): P
   } catch { return []; }
 }
 
+// A single song rendered as a card. Placed in the `albums` array with type "songs" — the Android
+// BrowseRow routes type=="songs" cards to playback (not album detail).
+function songCard(item: any): any | null {
+  const attr = item.attributes ?? {};
+  const url = artUrl(attr.artwork?.url);
+  if (!url) return null;
+  return {
+    id: item.id,
+    type: "songs",
+    title: attr.name ?? "Unknown",
+    artistName: attr.artistName ?? "",
+    artworkUrl: url,
+    artworkBgColor: attr.artwork?.bgColor ?? null,
+    albumId: item.relationships?.albums?.data?.[0]?.id ?? null,
+    artistId: item.relationships?.artists?.data?.[0]?.id ?? null,
+  };
+}
+
+function playlistCard(item: any): any | null {
+  const p = normalisePlaylist(item);
+  const url = artUrl(p.artworkUrl) ?? p.artworkUrl;
+  if (!url) return null;
+  return { ...p, artworkUrl: url, title: p.name, artistName: p.curatorName, type: "playlists" };
+}
+
+// The real music.apple.com "Browse"/New page. It's a single editorial GROUPING (name="music")
+// whose default tab holds every shelf — Best New Songs, New This Week, Updated Playlists, the
+// personalized "Your … Soundtrack", Daily Top 100, City Charts, Coming Soon, … — IN ORDER. Passing
+// the MUT makes Apple personalize it exactly like the signed-in web page. We map each editorial
+// child to a section, preserving Apple's titles and order. Skipped for now: radio/stations shelves
+// (Live Radio, New Radio Episodes) and Watch Interviews (uploaded-videos we can't play).
 browse.get("/", async (c) => {
   const mut = c.req.header("X-Music-User-Token") || getMUT();
   const sf = getStorefront() || "us";
   const h = hdrs(mut);
   const sections: Array<{ title: string; albums?: any[]; videos?: any[] }> = [];
 
-  // 1. Charts: trending songs
   try {
-    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, {
-      params: { types: "songs", limit: 20 },
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/groupings`, {
       headers: h,
+      params: {
+        name: "music", l: "en-US", platform: "web", include: "tabs",
+        extend: "editorialArtwork", "art[url]": "f", "limit[contents]": 24,
+      },
     });
-    const chart = res.data?.results?.songs?.[0];
-    if (chart?.data?.length) {
-      sections.push({
-        title: chart.name ?? "Trending Songs",
-        albums: chart.data.map(itemFromRaw).filter(Boolean),
-      });
-    }
-  } catch {}
+    const tab = res.data?.data?.[0]?.relationships?.tabs?.data?.[0];
+    const kids: any[] = tab?.relationships?.children?.data ?? [];
+    const dropTitle = /watch interviews|live radio|radio episode|radio now/i;
 
-  // 2. Daily Top 100 + other chart playlists
-  try {
-    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, {
-      params: { types: "playlists", limit: 30 },
-      headers: h,
-    });
-    const chart = res.data?.results?.playlists?.[0];
-    if (chart?.data?.length) {
-      // Separate "Daily Top 100" from other chart playlists
-      const daily: any[] = [];
-      const other: any[] = [];
-      for (const item of chart.data) {
-        const name: string = item.attributes?.name ?? "";
-        const p = normalisePlaylist(item);
-        if (!p.artworkUrl) continue;
-        const obj = { ...p, artworkUrl: artUrl(p.artworkUrl) ?? p.artworkUrl, title: p.name, artistName: p.curatorName };
-        if (name.toLowerCase().includes("daily top 100") || name.toLowerCase().includes("top 100")) {
-          daily.push(obj);
-        } else {
-          other.push(obj);
-        }
+    for (const k of kids) {
+      const attr = k.attributes ?? {};
+      const kind = attr.editorialElementKind;
+      // 326 = album/playlist shelf, 327 = song shelf. Others are heros/links/tiles — handled elsewhere.
+      if (kind !== "326" && kind !== "327") continue;
+      const title: string = attr.name ?? attr.title ?? "";
+      if (!title || dropTitle.test(title)) continue;
+
+      const contents: any[] = k.relationships?.contents?.data ?? [];
+      if (!contents.length) continue;
+
+      // A shelf is homogeneous by intent but "Everyone's Listening To..." mixes albums+playlists.
+      const types = new Set(contents.map((it: any) => it.type));
+      // Radio/interview shelves — nothing playable here yet.
+      if (types.has("stations") || types.has("uploaded-videos")) continue;
+
+      if ([...types].every((t) => t === "music-videos")) {
+        const videos = contents.map(normaliseSong).filter((v: any) => v.artworkUrl);
+        if (videos.length) sections.push({ title, videos });
+        continue;
       }
-      if (daily.length > 0)  sections.push({ title: "Daily Top 100", albums: daily });
-      if (other.length > 0)  sections.push({ title: chart.name ?? "Top Playlists", albums: other });
-    }
-  } catch {}
 
-  // 3. New album releases
-  try {
-    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, {
-      params: { types: "albums", limit: 20 },
-      headers: h,
-    });
-    const chart = res.data?.results?.albums?.[0];
-    if (chart?.data?.length) {
-      sections.push({
-        title: "New Releases",
-        albums: chart.data.map((item: any) => { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }).filter(Boolean),
-      });
-    }
-  } catch {}
-
-  // 3b. Music Videos — the charted music-video shelf (routes into the fullscreen video player).
-  try {
-    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, {
-      params: { types: "music-videos", limit: 24 },
-      headers: h,
-    });
-    const chart = res.data?.results?.["music-videos"]?.[0];
-    const videos = (chart?.data ?? []).map(normaliseSong).filter((v: any) => v.artworkUrl);
-    if (videos.length) sections.push({ title: chart?.name || "Music Videos", videos });
-  } catch {}
-
-  // 4. Editorial playlists by category keyword search
-  const editorialQueries: Array<{ title: string; term: string }> = [
-    { title: "Apple Music Live",          term: "apple music live concert" },
-    { title: "Artists Take Over",         term: "artists take over apple music" },
-    { title: "In Studio Performances",    term: "in studio performance apple music" },
-    { title: "Best Club DJ Mixes",        term: "club dj mix apple music" },
-    { title: "Updated Playlists",         term: "apple music editors playlist updated" },
-  ];
-
-  // Try the editorial sections endpoint first (richer results)
-  try {
-    const res = await axios.get(`${APPLE}/v1/catalog/${sf}/groupings`, {
-      params: { ids: "music-browse", include: "contents", limit: 8 },
-      headers: h,
-    });
-    const grouping = res.data?.data?.[0];
-    const contents: any[] = grouping?.relationships?.contents?.data ?? [];
-    if (contents.length > 0) {
-      const items = contents.map((item: any) => {
-        if (item.type === "playlists") {
-          const p = normalisePlaylist(item);
-          const fixedUrl = artUrl(p.artworkUrl) ?? p.artworkUrl;
-          return fixedUrl ? { ...p, artworkUrl: fixedUrl, title: p.name, artistName: p.curatorName } : null;
-        }
-        return itemFromRaw(item);
+      const albums = contents.map((it: any) => {
+        if (it.type === "songs" || it.type === "music-videos") return songCard(it);
+        if (it.type === "playlists") return playlistCard(it);
+        return itemFromRaw(it);
       }).filter(Boolean);
-      if (items.length > 0) sections.push({ title: "Featured on Apple Music", albums: items });
+      if (albums.length) sections.push({ title, albums });
     }
-  } catch {}
+  } catch (e: any) {
+    console.warn("[browse] editorial grouping failed:", e?.response?.status, e?.message);
+  }
 
-  // Fallback: search for each editorial category
-  for (const { title, term } of editorialQueries) {
+  // Fallback: if the editorial page returned nothing (no MUT / Apple hiccup), show charts so the
+  // tab is never empty.
+  if (!sections.length) {
     try {
-      const res = await axios.get(`${APPLE}/v1/catalog/${sf}/search`, {
-        params: { term, types: "playlists", limit: 10 },
-        headers: h,
-      });
-      const playlists: any[] = res.data?.results?.playlists?.data ?? [];
-      const items = playlists
-        .filter((p: any) => {
-          const name: string = (p.attributes?.name ?? "").toLowerCase();
-          const curator: string = (p.attributes?.curatorName ?? "").toLowerCase();
-          return curator.includes("apple music") || name.includes("apple music");
-        })
-        .map((p: any) => {
-          const pl = normalisePlaylist(p);
-          const fixedUrl = artUrl(pl.artworkUrl) ?? pl.artworkUrl;
-          return fixedUrl ? { ...pl, artworkUrl: fixedUrl, title: pl.name, artistName: pl.curatorName } : null;
-        })
-        .filter(Boolean)
-        .slice(0, 8);
-      if (items.length > 0) sections.push({ title, albums: items });
+      const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, { params: { types: "albums,playlists,songs", limit: 20 }, headers: h });
+      const alb = (res.data?.results?.albums?.[0]?.data ?? []).map(itemFromRaw).filter(Boolean);
+      const pl = (res.data?.results?.playlists?.[0]?.data ?? []).map(playlistCard).filter(Boolean);
+      const sg = (res.data?.results?.songs?.[0]?.data ?? []).map(songCard).filter(Boolean);
+      if (sg.length) sections.push({ title: "Trending Songs", albums: sg });
+      if (alb.length) sections.push({ title: "New Releases", albums: alb });
+      if (pl.length) sections.push({ title: "Top Playlists", albums: pl });
     } catch {}
   }
 

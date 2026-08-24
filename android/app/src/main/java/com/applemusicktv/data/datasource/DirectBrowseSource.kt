@@ -123,72 +123,87 @@ class DirectBrowseSource @Inject constructor(
         return sections
     }
 
-    /** The editorial shelves browse.ts falls back to when groupings is thin. */
-    private val editorialQueries = listOf(
-        "Apple Music Live" to "apple music live concert",
-        "Artists Take Over" to "artists take over apple music",
-        "In Studio Performances" to "in studio performance apple music",
-        "Best Club DJ Mixes" to "club dj mix apple music",
-        "Updated Playlists" to "apple music editors playlist updated",
-    )
+    /** A song rendered as a card — type "songs" so BrowseRow routes it to playback, not detail. */
+    private fun songCard(m: Map<*, *>): AlbumDto? {
+        val attrs = m["attributes"] as? Map<*, *> ?: return null
+        val url = art((attrs["artwork"] as? Map<*, *>)?.get("url") as? String) ?: return null
+        return AlbumDto(
+            id = m["id"] as? String ?: return null,
+            title = (attrs["name"] ?: "Unknown") as? String ?: "Unknown",
+            artistName = (attrs["artistName"] ?: "") as? String ?: "",
+            artworkUrl = url,
+            type = "songs",
+            artworkBgColor = (attrs["artwork"] as? Map<*, *>)?.get("bgColor") as? String,
+            releaseDate = null, trackCount = 0,
+        )
+    }
 
-    /** Mirrors browse.ts, including the Daily Top 100 split and editorial searches. */
+    /** A music-video rendered as a SongDto so the Browse video row plays it in the video player. */
+    private fun videoCard(m: Map<*, *>): com.applemusicktv.data.network.SongDto? {
+        val attrs = m["attributes"] as? Map<*, *> ?: return null
+        val url = art((attrs["artwork"] as? Map<*, *>)?.get("url") as? String) ?: return null
+        val rel = m["relationships"] as? Map<*, *>
+        fun relId(k: String) = (((rel?.get(k) as? Map<*, *>)?.get("data") as? List<*>)?.firstOrNull() as? Map<*, *>)?.get("id") as? String
+        return com.applemusicktv.data.network.SongDto(
+            id = m["id"] as? String ?: return null,
+            type = "music-videos",
+            title = (attrs["name"] ?: "Unknown") as? String ?: "Unknown",
+            artistName = (attrs["artistName"] ?: "") as? String ?: "",
+            artistId = relId("artists"),
+            albumId = relId("albums"),
+            albumName = (attrs["albumName"] ?: "") as? String ?: "",
+            durationMs = (attrs["durationInMillis"] as? Number)?.toLong() ?: 0L,
+            artworkUrl = url,
+            artworkBgColor = (attrs["artwork"] as? Map<*, *>)?.get("bgColor") as? String,
+            previewUrl = null, previewHlsUrl = null,
+        )
+    }
+
+    /** The real music.apple.com Browse/New page — one editorial grouping (name="music") whose default
+     *  tab holds every shelf in Apple's order, personalized by the MUT. Mirrors browse.ts exactly. */
     @Suppress("UNCHECKED_CAST")
-    suspend fun browse(): List<Pair<String, List<AlbumDto>>> {
-        val sections = mutableListOf<Pair<String, List<AlbumDto>>>()
-
+    suspend fun browse(): List<com.applemusicktv.data.network.HomeSection> {
+        val sections = mutableListOf<com.applemusicktv.data.network.HomeSection>()
+        val dropTitle = Regex("watch interviews|live radio|radio episode|radio now", RegexOption.IGNORE_CASE)
         runCatching {
-            chart(api.charts(sf, types = "songs", limit = 20), "songs")?.let { sections += it }
-        }
-
-        runCatching {
-            val raw = api.charts(sf, types = "playlists", limit = 30)
-            val results = raw["results"] as? Map<*, *>
-            val first = (results?.get("playlists") as? List<*>)?.firstOrNull() as? Map<*, *>
-            val daily = mutableListOf<AlbumDto>()
-            val other = mutableListOf<AlbumDto>()
-            for (e in (first?.get("data") as? List<*>).orEmpty()) {
-                val m = e as? Map<*, *> ?: continue
-                val dto = itemFromRaw(m) ?: continue
-                val name = ((m["attributes"] as? Map<*, *>)?.get("name") as? String ?: "").lowercase()
-                if (name.contains("daily top 100") || name.contains("top 100")) daily += dto else other += dto
-            }
-            if (daily.isNotEmpty()) sections += "Daily Top 100" to daily
-            if (other.isNotEmpty()) sections += (first?.get("name") as? String ?: "Top Playlists") to other
-        }
-
-        runCatching {
-            chart(api.charts(sf, types = "albums", limit = 20), "albums")
-                ?.let { sections += "New Releases" to it.second }
-        }
-
-        runCatching {
-            val raw = api.groupings(sf)
-            val grouping = (raw["data"] as? List<*>)?.firstOrNull() as? Map<*, *>
-            val contents = ((grouping?.get("relationships") as? Map<*, *>)?.get("contents") as? Map<*, *>)
-                ?.get("data")
-            val items = listOfItems(contents)
-            if (items.isNotEmpty()) sections += "Featured on Apple Music" to items
-        }
-
-        for ((title, term) in editorialQueries) {
-            runCatching {
-                val raw = api.searchRaw(sf, term, types = "playlists", limit = 10)
-                val data = ((raw["results"] as? Map<*, *>)?.get("playlists") as? Map<*, *>)?.get("data")
-                val items = (data as? List<*>).orEmpty()
-                    .mapNotNull { it as? Map<*, *> }
-                    // Only Apple's own editorial playlists — a plain term search
-                    // otherwise returns user playlists with the same words in them.
-                    .filter { m ->
-                        val a = m["attributes"] as? Map<*, *> ?: return@filter false
-                        val name = (a["name"] as? String ?: "").lowercase()
-                        val curator = (a["curatorName"] as? String ?: "").lowercase()
-                        curator.contains("apple music") || name.contains("apple music")
+            val raw = api.editorialGrouping(sf)
+            val tab = (((raw["data"] as? List<*>)?.firstOrNull() as? Map<*, *>)
+                ?.get("relationships") as? Map<*, *>)?.let { it["tabs"] as? Map<*, *> }
+                ?.get("data")?.let { (it as? List<*>)?.firstOrNull() as? Map<*, *> }
+            val kids = ((tab?.get("relationships") as? Map<*, *>)?.get("children") as? Map<*, *>)
+                ?.get("data") as? List<*> ?: emptyList<Any>()
+            for (k in kids) {
+                val kk = k as? Map<*, *> ?: continue
+                val attrs = kk["attributes"] as? Map<*, *> ?: continue
+                val kind = attrs["editorialElementKind"] as? String
+                if (kind != "326" && kind != "327") continue
+                val title = (attrs["name"] ?: attrs["title"] ?: "") as? String ?: ""
+                if (title.isEmpty() || dropTitle.containsMatchIn(title)) continue
+                val contents = ((kk["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)
+                    ?.get("data") as? List<*> ?: continue
+                val maps = contents.mapNotNull { it as? Map<*, *> }
+                if (maps.isEmpty()) continue
+                val types = maps.mapNotNull { it["type"] as? String }.toSet()
+                if (types.contains("stations") || types.contains("uploaded-videos")) continue
+                if (types.isNotEmpty() && types.all { it == "music-videos" }) {
+                    val videos = maps.mapNotNull(::videoCard)
+                    if (videos.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, videos = videos)
+                    continue
+                }
+                val albums = maps.mapNotNull { m ->
+                    when (m["type"] as? String) {
+                        "songs", "music-videos" -> songCard(m)
+                        else -> itemFromRaw(m)   // albums + playlists (playlist id prefix routes correctly)
                     }
-                    .mapNotNull(::itemFromRaw)
-                    .take(8)
-                if (items.isNotEmpty()) sections += title to items
+                }
+                if (albums.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, albums)
             }
+        }
+        // Fallback: charts, so the tab is never blank if the editorial page fails.
+        if (sections.isEmpty()) {
+            runCatching { chart(api.charts(sf, types = "songs", limit = 20), "songs")?.let { sections += com.applemusicktv.data.network.HomeSection(it.first, it.second) } }
+            runCatching { chart(api.charts(sf, types = "albums", limit = 20), "albums")?.let { sections += com.applemusicktv.data.network.HomeSection("New Releases", it.second) } }
+            runCatching { chart(api.charts(sf, types = "playlists", limit = 20), "playlists")?.let { sections += com.applemusicktv.data.network.HomeSection(it.first, it.second) } }
         }
         return sections
     }

@@ -376,6 +376,20 @@ interface DirectAppleApi {
         @Query("limit") limit: Int = 8,
     ): Map<String, Any>
 
+    /** The real music.apple.com Browse/New page — a single editorial GROUPING (name="music") whose
+     *  default tab holds every shelf in Apple's order. With the MUT header it comes personalized. */
+    @GET("v1/editorial/{sf}/groupings")
+    suspend fun editorialGrouping(
+        @Path("sf") storefront: String,
+        @Query("name") name: String = "music",
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+        @Query("include") include: String = "tabs",
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("art[url]") artUrl: String = "f",
+        @Query("limit[contents]") limitContents: Int = 24,
+    ): Map<String, Any>
+
     /** Raw search — the typed one only maps songs/albums/artists. */
     @GET("v1/catalog/{sf}/search")
     suspend fun searchRaw(
