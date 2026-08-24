@@ -349,6 +349,14 @@ interface DirectAppleApi {
         @Query("extend") extend: String = "editorialVideo",
     ): Map<String, Any>
 
+    /** Apple radio rolling queue — POST returns a small batch of catalog songs each call.
+     *  (Verified via the web player: GET / /next / /queue all 405; only POST next-tracks works.) */
+    @POST("v1/me/stations/next-tracks/{id}")
+    suspend fun stationNextTracks(
+        @Path("id") id: String,
+        @Body body: Map<String, String> = emptyMap(),
+    ): AppleList<AppleItem<AppleSongAttrs>>
+
     /** Raw station resource — used to probe what a personalized ra.* mix exposes. */
     @GET("v1/catalog/{sf}/stations/{id}")
     suspend fun catalogStation(

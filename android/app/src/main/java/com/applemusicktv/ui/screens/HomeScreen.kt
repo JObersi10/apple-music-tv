@@ -102,7 +102,7 @@ private fun ContentRow(
                     onClick = {
                         when {
                             isCategory -> onCategoryClick(album.id)
-                            isStation  -> playerVm.probeStation(album.id)
+                            isStation  -> playerVm.playStation(album.id)
                             isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
                             else       -> onAlbumClick(album.id)
                         }

@@ -136,43 +136,44 @@ function decodeStationId(id: string): string {
 albumRoutes.get("/station/:id/tracks", async (c) => {
   const rawId = c.req.param("id")
   const id = decodeStationId(rawId)
-  const sf = getStorefront() || "us"
   const headers = ampHeaders()
   console.log(`[station] id=${rawId} → resolved=${id}`)
 
-  // 1. Fetch station metadata to get stationHash, then use it to get queue
+  // Apple radio streams a ROLLING queue: POST /v1/me/stations/next-tracks/{id} returns a small
+  // batch (usually 1–3 catalog songs) each call. We POST several times to build a playable queue
+  // (deduping), exactly what the web player does as you listen. (Verified: this is the ONLY working
+  // endpoint — /stations/next, /stations/queue, GET next-tracks all 405. Must be POST with {} body.)
+  const songs: any[] = []
+  const seen = new Set<string>()
   try {
-    const metaRes = await axios.get(
-      `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/stations`,
-      { headers, params: { ids: id } }
-    )
-    const attrs = metaRes.data?.data?.[0]?.attributes ?? {}
-    console.log(`[station] full attrs:`, JSON.stringify(attrs))
-    const stationHash = attrs.playParams?.stationHash
-    console.log(`[station] stationHash=${stationHash}`)
-    if (stationHash) {
-      const queueRes = await axios.post(
-        `https://amp-api-edge.music.apple.com/v1/me/stations/queue`,
-        { stationHash },
-        { headers }
+    for (let i = 0; i < 12 && songs.length < 20; i++) {
+      const res = await axios.post(
+        `https://amp-api.music.apple.com/v1/me/stations/next-tracks/${id}`,
+        {},
+        { headers: { ...headers, "Content-Type": "application/json" } },
       )
-      console.log(`[station] queue response:`, JSON.stringify(queueRes.data).substring(0, 300))
-      const songs = (queueRes.data?.data ?? []).filter((t: any) => t.type === "songs")
-      if (songs.length > 0) return c.json({ songs: songs.map(normaliseSong) })
+      const batch = (res.data?.data ?? []).filter((t: any) => t.type === "songs")
+      let added = 0
+      for (const t of batch) {
+        if (seen.has(t.id)) continue
+        seen.add(t.id); songs.push(normaliseSong(t)); added++
+      }
+      if (batch.length === 0 && added === 0) break
     }
+    console.log(`[station] next-tracks gathered ${songs.length}`)
+    if (songs.length > 0) return c.json({ songs })
   } catch (e: any) {
-    console.warn(`[station] stationHash attempt failed:`, e.message)
+    console.warn(`[station] next-tracks failed:`, e?.response?.status, e.message)
   }
 
-  // 2. Personal recently-played tracks as fallback
+  // Fallback: personal recently-played tracks, so a station tile is never dead.
   try {
     const res = await axios.get(
       `https://amp-api-edge.music.apple.com/v1/me/recent/played/tracks`,
       { headers, params: { limit: 25, types: "songs" } }
     )
-    const songs = (res.data?.data ?? []).filter((t: any) => t.type === "songs")
-    console.log(`[station] recent tracks count=${songs.length}`)
-    if (songs.length > 0) return c.json({ songs: songs.map(normaliseSong) })
+    const recent = (res.data?.data ?? []).filter((t: any) => t.type === "songs")
+    if (recent.length > 0) return c.json({ songs: recent.map(normaliseSong) })
   } catch (e: any) {
     console.warn(`[station] recent-played failed:`, e.message)
   }

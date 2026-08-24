@@ -296,6 +296,20 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
 
     /** Top songs for a genre (Apple charts) → a shuffled genre station queue. */
     @Suppress("UNCHECKED_CAST")
+    /** Build a playable queue from a station's rolling next-tracks feed (standalone path). */
+    suspend fun stationTracks(id: String): Result<List<SongDto>> = runCatching {
+        val out = LinkedHashMap<String, SongDto>()
+        repeat(12) {
+            if (out.size >= 20) return@repeat
+            val batch = runCatching { api.stationNextTracks(id).data }.getOrDefault(emptyList())
+            for (item in batch) {
+                val dto = item.toSongDto()
+                if (dto.id.isNotEmpty()) out[dto.id] = dto
+            }
+        }
+        out.values.toList()
+    }
+
     suspend fun genreStationSongs(genreId: String): Result<List<SongDto>> = runCatching {
         val raw = api.charts(storefront, types = "songs", limit = 50, genre = genreId)
         val results = raw["results"] as? Map<*, *> ?: return@runCatching emptyList()

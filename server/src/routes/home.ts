@@ -67,7 +67,6 @@ home.get("/", async (c) => {
           ?? "For You";
         const contents: any[] = rec.relationships?.contents?.data ?? [];
         const items = contents.map((item: any) => {
-          if (item.type === "stations") return null;   // not playable yet
           if (item.type === "albums") { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }
           if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName, type: "playlists" } : null; }
           return itemFromRaw(item);

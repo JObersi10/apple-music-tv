@@ -75,7 +75,6 @@ class DirectBrowseSource @Inject constructor(
                     val contents = ((r["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)?.get("data")
                     val items = (contents as? List<*>).orEmpty()
                         .mapNotNull { it as? Map<*, *> }
-                        .filter { it["type"] != "stations" }   // not playable yet
                         .mapNotNull(::itemFromRaw)
                     if (items.isNotEmpty()) {
                         // ONLY the "Playlists Made for You" shelf animates (Get Up!/Chill/Your
