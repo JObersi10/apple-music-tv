@@ -146,10 +146,11 @@ fun AppShell(modifier: Modifier = Modifier) {
     // track — that frees the secure decoder and its SurfaceFlinger overlay so nothing bleeds onto
     // Library/Browse. Returning re-enables video and the recomposed PlayerView reattaches the
     // surface, so the picture comes back at position without ever stopping the audio.
-    LaunchedEffect(isOnNowPlaying, videoActive) {
-        if (!videoActive) return@LaunchedEffect
-        if (isOnNowPlaying) mvVm.attachVideo() else mvVm.detachVideo()
-    }
+    //
+    // NOTE: attachVideo()/detachVideo() are driven ONLY from the video-surface AndroidView `update`
+    // lambda below, where the codec-release and surface-teardown steps are ordered deterministically
+    // against the visibility flip. Driving them from here as well raced that ordering (the bleed).
+    // This effect is intentionally left as just a marker of the navigation transition.
     // Whenever a video is active, media keys must drive it (not the paused audio player) —
     // MainActivity reads this. Pause audio the moment a video starts.
     LaunchedEffect(videoActive) {
@@ -528,9 +529,20 @@ fun AppShell(modifier: Modifier = Modifier) {
                     // hierarchy so its secure layer is torn down properly, never orphaned.
                     update = { pv ->
                         if (isOnNowPlaying) {
+                            // Hand the surface back FIRST (setPlayer supplies the PlayerView's
+                            // SurfaceView to the decoder), show the view, and only THEN re-enable the
+                            // video track — a secure decoder that inits before it has a surface errors.
                             pv.player = mvPlayer
                             pv.visibility = android.view.View.VISIBLE
+                            mvVm.attachVideo()
                         } else {
+                            // Deterministic teardown ORDER (this was the race that bled): first
+                            // detachVideo() clears the video surface off the decoder and disables the
+                            // video track — releasing the secure codec and its SurfaceFlinger overlay —
+                            // and only THEN do we drop the player + GONE the view. Doing this in one
+                            // ordered block (not a separate LaunchedEffect racing the visibility flip)
+                            // is what stops the last protected frame from being orphaned onto Library.
+                            mvVm.detachVideo()
                             pv.player = null
                             pv.visibility = android.view.View.GONE
                         }

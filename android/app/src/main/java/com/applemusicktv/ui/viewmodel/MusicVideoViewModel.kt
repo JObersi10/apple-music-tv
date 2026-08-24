@@ -462,13 +462,21 @@ class MusicVideoViewModel @Inject constructor(
     // toggles VISIBILITY, so the view keeps managing its layer and SurfaceFlinger reaps it cleanly.
     // Here we just disable the video track off-screen so the secure decoder stops (a secure decoder
     // with a detached surface would error) while the audio renderer keeps the sound going.
+    // videoDetached tracks whether we are currently OFF Now Playing (video track disabled, no
+    // secure decoder). isVideoDetached lets AppShell drive the ORDER of surface teardown/attach.
     private var videoDetached = false
+    val isVideoDetached: Boolean get() = videoDetached
     @OptIn(UnstableApi::class)
     fun detachVideo() {
         if (videoDetached) return
         videoDetached = true
         val exo = player ?: return
-        Log.i("AMMV", "detachVideo: disable video track, keep audio")
+        Log.i("AMMV", "detachVideo: clearVideoSurface + disable video track (release secure decoder), keep audio")
+        // ORDER MATTERS. Detach the surface from the decoder FIRST so the secure MediaCodec stops
+        // writing protected buffers to it, THEN disable the video track to fully release the codec.
+        // Disabling the track is what frees the secure SurfaceFlinger overlay; clearing the surface
+        // first means the last protected frame isn't left latched in the layer (the "bleed").
+        exo.clearVideoSurface()
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
     }
@@ -477,7 +485,7 @@ class MusicVideoViewModel @Inject constructor(
         if (!videoDetached) return
         videoDetached = false
         val exo = player ?: return
-        Log.i("AMMV", "attachVideo: re-enable video track")
+        Log.i("AMMV", "attachVideo: re-enable video track (surface reattached by PlayerView)")
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
     }
