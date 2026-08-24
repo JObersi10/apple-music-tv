@@ -200,8 +200,8 @@ fun AppShell(modifier: Modifier = Modifier) {
             // pushing a second copy on top and growing the back stack.
             if (!navController.popBackStack(Screen.NowPlaying.route, inclusive = false)) {
                 navController.navigate(Screen.NowPlaying.route) {
-                    popUpTo(Screen.Home.route) { saveState = true }
-                    launchSingleTop = true; restoreState = true
+                    popUpTo(Screen.Home.route)
+                    launchSingleTop = true
                 }
             }
             navVm.consumeNowPlayingNavigation()
@@ -603,9 +603,14 @@ fun AppShell(modifier: Modifier = Modifier) {
                     val onThisTab = currentRoute == route ||
                         (route == Screen.Library.route && currentRoute?.startsWith("library") == true)
                     if (!onThisTab) {
+                        // NO saveState/restoreState. With them, switching tabs RESTORES a saved back
+                        // stack whose top could be now_playing — so pressing Library put you back on
+                        // the music-video screen with only the pill showing "Library" (the long-hunted
+                        // "video in library" bleed was actually this), and Back landed on Library.
+                        // Plain popUpTo(Home) keeps one entry per tab and always lands on the tab asked for.
                         navController.navigate(route) {
-                            popUpTo(Screen.Home.route) { saveState = true }
-                            launchSingleTop = true; restoreState = true
+                            popUpTo(Screen.Home.route)
+                            launchSingleTop = true
                         }
                     }
                 },
