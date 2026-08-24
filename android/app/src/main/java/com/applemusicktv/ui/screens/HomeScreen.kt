@@ -26,6 +26,7 @@ fun HomeScreen(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
+    onCategoryClick: (String) -> Unit = {},
     vm: HomeViewModel = hiltViewModel(),
     modifier: Modifier = Modifier,
 ) {
@@ -65,7 +66,7 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
         items(state.sections, key = { it.title }) { section ->
-            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick)
+            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick)
         }
     }
 }
@@ -76,6 +77,7 @@ private fun ContentRow(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit,
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
+    onCategoryClick: (String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -92,11 +94,14 @@ private fun ContentRow(
             items(section.albums, key = { it.id }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
                 val isStation = album.id.startsWith("ra.")
+                // "Find Your Mood" cards carry the CategoryScreen prefix ("ac-"/"c-").
+                val isCategory = album.id.startsWith("ac-") || album.id.startsWith("c-") || album.id.startsWith("mr-")
                 AlbumCard(
                     album = album,
                     size = 130,
                     onClick = {
                         when {
+                            isCategory -> onCategoryClick(album.id)
                             isStation  -> playerVm.probeStation(album.id)
                             isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
                             else       -> onAlbumClick(album.id)

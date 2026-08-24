@@ -58,7 +58,7 @@ home.get("/", async (c) => {
   if (mut) {
     try {
       const res = await axios.get(`${APPLE}/v1/me/recommendations`, {
-        params: { limit: 40, "include[personal-recommendation]": "contents", "art[url]": "f" },
+        params: { limit: 25, "include[personal-recommendation]": "contents", "art[url]": "f" },
         headers: h,
       });
       for (const rec of (res.data?.data ?? [])) {

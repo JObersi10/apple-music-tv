@@ -250,6 +250,8 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onPlaylistClick = { id, name, artworkUrl ->
                         navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
                     },
+                    // "Find Your Mood" cards are already prefixed (ac-/c-/mr-) for CategoryScreen.
+                    onCategoryClick = { navController.navigate(Screen.Category.route(it)) },
                 )
             }
             composable(Screen.Browse.route) {

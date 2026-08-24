@@ -64,7 +64,7 @@ class DirectBrowseSource @Inject constructor(
         // playback is wired. Mirrors home.ts exactly.
         if (hasMut) {
             runCatching {
-                val raw = api.recommendationsRaw(limit = 40)
+                val raw = api.recommendationsRaw(limit = 25)
                 val recs = (raw["data"] as? List<*>).orEmpty()
                 android.util.Log.i("AMHome", "recommendations recs=${recs.size}")
                 for (rec in recs) {
@@ -82,6 +82,25 @@ class DirectBrowseSource @Inject constructor(
                 android.util.Log.i("AMHome", "recommendation sections=${sections.size}")
             }.onFailure { android.util.Log.w("AMHome", "recommendations failed: ${it.message}") }
         }
+
+        // "Find Your Mood" — Apple's Moods & Activities editorial room, same shelf the web Home
+        // shows under the personalized feed. Cards carry the CategoryScreen id prefix ("ac-"/"c-")
+        // so tapping one opens that category page, exactly like the Search "Categories" row.
+        runCatching {
+            direct.getCategories().firstOrNull { it.title.startsWith("Moods", ignoreCase = true) }
+                ?.let { sec ->
+                    val items = sec.items.mapNotNull { cur ->
+                        val art = cur.artworkUrl ?: return@mapNotNull null
+                        AlbumDto(
+                            id = (if (cur.isApple) "ac-" else "c-") + cur.id,
+                            title = cur.name, artistName = "", artworkUrl = art,
+                            type = "curators", artworkBgColor = null,
+                            releaseDate = null, trackCount = 0,
+                        )
+                    }
+                    if (items.isNotEmpty()) sections += "Find Your Mood" to items
+                }
+        }.onFailure { android.util.Log.w("AMHome", "moods failed: ${it.message}") }
 
         // Fallback for logged-out / thin feed: charts so Home is never empty.
         if (sections.size < 2) {
