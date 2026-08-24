@@ -58,67 +58,32 @@ class DirectBrowseSource @Inject constructor(
     suspend fun home(hasMut: Boolean): List<Pair<String, List<AlbumDto>>> {
         val sections = mutableListOf<Pair<String, List<AlbumDto>>>()
 
+        // The personalized recommendations feed IS the signed-in Home page. Emit each recommendation
+        // as its own titled section in Apple's order ("Playlists Made for You", "Recently Played",
+        // genre essentials, "More from <artist>", "New Releases for You"…). Stations skipped until
+        // playback is wired. Mirrors home.ts exactly.
         if (hasMut) {
             runCatching {
-                val raw = api.recommendationsRaw()
-                val topPicks = mutableListOf<AlbumDto>()
-                val genreSections = linkedMapOf<String, List<AlbumDto>>()
+                val raw = api.recommendationsRaw(limit = 40)
                 for (rec in (raw["data"] as? List<*>).orEmpty()) {
                     val r = rec as? Map<*, *> ?: continue
                     val attrs = r["attributes"] as? Map<*, *> ?: emptyMap<String, Any>()
-                    val title = ((attrs["title"] as? Map<*, *>)?.get("stringForDisplay") as? String)
-                        ?: "For You"
-                    val recType = (attrs["resourceTypes"] as? List<*>)?.firstOrNull() as? String ?: ""
-                    // Stations aren't playable through this app's queue.
-                    if (recType == "stations" || title.lowercase().contains("station")) continue
-                    val contents = ((r["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)
-                        ?.get("data")
+                    val title = ((attrs["title"] as? Map<*, *>)?.get("stringForDisplay") as? String) ?: continue
+                    if (title.isEmpty()) continue
+                    val contents = ((r["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)?.get("data")
                     val items = (contents as? List<*>).orEmpty()
                         .mapNotNull { it as? Map<*, *> }
-                        .filter { it["type"] != "stations" }
+                        .filter { it["type"] != "stations" }   // not playable yet
                         .mapNotNull(::itemFromRaw)
-                    if (items.isEmpty()) continue
-                    if (title.lowercase().contains("genre") || attrs["kind"] == "genre-mix") {
-                        genreSections[title] = items
-                    } else {
-                        topPicks += items
-                    }
+                    if (items.isNotEmpty()) sections += title to items
                 }
-                if (topPicks.isNotEmpty()) sections += "Top Picks for You" to topPicks
-                genreSections.forEach { (t, i) -> sections += t to i }
-            }
-
-            runCatching {
-                val items = listOfItems((api.recentPlayed()["data"]))
-                if (items.isNotEmpty()) sections += "Recently Played" to items
             }
         }
 
-        runCatching {
-            chart(api.charts(sf, types = "albums", limit = 20), "albums")
-                ?.let { sections += it }
-        }
-        runCatching {
-            chart(api.charts(sf, types = "playlists", limit = 20), "playlists")
-                ?.let { sections += it }
-        }
-
-        if (hasMut) {
-            runCatching {
-                val items = api.recentlyAdded(20).data
-                    .filter { it.attributes != null }
-                    .mapNotNull { item ->
-                        val a = item.attributes ?: return@mapNotNull null
-                        val url = a.artwork?.resolved() ?: return@mapNotNull null
-                        AlbumDto(
-                            id = item.id, title = a.name, artistName = a.artistName,
-                            artworkUrl = url, artworkBgColor = a.artwork?.bgColor,
-                            releaseDate = a.releaseDate, trackCount = a.trackCount,
-                            genreNames = a.genreNames,
-                        )
-                    }
-                if (items.isNotEmpty()) sections += "Recently Added" to items
-            }
+        // Fallback for logged-out / thin feed: charts so Home is never empty.
+        if (sections.size < 2) {
+            runCatching { chart(api.charts(sf, types = "albums", limit = 20), "albums")?.let { sections += it } }
+            runCatching { chart(api.charts(sf, types = "playlists", limit = 20), "playlists")?.let { sections += it } }
         }
         return sections
     }

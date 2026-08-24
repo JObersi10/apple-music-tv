@@ -50,81 +50,36 @@ home.get("/", async (c) => {
   const h = mut ? appleHeaders(mut) : bearerOnly();
   const sections: Array<{ title: string; albums: any[] }> = [];
 
-  // 1. Personalized recommendations — "Top Picks for You"
-  //    Contains new releases, Made For You, artist stations, etc.
+  // Personalized recommendations feed — this IS the signed-in music.apple.com "Listen Now"/Home
+  //    page. Each recommendation is a titled shelf ("Playlists Made for You", "Recently Played",
+  //    genre essentials, "More from <artist>", "New Releases for You", …). We emit each as its own
+  //    section in Apple's order, exactly like the web. Stations shelves are skipped until station
+  //    playback is wired (a station card that can't play would look broken).
   if (mut) {
     try {
       const res = await axios.get(`${APPLE}/v1/me/recommendations`, {
-        params: {
-          limit: 20,
-          "include[personal-recommendation]": "contents",
-        },
+        params: { limit: 40, "include[personal-recommendation]": "contents", "art[url]": "f" },
         headers: h,
       });
-      const topPicks: any[] = [];
-      const genreSections: Map<string, any[]> = new Map();
-
-      const recs = res.data?.data ?? [];
-      for (const rec of recs) {
-        const title: string = rec.attributes?.title?.stringForDisplay ?? "For You";
+      for (const rec of (res.data?.data ?? [])) {
+        const title: string = rec.attributes?.title?.stringForDisplay ?? "";
+        if (!title) continue;
         const contents: any[] = rec.relationships?.contents?.data ?? [];
-        const recType: string = rec.attributes?.resourceTypes?.[0] ?? "";
-        if (recType === "stations" || title.toLowerCase().includes("station")) continue;
-        const items: any[] = contents
-          .filter((item: any) => item.type !== "stations")
-          .map((item: any) => {
-            if (item.type === "albums") { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }
-            if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName } : null; }
-            return itemFromRaw(item);
-          }).filter(Boolean);
-        if (items.length === 0) continue;
-
-        if (title.toLowerCase().includes("genre") || rec.attributes?.kind === "genre-mix") {
-          genreSections.set(title, items);
-        } else {
-          topPicks.push(...items);
-        }
-      }
-
-      if (topPicks.length > 0) sections.push({ title: "Top Picks for You", albums: topPicks });
-      for (const [title, items] of genreSections) {
-        sections.push({ title, albums: items });
+        const items = contents.map((item: any) => {
+          if (item.type === "stations") return null;   // not playable yet
+          if (item.type === "albums") { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }
+          if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName, type: "playlists" } : null; }
+          return itemFromRaw(item);
+        }).filter(Boolean);
+        if (items.length > 0) sections.push({ title, albums: items });
       }
     } catch (e: any) {
-      // Apple's rec endpoint intermittently 500s — retry below
-      // retry once — Apple's rec endpoint intermittently 500s
-      try {
-        const retry = await axios.get(`${APPLE}/v1/me/recommendations`, {
-          params: { limit: 20, "include[personal-recommendation]": "contents" },
-          headers: h,
-        });
-        const items = (retry.data?.data ?? []).flatMap((rec: any) => {
-          const contents: any[] = rec.relationships?.contents?.data ?? [];
-          return contents.map((item: any) => {
-            if (item.type === "albums") { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }
-            if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName } : null; }
-            return itemFromRaw(item);
-          }).filter(Boolean);
-        });
-        if (items.length > 0) sections.push({ title: "Top Picks for You", albums: items });
-      } catch {}
+      console.warn("[home] recommendations failed:", e?.response?.status, e?.message);
     }
   }
 
-  // 2. Recently Played
-  if (mut) {
-    try {
-      const res = await axios.get(`${APPLE}/v1/me/recent/played`, {
-        params: { limit: 20, types: "albums,playlists" },
-        headers: h,
-      });
-      const items = (res.data?.data ?? []).map(itemFromRaw).filter(Boolean);
-      if (items.length > 0) sections.push({ title: "Recently Played", albums: items });
-    } catch (e: any) {
-      console.warn("[home] recently-played failed:", e.message);
-    }
-  }
-
+  // Charts + new releases fill in when there's no MUT (logged-out) or the rec feed was thin.
+  if (sections.length < 2) {
   // 3. New in catalog — top albums chart (new releases)
   try {
     const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, {
@@ -160,22 +115,7 @@ home.get("/", async (c) => {
   } catch (e: any) {
     console.warn("[home] charts/playlists failed:", e.message);
   }
-
-  // 5. Recently Added from library (fallback / extra)
-  if (mut) {
-    try {
-      const res = await axios.get(`${APPLE}/v1/me/library/recently-added`, {
-        params: { limit: 20 },
-        headers: h,
-      });
-      const items = (res.data?.data ?? []).map(itemFromRaw).filter(Boolean);
-      if (items.length > 0) sections.push({ title: "Recently Added", albums: items });
-    } catch (e: any) {
-      console.warn("[home] recently-added failed:", e.message);
-    }
-  }
-
-
+  } // end fallback
 
   return c.json({ sections });
 });

@@ -460,19 +460,27 @@ class MusicVideoViewModel @Inject constructor(
     fun detachVideo() {
         if (videoDetached) return
         videoDetached = true
-        val exo = player ?: return
-        val mv = curMv ?: run { exo.clearVideoSurface(); return }
-        val pos = exo.currentPosition.coerceAtLeast(0)
-        val pwr = exo.playWhenReady
-        buildAndPlay(mv, curBearer, curMut, disableVideo = true, seekMs = pos, playWhenReady = pwr)
+        val exo = player
+        val mv = curMv
+        val pos = exo?.currentPosition?.coerceAtLeast(0) ?: 0L
+        val pwr = exo?.playWhenReady ?: !userPaused
+        // ALWAYS release the current (video) player — that's the only thing that reliably tears down
+        // the secure overlay on Fire TV. Then rebuild audio-only to keep the sound going. If we have
+        // no resolved playback yet (curMv null, still loading), just release: never leave a live
+        // secure player behind, since THAT is the library bleed.
+        Log.i("AMMV", "detachVideo: release+rebuild audio-only (haveMv=${mv != null}) pos=$pos")
+        releasePlayer()
+        if (mv != null) buildAndPlay(mv, curBearer, curMut, disableVideo = true, seekMs = pos, playWhenReady = pwr)
+        else _state.value = _state.value.copy(playing = false)
     }
     fun attachVideo() {
         if (!videoDetached) return
         videoDetached = false
-        val exo = player ?: return
+        val exo = player
         val mv = curMv ?: return
-        val pos = exo.currentPosition.coerceAtLeast(0)
-        val pwr = exo.playWhenReady
+        val pos = exo?.currentPosition?.coerceAtLeast(0) ?: pendingSeekMs
+        val pwr = exo?.playWhenReady ?: !userPaused
+        Log.i("AMMV", "attachVideo: rebuild WITH video pos=$pos")
         buildAndPlay(mv, curBearer, curMut, disableVideo = false, seekMs = pos, playWhenReady = pwr)
     }
 
