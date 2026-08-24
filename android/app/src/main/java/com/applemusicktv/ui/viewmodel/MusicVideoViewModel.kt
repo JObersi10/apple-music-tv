@@ -53,6 +53,16 @@ data class MvUiState(
 val MV_QUALITY_TIERS = listOf(480, 720, 1080, 2160)
 fun qualityLabel(h: Int) = if (h >= 2160) "4K" else "${h}p"
 
+/** Apple only ever exposes a handful of clean choices (480p/720p/1080p/4K). An HLS master, though,
+ *  carries a dozen odd ladder rungs (310p, 352p, 378p, …). Snap the raw variant heights to the
+ *  standard tiers the video can actually reach, so the quality menu reads like Apple's, not like a
+ *  debug dump. A tier is offered when the video has a variant at least that tall (small tolerance
+ *  for off-by-a-few encodes). setQuality(tier) then picks the best real variant ≤ that tier. */
+fun qualityTiers(rawHeights: List<Int>): List<Int> {
+    val maxH = rawHeights.maxOrNull() ?: return listOf(720)
+    return MV_QUALITY_TIERS.filter { it <= maxH + 60 }.ifEmpty { listOf(MV_QUALITY_TIERS.first()) }
+}
+
 /**
  * Fullscreen music-video playback. A wholly separate ExoPlayer from the audio
  * [PlayerViewModel] — video needs its own surface, DRM session and 1080p-capped
@@ -78,6 +88,11 @@ class MusicVideoViewModel @Inject constructor(
     private var curTitle = ""
     private var curArtist = ""
     private var pendingSeekMs = 0L
+    // The last resolved playback + creds, kept so detach/attach can REBUILD the player from disk
+    // (no network) when swapping between the full video player and an audio-only continuation.
+    private var curMv: com.applemusicktv.media.MusicVideoResult? = null
+    private var curBearer = ""
+    private var curMut = ""
 
     /** Pick a quality tier, persist globally, and RELOAD the current video at that tier.
      *  The MV master we build carries a single video variant (chosen by height), so there is
@@ -201,21 +216,47 @@ class MusicVideoViewModel @Inject constructor(
                 // Use the prefetched result if the queue warmed this id ahead of time.
                 val mv = prefetchCache.remove(mvId)
                     ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, qualityHeight) }
-                _state.value = _state.value.copy(availableQualities = mv.heights)
+                _state.value = _state.value.copy(availableQualities = qualityTiers(mv.heights))
                 curAdamId = mv.adamId   // numeric catalog id for metadata/artist lookups
+                curMv = mv; curBearer = bearer; curMut = mut
 
-                // Write the corrected master + media playlists to disk; ExoPlayer plays
-                // the master via file:// and streams the mvod segments they reference.
-                val masterUri = withContext(Dispatchers.IO) {
+                // Write the corrected master + media playlists to disk (once), then build the player.
+                withContext(Dispatchers.IO) {
                     val dir = context.cacheDir
                     java.io.File(dir, com.applemusicktv.media.MV_VIDEO_FILE).writeText(mv.videoText)
                     java.io.File(dir, com.applemusicktv.media.MV_AUDIO_FILE).writeText(mv.audioText)
                     mv.subsText?.let { java.io.File(dir, com.applemusicktv.media.MV_SUBS_FILE).writeText(it) }
-                    val master = java.io.File(dir, com.applemusicktv.media.MV_MASTER_FILE)
-                    master.writeText(mv.masterText)
-                    android.net.Uri.fromFile(master).toString()
+                    java.io.File(dir, com.applemusicktv.media.MV_MASTER_FILE).writeText(mv.masterText)
                 }
+                buildAndPlay(mv, bearer, mut, disableVideo = videoDetached, seekMs = pendingSeekMs, playWhenReady = !userPaused)
+                pendingSeekMs = 0
+                // Real catalogue metadata for the Info panel — genre, release, album, composer.
+                launch {
+                    withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(curAdamId ?: mvId, bearer, mut) }?.let { d ->
+                        _state.value = _state.value.copy(info = d.info, artistId = d.artistId)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AMMV", "MV load failed: ${e.message}", e)
+                _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to load video")
+            }
+        }
+    }
 
+    /** Build (or rebuild) the ExoPlayer from an already-resolved result. The playlists are on disk,
+     *  so this needs NO network — used both by the initial load and by detach/attach, which swap
+     *  between a full video player and an audio-only continuation without a fetch. When disableVideo
+     *  is true the secure video decoder is never created (no surface, no library-bleed overlay). */
+    @OptIn(UnstableApi::class)
+    private fun buildAndPlay(
+        mv: com.applemusicktv.media.MusicVideoResult,
+        bearer: String, mut: String,
+        disableVideo: Boolean, seekMs: Long, playWhenReady: Boolean,
+    ) {
+        releasePlayer()
+        val masterUri = android.net.Uri.fromFile(
+            java.io.File(context.cacheDir, com.applemusicktv.media.MV_MASTER_FILE)).toString()
+        run {
                 val drmCallback = AppleMusicDrmCallback(mv.adamId, mv.keyUri, bearer, mut, mv.keyMap)
                 val drmManager = DefaultDrmSessionManager.Builder()
                     .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
@@ -241,15 +282,14 @@ class MusicVideoViewModel @Inject constructor(
                 // but this keeps a flaky WAN from ever grabbing a bigger variant.
                 val selector = DefaultTrackSelector(context).apply {
                     // Cap at 1080p and start with subtitles OFF (Apple defaults to Auto/Off too).
-                    // If we're currently off Now Playing, start audio-only — there's no surface to
-                    // draw onto, and a secure video decoder with no surface errors. attachVideo()
-                    // re-enables the track when the user returns to Now Playing.
+                    // disableVideo starts the player audio-only — used for the off-Now-Playing
+                    // continuation so no secure video decoder (and its lingering overlay) exists.
                     parameters = buildUponParameters()
                         .setMaxVideoSize(3840, qualityHeight)
                         .setPreferredTextLanguage(null)
                         .setSelectUndeterminedTextLanguage(false)
                         .setDisabledTextTrackSelectionFlags(0)
-                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, videoDetached)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, disableVideo)
                         .build()
                 }
                 trackSelector = selector
@@ -257,18 +297,15 @@ class MusicVideoViewModel @Inject constructor(
                     .setTrackSelector(selector)
                     .build()
                 exo.setMediaSource(source)
+                if (seekMs > 0) exo.seekTo(seekMs)   // resume position (quality change / detach-attach swap)
                 exo.prepare()
-                // Play unless the user paused / it was loaded paused (restore). Keeps playing across
-                // tabs like a song. userPaused is set by show()/togglePlayPause — DON'T reset it here.
-                exo.playWhenReady = !userPaused
+                exo.playWhenReady = playWhenReady
                 exo.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _state.value = _state.value.copy(playing = isPlaying)
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_READY) {
-                            // Resume position after a quality-change reload.
-                            if (pendingSeekMs > 0) { exo.seekTo(pendingSeekMs); pendingSeekMs = 0 }
                             _state.value = _state.value.copy(loading = false, durationMs = exo.duration.coerceAtLeast(0))
                         } else if (state == Player.STATE_ENDED) {
                             // Auto-advance through the queue, exactly like the audio player.
@@ -326,16 +363,6 @@ class MusicVideoViewModel @Inject constructor(
                 _playerFlow.value = exo
                 _state.value = _state.value.copy(loading = false)
                 startProgress()
-                // Real catalogue metadata for the Info panel — genre, release, album, composer.
-                launch {
-                    withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(curAdamId ?: mvId, bearer, mut) }?.let { d ->
-                        _state.value = _state.value.copy(info = d.info, artistId = d.artistId)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("AMMV", "MV load failed: ${e.message}", e)
-                _state.value = _state.value.copy(loading = false, error = e.message ?: "Failed to load video")
-            }
         }
     }
 
@@ -419,35 +446,34 @@ class MusicVideoViewModel @Inject constructor(
     private var userPaused = false
     fun setScreenVisible(visible: Boolean) { /* no longer gates playback — kept for callers */ }
 
-    // Leaving Now Playing must NOT stop the audio — a music video keeps playing across tabs just
-    // like a song. But a secure (HDCP) SurfaceView's SurfaceFlinger layer LINGERS over Library/
-    // Browse no matter how the View is hidden (GONE / detach / off-screen / removing the AndroidView
-    // all bled). The only thing that reliably tears the secure layer down is releasing the secure
-    // video DECODER — but releasing the whole player also kills the audio. So: keep the ExoPlayer
-    // alive and playing, and DISABLE THE VIDEO TRACK. Disabling the video renderer frees the secure
-    // MediaCodec (and its overlay) while the audio renderer streams on. Returning re-enables video
-    // and the recomposed PlayerView reattaches the surface, so the picture comes back at position.
-    // True while we're off Now Playing: the video track is disabled so no secure surface exists.
-    // Also consulted by playItem so a queue advance into a NEW video while off-screen starts
-    // audio-only (a secure decoder with no surface to draw onto would error otherwise).
+    // Leaving Now Playing must NOT stop the audio — a music video keeps playing across tabs like a
+    // song. But on Fire TV the ONLY thing that reliably tears down a secure (HDCP) SurfaceView's
+    // SurfaceFlinger overlay is releasing the secure video DECODER; hiding the View (GONE / detach /
+    // off-screen / removing the AndroidView) all bled, and disabling the video *track* on a live
+    // player kept the decoder allocated and still bled. So on leave we fully REBUILD the player as
+    // audio-only (video track disabled at creation → the secure decoder never exists → no overlay),
+    // seeked to the current position. It rebuilds from the on-disk playlists (no network), so the
+    // audio only blips ~0.3s. Returning rebuilds WITH video at the current position; the recomposed
+    // PlayerView attaches the surface. videoDetached also guards a queue advance into a new video
+    // while off-screen (playItem starts it audio-only).
     private var videoDetached = false
-    @OptIn(UnstableApi::class)
     fun detachVideo() {
+        if (videoDetached) return
         videoDetached = true
         val exo = player ?: return
-        exo.clearVideoSurface()
-        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
-            .build()
+        val mv = curMv ?: run { exo.clearVideoSurface(); return }
+        val pos = exo.currentPosition.coerceAtLeast(0)
+        val pwr = exo.playWhenReady
+        buildAndPlay(mv, curBearer, curMut, disableVideo = true, seekMs = pos, playWhenReady = pwr)
     }
-    @OptIn(UnstableApi::class)
     fun attachVideo() {
+        if (!videoDetached) return
         videoDetached = false
         val exo = player ?: return
-        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
-            .build()
-        // Surface itself is reattached by the recomposed PlayerView (update { it.player = exo }).
+        val mv = curMv ?: return
+        val pos = exo.currentPosition.coerceAtLeast(0)
+        val pwr = exo.playWhenReady
+        buildAndPlay(mv, curBearer, curMut, disableVideo = false, seekMs = pos, playWhenReady = pwr)
     }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }

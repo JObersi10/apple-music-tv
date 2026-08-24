@@ -393,7 +393,7 @@ fun NowPlayingScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             if (showSleepSubmenu) {
-                                NpMenuItem("Back", Modifier.focusRequester(menuFocus), icon = Glyph.PREV) { showSleepSubmenu = false }
+                                NpMenuItem("Back", Modifier.focusRequester(menuFocus), icon = Glyph.BACK) { showSleepSubmenu = false }
                                 if (state.sleepTimerEndsAt != null || state.sleepAfterSong)
                                     NpMenuItem("Cancel Timer") { playerVm.cancelSleepTimer(); showOptionsMenu = false }
                                 NpMenuItem("End of Song", checked = state.sleepAfterSong) { playerVm.setSleepAfterSong(); showOptionsMenu = false }
@@ -410,7 +410,7 @@ fun NowPlayingScreen(
                                     else -> "Sleep Timer"
                                 }
                                 val timerOn = state.sleepAfterSong || state.sleepTimerEndsAt != null
-                                NpMenuItem(timerLabel, Modifier.focusRequester(menuFocus), icon = Glyph.REPEAT_ONE, checked = timerOn) { showSleepSubmenu = true }
+                                NpMenuItem(timerLabel, Modifier.focusRequester(menuFocus), icon = Glyph.MOON, checked = timerOn) { showSleepSubmenu = true }
                                 // Crossfade + Beat Pulse live in Settings now — keep this menu short.
                                 // Settings items leave the menu open so you can see the label
                                 // flip and keep cycling. Only navigation and the sleep timer
@@ -418,8 +418,8 @@ fun NowPlayingScreen(
                                 NpMenuItem("Shuffle", icon = Glyph.SHUFFLE, checked = state.isShuffled) { playerVm.toggleShuffle() }
                                 val repeatLabel = when (state.repeatMode) { RepeatMode.Off -> "Repeat: Off"; RepeatMode.All -> "Repeat: All"; RepeatMode.One -> "Repeat: One" }
                                 NpMenuItem(repeatLabel, icon = if (state.repeatMode == RepeatMode.One) Glyph.REPEAT_ONE else Glyph.REPEAT, checked = state.repeatMode != RepeatMode.Off) { playerVm.toggleRepeat() }
-                                if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics", icon = Glyph.QUEUE) { fullScreenLyrics = true; showOptionsMenu = false }
-                                NpMenuItem("Start Screensaver", icon = Glyph.ALBUM) { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
+                                if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics", icon = Glyph.LYRICS) { fullScreenLyrics = true; showOptionsMenu = false }
+                                NpMenuItem("Start Screensaver", icon = Glyph.STAR) { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
                                 if (song.artistId != null) NpMenuItem("Go to Artist", icon = Glyph.ARTIST) { onArtistClick(song.artistId); showOptionsMenu = false }
                                 if (song.albumId != null) NpMenuItem("Go to Album", icon = Glyph.ALBUM) { onAlbumClick(song.albumId); showOptionsMenu = false }
                             }

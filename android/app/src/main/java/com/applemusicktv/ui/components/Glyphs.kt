@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 
 /** Vector glyphs drawn on a Canvas — the app avoids emoji/text symbols for UI chrome
  *  (they render inconsistently across Fire TV fonts and can't be tinted or scaled cleanly). */
-enum class Glyph { PLAY, PAUSE, SHUFFLE, REPEAT, REPEAT_ONE, PLUS, PLAY_NEXT, ARTIST, ALBUM, QUEUE, CHECK, NEXT, PREV, CLOSE, RADIO }
+enum class Glyph { PLAY, PAUSE, SHUFFLE, REPEAT, REPEAT_ONE, PLUS, PLAY_NEXT, ARTIST, ALBUM, QUEUE, CHECK, NEXT, PREV, CLOSE, RADIO, MOON, LYRICS, STAR, BACK }
 
 @Composable
 fun Icon(glyph: Glyph, size: Dp = 16.dp, color: Color = Color.White, modifier: Modifier = Modifier) {
@@ -113,6 +113,43 @@ fun Icon(glyph: Glyph, size: Dp = 16.dp, color: Color = Color.White, modifier: M
                 val s = Stroke(width = stroke * 1.15f, cap = StrokeCap.Round)
                 drawPath(Path().apply { moveTo(w * 0.22f, h * 0.22f); lineTo(w * 0.78f, h * 0.78f) }, color, style = s)
                 drawPath(Path().apply { moveTo(w * 0.78f, h * 0.22f); lineTo(w * 0.22f, h * 0.78f) }, color, style = s)
+            }
+            Glyph.MOON -> {
+                // crescent = big disc minus an offset disc (even-odd fill)
+                val p = Path().apply {
+                    addOval(androidx.compose.ui.geometry.Rect(
+                        androidx.compose.ui.geometry.Offset(w * 0.12f, h * 0.1f),
+                        androidx.compose.ui.geometry.Size(w * 0.72f, h * 0.8f)))
+                    addOval(androidx.compose.ui.geometry.Rect(
+                        androidx.compose.ui.geometry.Offset(w * 0.34f, h * 0.02f),
+                        androidx.compose.ui.geometry.Size(w * 0.72f, h * 0.8f)))
+                    fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+                }
+                drawPath(p, color)
+            }
+            Glyph.LYRICS -> {
+                // two quotation marks
+                val s = Stroke(width = stroke * 1.3f, cap = StrokeCap.Round)
+                drawPath(Path().apply { moveTo(w * 0.3f, h * 0.32f); lineTo(w * 0.18f, h * 0.5f); lineTo(w * 0.18f, h * 0.68f); lineTo(w * 0.34f, h * 0.68f); lineTo(w * 0.34f, h * 0.5f); lineTo(w * 0.22f, h * 0.5f) }, color, style = s)
+                drawPath(Path().apply { moveTo(w * 0.66f, h * 0.32f); lineTo(w * 0.54f, h * 0.5f); lineTo(w * 0.54f, h * 0.68f); lineTo(w * 0.7f, h * 0.68f); lineTo(w * 0.7f, h * 0.5f); lineTo(w * 0.58f, h * 0.5f) }, color, style = s)
+            }
+            Glyph.STAR -> {
+                val cx = w * 0.5f; val cy = h * 0.52f
+                val outer = w * 0.42f; val inner = w * 0.17f
+                val p = Path()
+                for (k in 0 until 10) {
+                    val r = if (k % 2 == 0) outer else inner
+                    val a = Math.toRadians((-90 + k * 36).toDouble())
+                    val x = cx + r * Math.cos(a).toFloat()
+                    val y = cy + r * Math.sin(a).toFloat()
+                    if (k == 0) p.moveTo(x, y) else p.lineTo(x, y)
+                }
+                p.close(); drawPath(p, color)
+            }
+            Glyph.BACK -> {
+                val s = Stroke(width = stroke * 1.1f, cap = StrokeCap.Round)
+                drawPath(Path().apply { moveTo(w * 0.55f, h * 0.2f); lineTo(w * 0.28f, h * 0.5f); lineTo(w * 0.55f, h * 0.8f) }, color, style = s)
+                drawPath(Path().apply { moveTo(w * 0.28f, h * 0.5f); lineTo(w * 0.78f, h * 0.5f) }, color, style = s)
             }
             Glyph.RADIO -> {
                 // broadcast dot with two rising arcs
