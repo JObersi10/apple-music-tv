@@ -216,6 +216,18 @@ interface DirectAppleApi {
         @Query("include") include: String = "catalog",
     ): AppleList<AppleItem<ApplePlaylistAttrs>>
 
+    // ── Library writes ──────────────────────────────────────────────────
+    // Add a catalog item to the library. Empty body; ids[<type>]=<id> query. Returns 202.
+    @POST("v1/me/library")
+    suspend fun addToLibrary(@QueryMap ids: Map<String, String>): retrofit2.Response<Unit>
+
+    // Append tracks to an editable library playlist.
+    @POST("v1/me/library/playlists/{id}/tracks")
+    suspend fun addTracksToPlaylist(
+        @Path("id") id: String,
+        @Body body: AddTracksBody,
+    ): retrofit2.Response<Unit>
+
     @GET("v1/me/library/playlists/{id}/tracks")
     suspend fun playlistTracks(
         @Path("id") id: String,

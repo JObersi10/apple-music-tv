@@ -231,6 +231,23 @@ class MusicRepository @Inject constructor(
         if (!useProxy) direct.libraryPlaylists().map { it.playlists }
         else apiCall { api.getLibraryPlaylists(limit).playlists }
 
+    // ── Library writes ──────────────────────────────────────────────────
+    /** Add a song (or album/video) to the user's library. A song's catalog id is what Apple wants;
+     *  a library id (starts with "i.") is already in the library, so it's a no-op success. */
+    suspend fun addToLibrary(song: Song): Result<Unit> {
+        if (song.id.startsWith("i.")) return Result.success(Unit)   // already a library item
+        val type = if (song.isMusicVideo) "music-videos" else "songs"
+        return if (!useProxy) direct.addToLibrary(song.id, type)
+        else runCatching { api.addToLibrary(mapOf("id" to song.id, "type" to type)); Unit }
+    }
+
+    /** Append a song to one of the user's editable library playlists. */
+    suspend fun addToPlaylist(playlistId: String, song: Song): Result<Unit> {
+        val type = if (song.isMusicVideo) "music-videos" else "songs"
+        return if (!useProxy) direct.addToPlaylist(playlistId, song.id, type)
+        else runCatching { api.addTrackToPlaylist(playlistId, mapOf("id" to song.id, "type" to type)); Unit }
+    }
+
     suspend fun getPlaylistTracks(id: String) =
         if (!useProxy) direct.playlistTracks(id).map { it.songs.map(::songFromDto) }
         else apiCall { api.getPlaylistTracks(id).songs.map(::songFromDto) }

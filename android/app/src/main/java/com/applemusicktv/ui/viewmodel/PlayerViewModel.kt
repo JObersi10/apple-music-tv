@@ -1220,6 +1220,22 @@ class PlayerViewModel @Inject constructor(
     /** Temp: dump a personalized ra.* station's payload to logcat (tag StationProbe). */
     fun probeStation(id: String) = viewModelScope.launch { repo.probeStation(id) }
 
+    // ── Library writes ──────────────────────────────────────────────────
+    fun addToLibrary(song: com.applemusicktv.data.model.Song) = viewModelScope.launch {
+        repo.addToLibrary(song)
+            .onSuccess { toast("Added \"${song.title}\" to Library") }
+            .onFailure { toast("Couldn't add to Library") }
+    }
+
+    /** Editable library playlists for the "Add to Playlist" picker. */
+    suspend fun editablePlaylists() = repo.getLibraryPlaylists(limit = 100).getOrDefault(emptyList())
+
+    fun addToPlaylist(playlistId: String, playlistName: String, song: com.applemusicktv.data.model.Song) = viewModelScope.launch {
+        repo.addToPlaylist(playlistId, song)
+            .onSuccess { toast("Added to \"$playlistName\"") }
+            .onFailure { toast("Couldn't add to playlist") }
+    }
+
     fun playStation(stationId: String) = viewModelScope.launch {
         val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
         if (songs.isNotEmpty()) playAlbum(songs)

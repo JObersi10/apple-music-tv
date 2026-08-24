@@ -10,6 +10,20 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
     var storefront: String = "us"
         private set
 
+    // ── Library writes (standalone path) ────────────────────────────────
+    /** Add a catalog item to the user's library. type is "songs"/"albums"/"music-videos"/"playlists". */
+    suspend fun addToLibrary(id: String, type: String): Result<Unit> = runCatching {
+        val res = api.addToLibrary(mapOf("ids[$type]" to id))
+        if (!res.isSuccessful) error("HTTP ${res.code()}")
+    }
+
+    /** Append a song to an editable library playlist. */
+    suspend fun addToPlaylist(playlistId: String, songId: String, type: String = "songs"): Result<Unit> = runCatching {
+        val res = api.addTracksToPlaylist(playlistId,
+            com.applemusicktv.data.network.AddTracksBody(listOf(com.applemusicktv.data.network.AddTrackRef(songId, type))))
+        if (!res.isSuccessful) error("HTTP ${res.code()}")
+    }
+
     suspend fun detectStorefront() {
         runCatching {
             val sf = api.storefront().data.firstOrNull()?.id

@@ -318,15 +318,21 @@ private fun SongList(
             }
         }
     }
+    var pickerSong by remember { mutableStateOf<Song?>(null) }
     menuSong?.let { s ->
         SongContextMenu(
             song = s,
             onDismiss = { menuSong = null },
             onPlayNext = { playerVm.playNext(s); menuSong = null },
             onAddToQueue = { playerVm.addToQueue(s); menuSong = null },
+            onAddToLibrary = { playerVm.addToLibrary(s); menuSong = null },
+            onAddToPlaylist = { pickerSong = s; menuSong = null },
             onGoToArtist = s.artistId?.let { id -> { onArtistClick(id); menuSong = null } },
             onGoToAlbum  = s.albumId?.let  { id -> { onAlbumClick(id);  menuSong = null } },
         )
+    }
+    pickerSong?.let { s ->
+        PlaylistPickerDialog(playerVm = playerVm, song = s, onDismiss = { pickerSong = null })
     }
 }
 
@@ -337,6 +343,8 @@ private fun SongContextMenu(
     onDismiss: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToLibrary: (() -> Unit)? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
     onGoToArtist: (() -> Unit)? = null,
     onGoToAlbum:  (() -> Unit)? = null,
 ) {
@@ -361,6 +369,8 @@ private fun SongContextMenu(
             Spacer(Modifier.height(2.dp))
             ContextMenuItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
             ContextMenuItem("Add to Queue", onAddToQueue)
+            if (onAddToLibrary  != null) ContextMenuItem("Add to Library",  onAddToLibrary)
+            if (onAddToPlaylist != null) ContextMenuItem("Add to Playlist", onAddToPlaylist)
             if (onGoToArtist != null) ContextMenuItem("Go to Artist", onGoToArtist)
             if (onGoToAlbum  != null) ContextMenuItem("Go to Album",  onGoToAlbum)
         }
@@ -403,5 +413,47 @@ private fun SidebarItem(label: String, isSelected: Boolean, onClick: () -> Unit)
             Box(modifier = Modifier.width(2.dp).height(20.dp).background(accent, RoundedCornerShape(topEnd = 2.dp, bottomEnd = 2.dp)))
             Text(label, fontSize = 13.sp, color = text, fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal, modifier = Modifier.padding(start = 14.dp))
         }
+    }
+}
+
+/** "Add to Playlist" picker — lists the user's editable library playlists; tap one to append the song. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PlaylistPickerDialog(
+    playerVm: com.applemusicktv.ui.viewmodel.PlayerViewModel,
+    song: Song,
+    onDismiss: () -> Unit,
+) {
+    var playlists by remember { mutableStateOf<List<com.applemusicktv.data.network.PlaylistDto>?>(null) }
+    LaunchedEffect(Unit) { playlists = playerVm.editablePlaylists() }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        val firstFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+        Column(
+            Modifier.width(360.dp).heightIn(max = 460.dp)
+                .clip(RoundedCornerShape(16.dp)).background(Color(0xFF1C1C1E)).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text("Add to Playlist", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF2A2A2A)))
+            Spacer(Modifier.height(4.dp))
+            val pls = playlists
+            when {
+                pls == null -> Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator(color = Color(0xFFFA233B))
+                }
+                pls.isEmpty() -> Text("No editable playlists", color = Color(0xFF888888), fontSize = 13.sp,
+                    modifier = Modifier.padding(16.dp))
+                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    items(pls.size) { i ->
+                        val pl = pls[i]
+                        ContextMenuItem(pl.name,
+                            { playerVm.addToPlaylist(pl.id, pl.name, song); onDismiss() },
+                            if (i == 0) Modifier.focusRequester(firstFocus) else Modifier)
+                    }
+                }
+            }
+        }
+        LaunchedEffect(playlists) { if (!playlists.isNullOrEmpty()) { kotlinx.coroutines.delay(200); runCatching { firstFocus.requestFocus() } } }
     }
 }

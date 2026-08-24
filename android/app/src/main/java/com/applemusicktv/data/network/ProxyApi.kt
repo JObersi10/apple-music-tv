@@ -300,6 +300,12 @@ interface ProxyApi {
     @GET("api/library/playlists/{id}/tracks")
     suspend fun getPlaylistTracks(@Path("id") id: String): LibrarySongsResponse
 
+    @POST("api/library/add")
+    suspend fun addToLibrary(@Body body: Map<String, String>): Map<String, Any>
+
+    @POST("api/library/playlists/{id}/tracks/add")
+    suspend fun addTrackToPlaylist(@Path("id") id: String, @Body body: Map<String, String>): Map<String, Any>
+
     // ── Auth ──────────────────────────────────────────────────────────────
     @GET("auth/status")
     suspend fun getAuthStatus(): AuthStatus

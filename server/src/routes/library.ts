@@ -210,4 +210,50 @@ library.get("/playlists/:id/tracks", async (c) => {
   } catch (e: any) { return c.json({ error: e.message }, 500); }
 });
 
+// ── Writes ────────────────────────────────────────────────────────────────
+// Add a catalog item (song / album / music-video / playlist) to the user's library.
+// Apple: POST /v1/me/library?ids[<type>]=<id>  (empty body, 202 on success).
+library.post("/add", async (c) => {
+  const mut = resolveMUT(c);
+  const { id, type } = await c.req.json().catch(() => ({} as any));
+  if (!mut) return c.json({ error: "no MUT" }, 401);
+  if (!id || !type) return c.json({ error: "id and type required" }, 400);
+  try {
+    await ensureBearer();
+    const res = await axios.post(
+      `https://amp-api-edge.music.apple.com/v1/me/library`,
+      null,
+      { params: { [`ids[${type}]`]: id }, headers: appleHeaders(mut) },
+    );
+    return c.json({ ok: true, status: res.status });
+  } catch (e: any) {
+    if (e?.response?.status === 401 || e?.response?.status === 403) invalidateBearer();
+    console.warn("[library/add] failed:", e?.response?.status, e?.message);
+    return c.json({ error: e?.response?.data ?? e.message }, e?.response?.status ?? 500);
+  }
+});
+
+// Append a song to one of the user's editable library playlists.
+// Apple: POST /v1/me/library/playlists/{id}/tracks  body { data:[{ id, type }] }.
+library.post("/playlists/:id/tracks/add", async (c) => {
+  const mut = resolveMUT(c);
+  const playlistId = c.req.param("id");
+  const { id, type } = await c.req.json().catch(() => ({} as any));
+  if (!mut) return c.json({ error: "no MUT" }, 401);
+  if (!id) return c.json({ error: "song id required" }, 400);
+  try {
+    await ensureBearer();
+    const res = await axios.post(
+      `https://amp-api-edge.music.apple.com/v1/me/library/playlists/${playlistId}/tracks`,
+      { data: [{ id, type: type ?? "songs" }] },
+      { headers: { ...appleHeaders(mut), "Content-Type": "application/json" } },
+    );
+    return c.json({ ok: true, status: res.status });
+  } catch (e: any) {
+    if (e?.response?.status === 401 || e?.response?.status === 403) invalidateBearer();
+    console.warn("[library/playlist-add] failed:", e?.response?.status, e?.message);
+    return c.json({ error: e?.response?.data ?? e.message }, e?.response?.status ?? 500);
+  }
+});
+
 export default library;
