@@ -470,24 +470,28 @@ class MusicVideoViewModel @Inject constructor(
     fun detachVideo() {
         if (videoDetached) return
         videoDetached = true
-        val exo = player ?: return
-        Log.i("AMMV", "detachVideo: clearVideoSurface + disable video track (release secure decoder), keep audio")
-        // ORDER MATTERS. Detach the surface from the decoder FIRST so the secure MediaCodec stops
-        // writing protected buffers to it, THEN disable the video track to fully release the codec.
-        // Disabling the track is what frees the secure SurfaceFlinger overlay; clearing the surface
-        // first means the last protected frame isn't left latched in the layer (the "bleed").
-        exo.clearVideoSurface()
-        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
+        val exo = player ?: return   // still building → playItem builds audio-only (disableVideo=videoDetached)
+        val mv = curMv ?: return
+        val pos = exo.currentPosition
+        val pwr = exo.playWhenReady
+        // Toggling the video *track* on a live player leaves the secure MediaCodec allocated and its
+        // SurfaceFlinger overlay latched — that IS the library bleed. The only reliable Fire TV
+        // teardown is to fully REBUILD the player audio-only: the secure video decoder never exists,
+        // so there's no protected layer to orphan. Rebuilds from on-disk playlists (no network),
+        // seeked to the current position, so audio blips ~0.3s and keeps playing.
+        Log.i("AMMV", "detachVideo: REBUILD audio-only @${pos}ms (no secure decoder → no bleed)")
+        buildAndPlay(mv, curBearer, curMut, disableVideo = true, seekMs = pos, playWhenReady = pwr)
     }
     @OptIn(UnstableApi::class)
     fun attachVideo() {
         if (!videoDetached) return
         videoDetached = false
         val exo = player ?: return
-        Log.i("AMMV", "attachVideo: re-enable video track (surface reattached by PlayerView)")
-        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
+        val mv = curMv ?: return
+        val pos = exo.currentPosition
+        val pwr = exo.playWhenReady
+        Log.i("AMMV", "attachVideo: REBUILD with video @${pos}ms")
+        buildAndPlay(mv, curBearer, curMut, disableVideo = false, seekMs = pos, playWhenReady = pwr)
     }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }

@@ -513,43 +513,45 @@ fun AppShell(modifier: Modifier = Modifier) {
         // audio keeps playing; attachVideo() re-enables it on return.
         if (videoActive) {
             val mvPlayer by mvVm.playerFlow.collectAsState()
+            // The library "bleed" is a Fire TV compositor bug: a secure (HDCP) SurfaceView placed on
+            // the media-overlay plane (setZOrderMediaOverlay) keeps its LAST protected frame latched in
+            // that hardware plane. View flags (GONE) and track-disable don't reap it, so it lingers on
+            // top of Library/Browse. The only reliable teardown is to DESTROY the SurfaceView — but that
+            // orphans the plane too if a secure frame is still latched at destroy time. So the sequence
+            // is: (1) detachVideo() rebuilds the player audio-only SYNCHRONOUSLY, releasing the secure
+            // decoder and clearing the surface, THEN (2) unmount the PlayerView so its now content-free
+            // SurfaceView is destroyed cleanly and the plane is freed. Audio never stops.
+            var surfaceMounted by remember { mutableStateOf(false) }
+            LaunchedEffect(isOnNowPlaying) {
+                if (isOnNowPlaying) {
+                    surfaceMounted = true             // mount; attachVideo runs once the surface exists
+                } else {
+                    mvVm.detachVideo()                // release secure decoder + clear surface (sync)
+                    surfaceMounted = false            // then destroy the content-free SurfaceView
+                }
+            }
             Box(Modifier.fillMaxSize()) {
-                androidx.compose.ui.viewinterop.AndroidView(
-                    factory = { ctx ->
-                        androidx.media3.ui.PlayerView(ctx).apply {
-                            useController = false
-                            setShutterBackgroundColor(android.graphics.Color.BLACK)
-                            setKeepScreenOn(true)
-                            (videoSurfaceView as? android.view.SurfaceView)?.setZOrderMediaOverlay(true)
-                            player = mvPlayer
-                        }
-                    },
-                    // On Now Playing: attach the player + show. Off Now Playing: detach the player
-                    // (clears its video surface) and GONE the view — but the SurfaceView stays in the
-                    // hierarchy so its secure layer is torn down properly, never orphaned.
-                    update = { pv ->
-                        if (isOnNowPlaying) {
-                            // Hand the surface back FIRST (setPlayer supplies the PlayerView's
-                            // SurfaceView to the decoder), show the view, and only THEN re-enable the
-                            // video track — a secure decoder that inits before it has a surface errors.
+                if (surfaceMounted) {
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        factory = { ctx ->
+                            androidx.media3.ui.PlayerView(ctx).apply {
+                                useController = false
+                                setShutterBackgroundColor(android.graphics.Color.BLACK)
+                                setKeepScreenOn(true)
+                                (videoSurfaceView as? android.view.SurfaceView)?.setZOrderMediaOverlay(true)
+                                player = mvPlayer
+                            }
+                        },
+                        update = { pv ->
+                            android.util.Log.i("AMMV", "surface mounted: route=$currentRoute")
                             pv.player = mvPlayer
                             pv.visibility = android.view.View.VISIBLE
-                            mvVm.attachVideo()
-                        } else {
-                            // Deterministic teardown ORDER (this was the race that bled): first
-                            // detachVideo() clears the video surface off the decoder and disables the
-                            // video track — releasing the secure codec and its SurfaceFlinger overlay —
-                            // and only THEN do we drop the player + GONE the view. Doing this in one
-                            // ordered block (not a separate LaunchedEffect racing the visibility flip)
-                            // is what stops the last protected frame from being orphaned onto Library.
-                            mvVm.detachVideo()
-                            pv.player = null
-                            pv.visibility = android.view.View.GONE
-                        }
-                    },
-                    onRelease = { it.player = null },
-                    modifier = Modifier.fillMaxSize(),
-                )
+                            mvVm.attachVideo()        // rebuild WITH video (no-op on first play)
+                        },
+                        onRelease = { it.player = null },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 if (isOnNowPlaying) {
                     MusicVideoScreen(
                         vm = mvVm,
