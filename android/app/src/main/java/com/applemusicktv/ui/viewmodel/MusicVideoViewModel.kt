@@ -45,6 +45,8 @@ data class MvUiState(
     val artistId:     String? = null,
     /** Max video height cap the user picked (persisted, applied to every video). */
     val qualityHeight: Int = 1080,
+    /** The height ACTUALLY decoding right now (from the decoder), so the UI shows real, not requested. */
+    val actualHeight: Int = 0,
     /** The heights THIS video actually offers (from its master), ascending. */
     val availableQualities: List<Int> = emptyList(),
 )
@@ -328,6 +330,11 @@ class MusicVideoViewModel @Inject constructor(
                 exo.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _state.value = _state.value.copy(playing = isPlaying)
+                    }
+                    override fun onVideoSizeChanged(vs: androidx.media3.common.VideoSize) {
+                        // Show the resolution actually decoding, not the tier we asked for (HDCP can
+                        // silently cap it). The pill then never reads "1080p" over a 432p picture.
+                        if (vs.height > 0) _state.value = _state.value.copy(actualHeight = vs.height)
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_READY) {

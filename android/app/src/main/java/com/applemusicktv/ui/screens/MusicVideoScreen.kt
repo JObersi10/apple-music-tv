@@ -230,7 +230,12 @@ fun MusicVideoScreen(
                             Text(state.title, color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp)
                         }
                         if (auds.isNotEmpty()) { PillButton("Audio", focus == MvTarget.AUDIO); Spacer(Modifier.width(10.dp)) }
-                        PillButton(qualityLabel(state.qualityHeight), focus == MvTarget.QUALITY); Spacer(Modifier.width(10.dp))
+                        QualityPill(
+                            // Show what's ACTUALLY decoding (falls back to the requested tier before the
+                            // first frame). Snap the odd ladder height (432p) to the nearest clean tier.
+                            label = qualityLabel(snapTier(if (state.actualHeight > 0) state.actualHeight else state.qualityHeight)),
+                            focused = focus == MvTarget.QUALITY,
+                        ); Spacer(Modifier.width(10.dp))
                         RoundGlyph(GlyphKind.QUEUE, focus == MvTarget.QUEUE, 44.dp)
                     }
                     Spacer(Modifier.height(18.dp))
@@ -335,6 +340,26 @@ private fun PickerRow(label: String, cursor: Boolean, selected: Boolean) {
     ) {
         Text(label, color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
         if (selected) CheckGlyph()
+    }
+}
+
+/** Snap an odd HLS ladder height (432p, 486p, 624p…) to the nearest clean tier for display. */
+private fun snapTier(h: Int): Int = MV_QUALITY_TIERS.minByOrNull { kotlin.math.abs(it - h) } ?: h
+
+/** Quality control: a gear glyph + the resolution ACTUALLY playing (icon-led, not a bare number). */
+@androidx.compose.runtime.Composable
+private fun QualityPill(label: String, focused: Boolean) {
+    Row(
+        Modifier.height(44.dp).clip(RoundedCornerShape(50))
+            .background(if (focused) Color.White else Color(0x2EFFFFFF))
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        com.applemusicktv.ui.components.Icon(
+            com.applemusicktv.ui.components.Glyph.GEAR, size = 17.dp,
+            color = if (focused) Color.Black else Color.White)
+        Text(label, color = if (focused) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
