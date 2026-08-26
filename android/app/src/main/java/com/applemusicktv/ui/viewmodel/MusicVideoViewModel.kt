@@ -89,23 +89,6 @@ class MusicVideoViewModel @Inject constructor(
     /** The height we actually request: the user's pick, clamped to what this display can decrypt. */
     private fun effHeight() = minOf(qualityHeight, hdcpCap)
 
-    init { logDrmCapabilities() }
-
-    /** One-shot diagnostic: what HDCP link + Widevine security level does this device actually have?
-     *  L3 (software) Widevine is capped to SD no matter the surface, and HDCP < 2.2 blocks HD too.
-     *  This tells us which one is stopping HD (vs Netflix, which does 1080p here). */
-    private fun logDrmCapabilities() {
-        try {
-            val drm = android.media.MediaDrm(C.WIDEVINE_UUID)
-            val sec = runCatching { drm.getPropertyString("securityLevel") }.getOrNull()
-            val hdcp = if (android.os.Build.VERSION.SDK_INT >= 28)
-                runCatching { "connected=${drm.connectedHdcpLevel} max=${drm.maxHdcpLevel}" }.getOrNull() else "api<28"
-            val sysId = runCatching { drm.getPropertyString("systemId") }.getOrNull()
-            Log.i("AMMV", "DRM caps: securityLevel=$sec hdcp=$hdcp systemId=$sysId hdcpCap=$hdcpCap")
-            if (android.os.Build.VERSION.SDK_INT >= 28) drm.close() else @Suppress("DEPRECATION") drm.release()
-        } catch (e: Exception) { Log.w("AMMV", "DRM caps probe failed: ${e.message}") }
-    }
-
     private val _state = MutableStateFlow(MvUiState(qualityHeight = qualityHeight))
     val state: StateFlow<MvUiState> = _state
 
@@ -338,13 +321,6 @@ class MusicVideoViewModel @Inject constructor(
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_READY) {
-                            // Log the HDCP link that actually negotiated during playback — if this stays
-                            // NONE/1 while the video plays, HDCP simply isn't engaging for our pipeline.
-                            if (android.os.Build.VERSION.SDK_INT >= 28) runCatching {
-                                val d = android.media.MediaDrm(C.WIDEVINE_UUID)
-                                Log.i("AMMV", "HDCP during playback: connected=${d.connectedHdcpLevel} (want 6=V2.2 for HD)")
-                                d.close()
-                            }
                             _state.value = _state.value.copy(loading = false, durationMs = exo.duration.coerceAtLeast(0))
                         } else if (state == Player.STATE_ENDED) {
                             // Auto-advance through the queue, exactly like the audio player.

@@ -785,9 +785,6 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == androidx.media3.common.Player.STATE_READY) ready = true
                 }
-                override fun onVideoSizeChanged(vs: androidx.media3.common.VideoSize) {
-                    android.util.Log.i("AMCover", "motion cover ${vs.width}x${vs.height} codec=${videoFormat?.sampleMimeType} br=${videoFormat?.bitrate}")
-                }
             })
             prepare()
         }
