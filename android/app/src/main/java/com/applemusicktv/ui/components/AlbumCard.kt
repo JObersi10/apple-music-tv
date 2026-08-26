@@ -31,17 +31,11 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
     // Motion artwork (Playlists Made for You) plays while the card is focused — see MotionArtwork
     // for why it isn't five decoders at once.
     var focused by remember { mutableStateOf(false) }
-    // Motion art now applies to EVERY card, resolved lazily on focus (one decoder at a time). Cards
-    // that ship a motionUrl already (Made for You) animate instantly; the rest fetch on focus after a
-    // short debounce so flying through a shelf doesn't fire a request per card.
-    val resolveMotion = LocalCardMotion.current
-    var motionUrl by remember(album.id) { mutableStateOf(album.motionUrl) }
-    LaunchedEffect(focused, album.id) {
-        if (focused && motionUrl == null) {
-            delay(350)
-            if (focused) motionUrl = resolveMotion(album)
-        }
-    }
+    // Motion art plays ONLY for cards that ship a preloaded loop (the "Playlists Made for You" shelf).
+    // Lazily fetching + decoding a motion video on EVERY focused card kept a HEVC decoder running
+    // continuously as you browsed — it saturated this Fire TV and made the whole app janky. One
+    // focused decoder on the one animated shelf is what the app shipped smooth with.
+    val motionUrl = album.motionUrl
     Card(
         onClick  = onClick,
         onLongClick = onLongClick,

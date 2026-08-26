@@ -782,9 +782,10 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
             volume = 0f
             playWhenReady = true
             addListener(object : androidx.media3.common.Player.Listener {
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    if (playbackState == androidx.media3.common.Player.STATE_READY) ready = true
-                }
+                // ready tracks an ACTUAL rendered frame, not buffer state. A buffered-but-not-yet-
+                // drawn surface is exactly when the green YUV frame shows, so gating the fade on
+                // onRenderedFirstFrame (not STATE_READY) means alpha never reveals a green surface.
+                override fun onRenderedFirstFrame() { ready = true }
             })
             prepare()
         }
@@ -798,9 +799,10 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
             when (event) {
                 Lifecycle.Event.ON_PAUSE -> { ready = false; exo.pause() }
                 Lifecycle.Event.ON_RESUME -> {
+                    // Keep the shutter up (ready=false) until the decoder redraws a real frame —
+                    // onRenderedFirstFrame flips it. Never optimistically reveal the surface.
+                    ready = false
                     exo.play()
-                    // If already buffered, flip ready immediately; otherwise wait for listener
-                    if (exo.playbackState == androidx.media3.common.Player.STATE_READY) ready = true
                 }
                 else -> {}
             }
@@ -814,22 +816,21 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
 
     val alpha by animateFloatAsState(if (ready) 1f else 0f, tween(400), label = "motionFade")
 
-    // A raw TextureView, NOT PlayerView. PlayerView renders into a SurfaceView, which is a
-    // hole punched through the window — it does NOT honour Compose transforms and stretches
-    // by its own surface size, which is what left the thin black edge / "shrinks in" look on
-    // the static→motion handoff. A TextureView draws in the normal view layer, scales its
-    // buffer to the exact view bounds (== the cover box), so the frame fills edge-to-edge.
+    // PlayerView → SurfaceView: the video gets its OWN hardware overlay plane, so the GPU
+    // barely touches it. A TextureView composites the 1080p HEVC frame through the shared
+    // GPU layer every frame, fighting the DynamicBackground Screen-blend passes — that made
+    // the cover choppy on Fire TV. RESIZE_MODE_ZOOM fills the box; the black shutter + alpha
+    // fade hide the green-frame handoff instead.
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
-            android.view.TextureView(ctx).apply {
-                layoutParams = android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                )
-                exo.setVideoTextureView(this)
+            androidx.media3.ui.PlayerView(ctx).apply {
+                useController = false
+                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                setShutterBackgroundColor(android.graphics.Color.BLACK)
+                player = exo
             }
         },
-        update = { view -> exo.setVideoTextureView(view) },
+        update = { view -> view.player = exo },
         modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
 }
