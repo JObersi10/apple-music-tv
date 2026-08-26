@@ -11,6 +11,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class HomeSection(val title: String, val albums: List<Album>)
@@ -42,10 +43,16 @@ class HomeViewModel @Inject constructor(
     private val FALLBACK_MAX = 4
 
     init {
-        // Show the last good personalized feed instantly on cold start.
-        runCatching { prefs.getString("sections", null)?.let { adapter.fromJson(it) } }
-            .getOrNull()?.takeIf { it.isNotEmpty() }
-            ?.let { _state.value = HomeUiState(isLoading = true, sections = it) }
+        // Read + parse the cached feed OFF the main thread — the JSON is large (all shelves × albums)
+        // and doing it in init on the UI thread froze startup (hundreds of ms / multi-second stalls).
+        viewModelScope.launch {
+            val cached = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                runCatching { prefs.getString("sections", null)?.let { adapter.fromJson(it) } }.getOrNull()
+            }
+            if (!cached.isNullOrEmpty() && _state.value.sections.isEmpty()) {
+                _state.value = HomeUiState(isLoading = true, sections = cached)
+            }
+        }
         load()
     }
 
@@ -67,7 +74,9 @@ class HomeViewModel @Inject constructor(
                         val show = if (useCache) cached else sections
                         _state.value = HomeUiState(isLoading = false, sections = show)
                         if (sections.size > FALLBACK_MAX) {
-                            runCatching { prefs.edit().putString("sections", adapter.toJson(sections)).apply() }
+                            launch(kotlinx.coroutines.Dispatchers.Default) {
+                                runCatching { prefs.edit().putString("sections", adapter.toJson(sections)).apply() }
+                            }
                         }
                         return@launch
                     }
