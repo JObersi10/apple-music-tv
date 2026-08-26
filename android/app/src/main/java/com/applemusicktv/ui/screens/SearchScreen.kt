@@ -468,7 +468,7 @@ private fun CuratorCard(cur: Curator, size: Int = 130, onClick: () -> Unit) {
                 if (cur.artworkUrl != null) AsyncImage(
                     model = cur.artworkUrl, contentDescription = cur.name,
                     contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
-                ) else Text("♪", fontSize = 40.sp, color = Color(0xFF666666))
+                ) else com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.MUSIC_NOTE, size = 40.dp, color = Color(0xFF666666))
             }
         }
         Spacer(Modifier.height(6.dp))

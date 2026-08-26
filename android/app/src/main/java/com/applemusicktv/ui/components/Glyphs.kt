@@ -18,7 +18,7 @@ import com.applemusicktv.R
  * [ColorFilter], so the same asset works in any color. The app avoids emoji/text symbols for chrome
  * (they render inconsistently across Fire TV fonts and can't be tinted or scaled cleanly).
  */
-enum class Glyph { PLAY, PAUSE, SHUFFLE, REPEAT, REPEAT_ONE, PLUS, PLAY_NEXT, ARTIST, ALBUM, QUEUE, CHECK, NEXT, PREV, CLOSE, RADIO, MOON, LYRICS, STAR, BACK, GEAR, GEAR_BADGE, QUEUE_ADD, ADD_TO }
+enum class Glyph { PLAY, PAUSE, SHUFFLE, REPEAT, REPEAT_ONE, PLUS, PLAY_NEXT, ARTIST, ALBUM, QUEUE, CHECK, NEXT, PREV, CLOSE, RADIO, MOON, LYRICS, STAR, BACK, GEAR, GEAR_BADGE, QUEUE_ADD, ADD_TO, MUSIC_NOTE }
 
 @DrawableRes
 private fun Glyph.res(): Int = when (this) {
@@ -45,6 +45,7 @@ private fun Glyph.res(): Int = when (this) {
     Glyph.GEAR_BADGE -> R.drawable.ic_gear_badge
     Glyph.QUEUE_ADD  -> R.drawable.ic_text_badge_plus
     Glyph.ADD_TO     -> R.drawable.ic_plus_circle
+    Glyph.MUSIC_NOTE -> R.drawable.ic_music_note
 }
 
 @Composable

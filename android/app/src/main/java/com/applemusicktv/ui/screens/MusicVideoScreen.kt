@@ -373,11 +373,8 @@ private fun RoundGlyph(kind: GlyphKind, focused: Boolean, size: androidx.compose
 
 @androidx.compose.runtime.Composable
 private fun CheckGlyph() {
-    Canvas(Modifier.size(14.dp)) {
-        val w = size.width; val h = size.height
-        val p = Path().apply { moveTo(w * 0.1f, h * 0.55f); lineTo(w * 0.4f, h * 0.85f); lineTo(w * 0.95f, h * 0.15f) }
-        drawPath(p, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(width = h * 0.14f))
-    }
+    com.applemusicktv.ui.components.Icon(
+        com.applemusicktv.ui.components.Glyph.CHECK, size = 14.dp, color = Color.White)
 }
 
 private fun fmt(ms: Long): String {

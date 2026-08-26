@@ -84,7 +84,7 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
                         modifier = Modifier.fillMaxSize().background(Color(album.color)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("♪", fontSize = (size * 0.28f).sp, color = Color.White.copy(alpha = 0.2f))
+                        Icon(Glyph.MUSIC_NOTE, size = (size * 0.32f).dp, color = Color.White.copy(alpha = 0.2f))
                     }
                 }
             }

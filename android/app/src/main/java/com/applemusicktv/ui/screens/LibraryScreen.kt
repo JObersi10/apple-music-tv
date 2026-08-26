@@ -207,7 +207,7 @@ private fun PlaylistCard(
                     )
                 } else {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text("♪", fontSize = 32.sp, color = Color(0xFF444444))
+                        com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.MUSIC_NOTE, size = 32.dp, color = Color(0xFF444444))
                     }
                 }
                 if (pinned) {
