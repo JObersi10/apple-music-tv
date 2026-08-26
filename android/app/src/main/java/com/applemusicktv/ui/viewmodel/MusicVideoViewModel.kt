@@ -346,6 +346,13 @@ class MusicVideoViewModel @Inject constructor(
                             if (isHdcp) {
                                 prefs.edit().putInt("hdcp_max_height_v3", hdcpCap).apply()
                                 Log.w("AMMV", "HDCP unavailable for ${failedAt}p → capping this display at ${lower}p (persisted)")
+                                // Tell the user once why HD dropped — the display/HDMI link isn't
+                                // authenticating HDCP, so Apple blocks protected HD (not app-fixable).
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "HDCP Error — display link isn't protected, so HD is blocked. Playing ${lower}p.",
+                                    android.widget.Toast.LENGTH_LONG,
+                                ).show()
                             } else {
                                 Log.w("AMMV", "decoder failed at ${failedAt}p → falling back to ${lower}p (session)")
                             }

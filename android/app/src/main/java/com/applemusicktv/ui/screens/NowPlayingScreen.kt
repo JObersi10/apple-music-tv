@@ -814,7 +814,11 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
         }
     }
 
-    val alpha by animateFloatAsState(if (ready) 1f else 0f, tween(400), label = "motionFade")
+    val alpha by animateFloatAsState(
+        if (ready) 1f else 0f,
+        tween(550, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "motionFade",
+    )
 
     // PlayerView → SurfaceView: the video gets its OWN hardware overlay plane, so the GPU
     // barely touches it. A TextureView composites the 1080p HEVC frame through the shared

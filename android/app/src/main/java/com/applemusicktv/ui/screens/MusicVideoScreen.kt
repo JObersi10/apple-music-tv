@@ -346,20 +346,17 @@ private fun PickerRow(label: String, cursor: Boolean, selected: Boolean) {
 /** Snap an odd HLS ladder height (432p, 486p, 624p…) to the nearest clean tier for display. */
 private fun snapTier(h: Int): Int = MV_QUALITY_TIERS.minByOrNull { kotlin.math.abs(it - h) } ?: h
 
-/** Quality control: a gear glyph + the resolution ACTUALLY playing (icon-led, not a bare number). */
+/** Quality control: just the sparkles.tv glyph (no resolution readout). */
 @androidx.compose.runtime.Composable
 private fun QualityPill(label: String, focused: Boolean) {
-    Row(
-        Modifier.height(44.dp).clip(RoundedCornerShape(50))
-            .background(if (focused) Color.White else Color(0x2EFFFFFF))
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    Box(
+        Modifier.size(44.dp).clip(RoundedCornerShape(50))
+            .background(if (focused) Color.White else Color(0x2EFFFFFF)),
+        contentAlignment = Alignment.Center,
     ) {
         com.applemusicktv.ui.components.Icon(
-            com.applemusicktv.ui.components.Glyph.GEAR, size = 17.dp,
+            com.applemusicktv.ui.components.Glyph.SPARKLES_TV, size = 22.dp,
             color = if (focused) Color.Black else Color.White)
-        Text(label, color = if (focused) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
