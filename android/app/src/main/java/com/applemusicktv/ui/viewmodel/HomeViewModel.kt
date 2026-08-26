@@ -1,10 +1,14 @@
 package com.applemusicktv.ui.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.applemusicktv.data.model.Album
 import com.applemusicktv.data.repository.MusicRepository
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.Types
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -18,19 +22,37 @@ data class HomeUiState(
 )
 
 @HiltViewModel
-class HomeViewModel @Inject constructor(private val repo: MusicRepository) : ViewModel() {
+class HomeViewModel @Inject constructor(
+    private val repo: MusicRepository,
+    @ApplicationContext context: Context,
+    moshi: Moshi,
+) : ViewModel() {
 
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state
 
-    init { load() }
+    private val prefs = context.getSharedPreferences("home_cache", Context.MODE_PRIVATE)
+    private val adapter = moshi.adapter<List<HomeSection>>(
+        Types.newParameterizedType(List::class.java, HomeSection::class.java))
+
+    // A feed with only the charts fallback is this few sections. Anything above it means the
+    // personalized recommendations actually loaded — only THOSE are worth caching / worth replacing
+    // a cached good feed with. Apple's recommendations API 500s in bad streaks (all retries can fail),
+    // and without this a cold start in one of those windows dropped Home to 3 chart rows.
+    private val FALLBACK_MAX = 4
+
+    init {
+        // Show the last good personalized feed instantly on cold start.
+        runCatching { prefs.getString("sections", null)?.let { adapter.fromJson(it) } }
+            .getOrNull()?.takeIf { it.isNotEmpty() }
+            ?.let { _state.value = HomeUiState(isLoading = true, sections = it) }
+        load()
+    }
 
     fun load() {
         viewModelScope.launch {
-            _state.value = HomeUiState(isLoading = true)
-            // The first open races the proxy's startup (bearer scrape) and the server-reachability
-            // probe, so a cold /api/home can fail or come back empty — the user had to hit refresh.
-            // Retry a few times with a short backoff instead.
+            val cached = _state.value.sections
+            if (cached.isEmpty()) _state.value = HomeUiState(isLoading = true)
             var lastErr: String? = null
             repeat(4) { attempt ->
                 val result = repo.getHome()
@@ -39,13 +61,22 @@ class HomeViewModel @Inject constructor(private val repo: MusicRepository) : Vie
                         HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto))
                     }
                     if (sections.isNotEmpty()) {
-                        _state.value = HomeUiState(isLoading = false, sections = sections)
+                        // A rich (personalized) feed replaces the cache. A thin fallback does NOT clobber
+                        // a richer cached feed — keep showing the good one until recs recover.
+                        val useCache = sections.size <= FALLBACK_MAX && cached.size > sections.size
+                        val show = if (useCache) cached else sections
+                        _state.value = HomeUiState(isLoading = false, sections = show)
+                        if (sections.size > FALLBACK_MAX) {
+                            runCatching { prefs.edit().putString("sections", adapter.toJson(sections)).apply() }
+                        }
                         return@launch
                     }
                 }.onFailure { lastErr = it.message }
                 if (attempt < 3) kotlinx.coroutines.delay(1500)
             }
-            _state.value = HomeUiState(isLoading = false, error = lastErr)
+            // Total failure: keep any cached feed rather than blanking.
+            if (cached.isNotEmpty()) _state.value = HomeUiState(isLoading = false, sections = cached)
+            else _state.value = HomeUiState(isLoading = false, error = lastErr)
         }
     }
 }
