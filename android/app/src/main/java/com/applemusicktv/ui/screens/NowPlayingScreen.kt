@@ -1127,7 +1127,11 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
             // DYNAMIC — four drifting album-colour blobs. Intensity (amp) scales the beat swing;
             // Reduce Motion (motionAmp=0) holds them still.
             val energy = energyState.value * motionAmp
-            val blobCount = if (lowPower) 2 else 4   // Low Power halves the blob count
+            // 3 blobs, not 4: each BlendMode.Screen blob forces a full-screen offscreen compositing
+            // pass recorded every frame, and on Fire TV that draw-command recording (behind the
+            // per-word lyric text) was the measured jank on this screen. 3 colour pools still read as
+            // Apple's oil-painting spread; the 4th blob was mostly overlap.
+            val blobCount = if (lowPower) 2 else 3
             // Each blob is PINNED to its own distinct palette colour — no pair-crossfade. The old
             // lerp blended two colours per blob and, with big overlapping blobs under Screen, merged
             // the whole thing into one moving gradient wash. One colour per blob + smaller radius
@@ -1523,7 +1527,10 @@ private fun WordWipe(
         f >= 1f -> SolidColor(sungColor)
         else -> Brush.horizontalGradient(0f to sungColor, lo to sungColor, hi to unsungColor, 1f to unsungColor)
     }
-    val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 32f) else null
+    // blurRadius 14, not 32: a blurred text shadow is recorded into the display list every frame the
+    // current word swells, and a 32px blur is a costly record on Fire TV. 14 still reads as a soft
+    // glow but roughly quarters the blur cost.
+    val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 14f) else null
     Text(
         text,
         style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp, brush = brush, shadow = glow),
