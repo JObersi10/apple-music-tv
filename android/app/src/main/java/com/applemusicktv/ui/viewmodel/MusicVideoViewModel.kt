@@ -78,6 +78,14 @@ class MusicVideoViewModel @Inject constructor(
 
     private val prefs = context.getSharedPreferences("mv_prefs", Context.MODE_PRIVATE)
     private var qualityHeight = prefs.getInt("quality_height", 1080)
+    // HDCP ceiling learned from this display: Apple requires an active HDCP link for protected HD.
+    // When a tier fails with "Required output protections are not active" we cap here (persisted) so
+    // future videos start at a height this HDMI chain can actually show — no more fail-then-reload
+    // glitch on every play. Reset generously; a better display bumps it back up next launch only if
+    // the user raises quality again.
+    private var hdcpCap = prefs.getInt("hdcp_max_height", 4320)
+    /** The height we actually request: the user's pick, clamped to what this display can decrypt. */
+    private fun effHeight() = minOf(qualityHeight, hdcpCap)
 
     private val _state = MutableStateFlow(MvUiState(qualityHeight = qualityHeight))
     val state: StateFlow<MvUiState> = _state
@@ -157,7 +165,7 @@ class MusicVideoViewModel @Inject constructor(
             try {
                 val bearer = appleClient.getBearer(); val mut = mutPrefs.getMUT()
                 if (bearer.isEmpty() || mut.isEmpty()) return@launch
-                val mv = withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, qualityHeight) }
+                val mv = withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, effHeight()) }
                 prefetchCache[mvId] = mv
                 if (prefetchCache.size > 3) prefetchCache.keys.firstOrNull { it != mvId }?.let { prefetchCache.remove(it) }
             } catch (_: Exception) {} finally { if (prefetchingId == mvId) prefetchingId = null }
@@ -215,7 +223,7 @@ class MusicVideoViewModel @Inject constructor(
                 }
                 // Use the prefetched result if the queue warmed this id ahead of time.
                 val mv = prefetchCache.remove(mvId)
-                    ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, qualityHeight) }
+                    ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, effHeight()) }
                 _state.value = _state.value.copy(availableQualities = qualityTiers(mv.heights))
                 curAdamId = mv.adamId   // numeric catalog id for metadata/artist lookups
                 curMv = mv; curBearer = bearer; curMut = mut
@@ -285,7 +293,7 @@ class MusicVideoViewModel @Inject constructor(
                     // disableVideo starts the player audio-only — used for the off-Now-Playing
                     // continuation so no secure video decoder (and its lingering overlay) exists.
                     parameters = buildUponParameters()
-                        .setMaxVideoSize(3840, qualityHeight)
+                        .setMaxVideoSize(3840, effHeight())
                         .setPreferredTextLanguage(null)
                         .setSelectUndeterminedTextLanguage(false)
                         .setDisabledTextTrackSelectionFlags(0)
@@ -314,12 +322,28 @@ class MusicVideoViewModel @Inject constructor(
                     }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         Log.e("AMMV", "MV playback error: ${error.message}", error)
-                        // Decoder can't handle the chosen tier (e.g. this Fire TV rejects secure 4K
-                        // HEVC 10-bit) → step DOWN one quality tier and reload, instead of just failing.
-                        val lower = MV_QUALITY_TIERS.filter { it < qualityHeight }.maxOrNull()
+                        // "Required output protections are not active" = this HDMI chain has no active
+                        // HDCP link, so Apple blocks protected HD. Learn the ceiling (persist it) so we
+                        // stop re-attempting HD on every video — that failed attempt then reload IS the
+                        // 480p glitch. Cap to the highest tier strictly below what just failed.
+                        val msg = (error.message.orEmpty() + " " + (error.cause?.message ?: ""))
+                        val isHdcp = msg.contains("output protection", ignoreCase = true)
+                        val failedAt = effHeight()
+                        val lower = MV_QUALITY_TIERS.filter { it < failedAt }.maxOrNull()
                         if (lower != null && curMvId != null) {
-                            Log.w("AMMV", "decoder failed at ${qualityHeight}p → falling back to ${lower}p")
-                            setQuality(lower)   // captures current position + reloads at the lower tier
+                            // Cap in-memory so the reload doesn't re-pick the failing height (that would
+                            // loop). Persist ONLY for the HDCP case — a stable hardware fact — so future
+                            // launches skip HD straight away. A transient decoder hiccup shouldn't
+                            // permanently lower quality.
+                            hdcpCap = lower
+                            if (isHdcp) {
+                                prefs.edit().putInt("hdcp_max_height", hdcpCap).apply()
+                                Log.w("AMMV", "HDCP unavailable for ${failedAt}p → capping this display at ${lower}p (persisted)")
+                            } else {
+                                Log.w("AMMV", "decoder failed at ${failedAt}p → falling back to ${lower}p (session)")
+                            }
+                            pendingSeekMs = player?.currentPosition ?: 0L
+                            playItem(curMvId!!, curTitle, curArtist)   // reload clamped to effHeight()
                             return
                         }
                         _state.value = _state.value.copy(loading = false, error = error.message ?: "Playback failed")

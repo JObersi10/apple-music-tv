@@ -538,7 +538,7 @@ fun AppShell(modifier: Modifier = Modifier) {
             // is: (1) detachVideo() rebuilds the player audio-only SYNCHRONOUSLY, releasing the secure
             // decoder and clearing the surface, THEN (2) unmount the PlayerView so its now content-free
             // SurfaceView is destroyed cleanly and the plane is freed. Audio never stops.
-            val lowPower by playerVm.lowPowerMode.collectAsState()
+            val lowPower = playerState.lowPowerMode
             // Two strategies, chosen by the Low Power toggle:
             //  • Low Power ON  → FREE the secure decoder off Now Playing (detach video track + unmount
             //    the SurfaceView). Lightest on a starved Fire TV, but re-acquiring the codec blips ~0.5s

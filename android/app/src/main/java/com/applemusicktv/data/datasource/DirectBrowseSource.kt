@@ -54,6 +54,19 @@ class DirectBrowseSource @Inject constructor(
         return (first["name"] as? String ?: kind.replaceFirstChar { it.uppercase() }) to items
     }
 
+    /** Retry a flaky Apple call a few times (its recommendations service 500s intermittently). */
+    private suspend fun <T> retry(times: Int, block: suspend () -> T): T {
+        var last: Throwable? = null
+        repeat(times) { i ->
+            try { return block() } catch (e: Throwable) {
+                last = e
+                android.util.Log.w("AMHome", "attempt ${i + 1}/$times failed: ${e.message}")
+                kotlinx.coroutines.delay(300L * (i + 1))
+            }
+        }
+        throw last ?: IllegalStateException("retry failed")
+    }
+
     /** Mirrors home.ts: recommendations → recently played → charts → recently added. */
     suspend fun home(hasMut: Boolean): List<Pair<String, List<AlbumDto>>> {
         val sections = mutableListOf<Pair<String, List<AlbumDto>>>()
@@ -64,7 +77,10 @@ class DirectBrowseSource @Inject constructor(
         // playback is wired. Mirrors home.ts exactly.
         if (hasMut) {
             runCatching {
-                val raw = api.recommendationsRaw(limit = 25)
+                // Apple's recommendations upstream is flaky — ~1 in 10 calls returns a 500 "Upstream
+                // Service Error" (50001), and a cold-boot first call catching that dropped Home to the
+                // charts fallback ("3 rows"). Retry a few times before giving up.
+                val raw = retry(3) { api.recommendationsRaw(limit = 25) }
                 val recs = (raw["data"] as? List<*>).orEmpty()
                 android.util.Log.i("AMHome", "recommendations recs=${recs.size}")
                 for (rec in recs) {

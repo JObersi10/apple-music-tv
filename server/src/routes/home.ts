@@ -57,10 +57,22 @@ home.get("/", async (c) => {
   //    playback is wired (a station card that can't play would look broken).
   if (mut) {
     try {
-      const res = await axios.get(`${APPLE}/v1/me/recommendations`, {
-        params: { limit: 25, "include[personal-recommendation]": "contents", "art[url]": "f" },
-        headers: h,
-      });
+      // Apple's recommendations upstream is flaky: ~1 in 10 calls returns 500 "Upstream Service
+      // Error" (50001). Worse, `art[url]=f` on the edge host makes that 500 near-certain — drop it.
+      // Retry a few times so a single unlucky call doesn't collapse Home to the charts fallback.
+      let res: any = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          res = await axios.get(`${APPLE}/v1/me/recommendations`, {
+            params: { limit: 25, "include[personal-recommendation]": "contents" },
+            headers: h,
+          });
+          break;
+        } catch (err: any) {
+          if (attempt === 2) throw err;
+          await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+        }
+      }
       for (const rec of (res.data?.data ?? [])) {
         const title: string = rec.attributes?.title?.stringForDisplay
           ?? rec.attributes?.reason?.stringForDisplay

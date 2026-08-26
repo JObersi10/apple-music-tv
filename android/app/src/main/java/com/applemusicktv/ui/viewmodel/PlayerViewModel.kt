@@ -176,7 +176,6 @@ class PlayerViewModel @Inject constructor(
     private val crossfadePrefs: com.applemusicktv.data.CrossfadePreferences,
     private val onboardingPrefs: com.applemusicktv.data.OnboardingPreferences,
     private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
-    private val lowPowerPrefs: com.applemusicktv.data.LowPowerPreferences,
     private val webServer: InAppWebServer,
     val beatAnalyzer: BeatAnalyzer,
 ) : ViewModel() {
@@ -187,10 +186,6 @@ class PlayerViewModel @Inject constructor(
     /** Resolve a card's animated-artwork loop lazily (on focus). Null = stay static. */
     suspend fun cardMotion(album: Album): String? = repo.cardMotion(album.id, album.type)
 
-    /** Low Power Mode: ON frees the secure video decoder off Now Playing; OFF keeps it alive
-     *  (seamless return). Default OFF. Exposed as a flow so the video path reacts live. */
-    val lowPowerMode: kotlinx.coroutines.flow.StateFlow<Boolean> get() = lowPowerPrefs.enabled
-    fun setLowPower(on: Boolean) = lowPowerPrefs.setEnabled(on)
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("player_state", Context.MODE_PRIVATE)

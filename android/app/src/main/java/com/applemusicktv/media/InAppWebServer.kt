@@ -28,7 +28,6 @@ class InAppWebServer @Inject constructor(
     private val lyricsOffsetPrefs: LyricsOffsetPreferences,
     private val crossfadePrefs: CrossfadePreferences,
     private val standalonePrefs: StandalonePreferences,
-    private val lowPowerPrefs: com.applemusicktv.data.LowPowerPreferences,
     private val serverPrefs: ServerPreferences,
     private val beatAnalyzer: BeatAnalyzer,
 ) {
@@ -181,7 +180,6 @@ class InAppWebServer @Inject constructor(
             method == "POST" && path == "/set-server-ip"       -> { applyServerIp(parseField(body, "serverip")); redirect(out, "/") }
                 method == "POST" && path == "/set-volume-leveling" -> { applyVolumeLeveling(parseField(body, "vol")); redirect(out, "/") }
                 method == "POST" && path == "/set-background-play" -> { applyBackgroundPlay(parseField(body, "bg")); redirect(out, "/") }
-                method == "POST" && path == "/set-low-power"       -> { lowPowerPrefs.setEnabled(parseField(body, "lp") == "1"); redirect(out, "/") }
                 else -> send(out, 404, "text/plain", "Not found")
             }
             out.flush(); socket.close()
@@ -328,7 +326,6 @@ class InAppWebServer @Inject constructor(
         val currentOffset = lyricsOffsetPrefs.getOffset()
         val currentBeatLatency = beatAnalyzer.latencyMs
         val standaloneOn = standalonePrefs.isEnabled()
-        val lowPowerOn = lowPowerPrefs.isEnabled()
         val serverIp = serverPrefs.getPcServerIp()
         val pp = context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
         val volLevelOn = pp.getBoolean("volume_leveling", false)
@@ -466,16 +463,6 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 <button class="btn ${if (standaloneOn) "" else "btn-p"}" type=submit style=margin-top:8px>${if (standaloneOn) "Turn OFF" else "Turn ON"}</button>
 </form>
 <div style="font-size:10px;color:#555;margin-top:8px">Talks to Apple directly for browse, library, search, artwork, lyrics AND playback — the PC is not needed at all. Songs start in ~1s instead of 15-20s. Trade-off: some tracks have segment gaps the PC remux repairs, so audio can chop. Applies from the next song.</div>
-</div>
-
-<div class=card>
-<h2>Low Power Mode</h2>
-<div class=row><div class=label>Status</div><div class=sub2 style="color:${if (lowPowerOn) "#6bcb77" else "#aaa"}">${if (lowPowerOn) "ON — frees video decoder off Now Playing" else "OFF — seamless video return"}</div></div>
-<form method=POST action=/set-low-power>
-<input type=hidden name=lp value="${if (lowPowerOn) "0" else "1"}">
-<button class="btn ${if (lowPowerOn) "" else "btn-p"}" type=submit style=margin-top:8px>${if (lowPowerOn) "Turn OFF" else "Turn ON"}</button>
-</form>
-<div style="font-size:10px;color:#555;margin-top:8px">ON: releases the secure video decoder whenever you leave Now Playing (lighter memory, fewer app resets on Fire TV) at the cost of a ~0.5s blip returning to the video. OFF: keeps the video ready across tabs so returning is instant.</div>
 </div>
 
 <div class=card>

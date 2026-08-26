@@ -122,7 +122,12 @@ class MusicRepository @Inject constructor(
     // ── Home ─────────────────────────────────────────────────────────────
     suspend fun getHome() =
         if (!useProxy) runCatching { sectionsOf(directBrowse.home(mutPrefs.hasMUT())) }
-        else runCatching { api.getHome() }
+        else runCatching { api.getHome() }.recoverCatching {
+            // Proxy was marked reachable but the call failed (server went down between the 30s health
+            // pings). Don't strand the tab empty — flip to standalone and serve Home directly.
+            serverPrefs.serverReachable = false
+            sectionsOf(directBrowse.home(mutPrefs.hasMUT()))
+        }
 
     private fun sectionsOf(pairs: List<Pair<String, List<com.applemusicktv.data.network.AlbumDto>>>) =
         com.applemusicktv.data.network.HomeResponse(
@@ -133,7 +138,10 @@ class MusicRepository @Inject constructor(
 
     suspend fun getBrowse() =
         if (!useProxy) runCatching { com.applemusicktv.data.network.HomeResponse(directBrowse.browse()) }
-        else runCatching { api.getBrowse() }
+        else runCatching { api.getBrowse() }.recoverCatching {
+            serverPrefs.serverReachable = false
+            com.applemusicktv.data.network.HomeResponse(directBrowse.browse())
+        }
     /** Editorial "multiroom" category page (e.g. The Sounds of Formula 1). Proxy-only for now —
      *  standalone (direct) port is a follow-up. */
     // Curator page (playlists, or grouping tabs for rich apple-curators).
