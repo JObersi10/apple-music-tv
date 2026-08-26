@@ -506,6 +506,18 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         ((square["video"] as? String))
     }
 
+    /** Motion artwork for an album card directly (l.* resolves to catalog first). Null if none. */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun albumMotion(albumId: String): Result<String?> = runCatching {
+        val catId = if (isLibraryId(albumId)) catalogIdForAlbum(albumId) ?: return@runCatching null else albumId
+        val raw = api.catalogAlbumWithMotion(storefront, catId)
+        val attrs = ((raw["data"] as? List<*>)?.firstOrNull() as? Map<*, *>)?.get("attributes") as? Map<*, *>
+        val ev = attrs?.get("editorialVideo") as? Map<*, *> ?: return@runCatching null
+        val square = (ev["motionSquareVideo1x1"] ?: ev["motionDetailSquare"]) as? Map<*, *>
+            ?: return@runCatching null
+        (square["video"] as? String)
+    }
+
     /** Probe: log what a personalized station (ra.*) actually returns. */
     suspend fun probeStation(id: String): Result<String> = runCatching {
         val raw = api.catalogStation(storefront, id)

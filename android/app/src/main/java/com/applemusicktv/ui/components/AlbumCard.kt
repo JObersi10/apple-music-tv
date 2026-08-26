@@ -5,10 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,6 +31,17 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
     // Motion artwork (Playlists Made for You) plays while the card is focused — see MotionArtwork
     // for why it isn't five decoders at once.
     var focused by remember { mutableStateOf(false) }
+    // Motion art now applies to EVERY card, resolved lazily on focus (one decoder at a time). Cards
+    // that ship a motionUrl already (Made for You) animate instantly; the rest fetch on focus after a
+    // short debounce so flying through a shelf doesn't fire a request per card.
+    val resolveMotion = LocalCardMotion.current
+    var motionUrl by remember(album.id) { mutableStateOf(album.motionUrl) }
+    LaunchedEffect(focused, album.id) {
+        if (focused && motionUrl == null) {
+            delay(350)
+            if (focused) motionUrl = resolveMotion(album)
+        }
+    }
     Card(
         onClick  = onClick,
         onLongClick = onLongClick,
@@ -63,8 +76,8 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
                         contentScale       = ContentScale.Crop,
                         modifier           = Modifier.fillMaxSize(),
                     )
-                    if (album.motionUrl != null) {
-                        MotionArtwork(album.motionUrl, play = focused, modifier = Modifier.fillMaxSize())
+                    motionUrl?.let { mu ->
+                        MotionArtwork(mu, play = focused, modifier = Modifier.fillMaxSize())
                     }
                 } else {
                     Box(

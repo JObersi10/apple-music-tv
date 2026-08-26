@@ -183,6 +183,9 @@ class PlayerViewModel @Inject constructor(
     private fun hasMUT() = mutPrefs.hasMUT()
     private fun isStandalone() = !serverPrefs.hasPcServer()
 
+    /** Resolve a card's animated-artwork loop lazily (on focus). Null = stay static. */
+    suspend fun cardMotion(album: Album): String? = repo.cardMotion(album.id, album.type)
+
     private val prefs: SharedPreferences =
         context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
 

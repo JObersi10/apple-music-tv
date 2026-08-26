@@ -113,7 +113,20 @@ class DirectBrowseSource @Inject constructor(
             runCatching { chart(api.charts(sf, types = "albums", limit = 20), "albums")?.let { sections += it } }
             runCatching { chart(api.charts(sf, types = "playlists", limit = 20), "playlists")?.let { sections += it } }
         }
-        return sections
+        return demoteMadeForYou(sections)
+    }
+
+    /** Apple puts "Playlists Made for You" near the top; the user wants it lower. Pull any such
+     *  shelf down to ~4th position so the fresher personalized rows lead. */
+    private fun demoteMadeForYou(
+        sections: List<Pair<String, List<AlbumDto>>>,
+    ): List<Pair<String, List<AlbumDto>>> {
+        val made = sections.filter { it.first.startsWith("Playlists Made for You", ignoreCase = true) }
+        if (made.isEmpty()) return sections
+        val rest = sections.filterNot { it.first.startsWith("Playlists Made for You", ignoreCase = true) }.toMutableList()
+        val at = minOf(3, rest.size)
+        rest.addAll(at, made)
+        return rest
     }
 
     /** Square motion-artwork loop for a playlist, or null. Apple exposes it as

@@ -160,6 +160,16 @@ home.get("/", async (c) => {
   }
   } // end fallback
 
+  // Apple leads with "Playlists Made for You"; the user wants it lower. Pull any such shelf down to
+  // ~4th so the fresher personalized rows lead.
+  const isMade = (s: { title: string }) => /^Playlists Made for You/i.test(s.title);
+  const made = sections.filter(isMade);
+  if (made.length) {
+    const rest = sections.filter((s) => !isMade(s));
+    rest.splice(Math.min(3, rest.length), 0, ...made);
+    return c.json({ sections: rest });
+  }
+
   return c.json({ sections });
 });
 

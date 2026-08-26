@@ -200,6 +200,17 @@ class MusicRepository @Inject constructor(
     suspend fun getPlaylistMotion(playlistId: String): Result<String?> =
         if (!useProxy) direct.playlistMotion(playlistId) else Result.success(null)
 
+    /** Motion loop for any card (editorial playlist / album / song), or null. Used for
+     *  focus-triggered animated artwork on every shelf. Proxy exposes only song→album motion. */
+    suspend fun cardMotion(id: String, type: String): String? = runCatching {
+        when {
+            id.startsWith("pl.") || type == "playlists" -> getPlaylistMotion(id).getOrNull()
+            type == "albums" || id.startsWith("l.")      -> if (!useProxy) direct.albumMotion(id).getOrNull() else null
+            type == "songs"                              -> getMotion(id).getOrNull()
+            else -> null
+        }
+    }.getOrNull()
+
     /** Probe whether the configured proxy server is reachable. */
     suspend fun pingServer(): Boolean =
         runCatching { api.health(); true }.getOrDefault(false)

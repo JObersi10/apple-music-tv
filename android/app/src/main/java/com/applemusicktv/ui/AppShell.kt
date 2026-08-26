@@ -234,6 +234,19 @@ fun AppShell(modifier: Modifier = Modifier) {
         }
     }
 
+    // Animated artwork on EVERY shelf: cards resolve their motion loop lazily on focus. One shared
+    // cache (positive + negative) so refocusing a card never refetches. Only the focused card ever
+    // holds a decoder — Fire TV has no memory to spare.
+    val motionCache = remember { mutableMapOf<String, String?>() }
+    val cardMotionResolver: suspend (com.applemusicktv.data.model.Album) -> String? = remember {
+        { album ->
+            if (motionCache.containsKey(album.id)) motionCache[album.id]
+            else playerVm.cardMotion(album).also { motionCache[album.id] = it }
+        }
+    }
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.applemusicktv.ui.components.LocalCardMotion provides cardMotionResolver,
+    ) {
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         NavHost(
             navController    = navController,
@@ -622,6 +635,7 @@ fun AppShell(modifier: Modifier = Modifier) {
         }
 
     }
+    } // CompositionLocalProvider(LocalCardMotion)
 }
 
 /** Minimal Picture-in-Picture card: the album art darkened, with the title + artist over it. */
