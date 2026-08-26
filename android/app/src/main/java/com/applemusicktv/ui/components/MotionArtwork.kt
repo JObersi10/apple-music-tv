@@ -32,12 +32,19 @@ fun MotionArtwork(url: String, play: Boolean, modifier: Modifier = Modifier) {
     var ready by remember(url) { mutableStateOf(false) }
 
     val exo = remember(url, play) {
-        if (!play) null else ExoPlayer.Builder(context).build().apply {
+        if (!play) null else {
+        // Cap the adaptive ladder — motion-art masters offer up to ~6 Mbps 1080p HEVC, far more than a
+        // small card needs, and it choked the decoder. A low rung looks identical at card size.
+        val selector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
+            parameters = buildUponParameters().setMaxVideoSize(480, 480).setMaxVideoBitrate(1_200_000).build()
+        }
+        ExoPlayer.Builder(context).setTrackSelector(selector).build().apply {
             setMediaItem(MediaItem.fromUri(url))
             repeatMode = Player.REPEAT_MODE_ALL
             volume = 0f
             playWhenReady = true
             prepare()
+        }
         }
     }
     DisposableEffect(exo) { onDispose { exo?.release() } }

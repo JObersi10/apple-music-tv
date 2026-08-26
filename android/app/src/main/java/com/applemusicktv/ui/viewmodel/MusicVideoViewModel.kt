@@ -83,7 +83,7 @@ class MusicVideoViewModel @Inject constructor(
     // future videos start at a height this HDMI chain can actually show — no more fail-then-reload
     // glitch on every play. Reset generously; a better display bumps it back up next launch only if
     // the user raises quality again.
-    private var hdcpCap = prefs.getInt("hdcp_max_height", 4320)
+    private var hdcpCap = prefs.getInt("hdcp_max_height_v2", 4320)
     /** The height we actually request: the user's pick, clamped to what this display can decrypt. */
     private fun effHeight() = minOf(qualityHeight, hdcpCap)
 
@@ -337,7 +337,7 @@ class MusicVideoViewModel @Inject constructor(
                             // permanently lower quality.
                             hdcpCap = lower
                             if (isHdcp) {
-                                prefs.edit().putInt("hdcp_max_height", hdcpCap).apply()
+                                prefs.edit().putInt("hdcp_max_height_v2", hdcpCap).apply()
                                 Log.w("AMMV", "HDCP unavailable for ${failedAt}p → capping this display at ${lower}p (persisted)")
                             } else {
                                 Log.w("AMMV", "decoder failed at ${failedAt}p → falling back to ${lower}p (session)")

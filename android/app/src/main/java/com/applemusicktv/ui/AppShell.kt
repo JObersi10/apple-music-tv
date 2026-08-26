@@ -586,7 +586,15 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 // reaped by any View teardown. DEFAULT z-order sits it BEHIND the window,
                                 // punching a hole only where mounted — off Now Playing we either unmount it
                                 // (low power) or shrink it to 1px behind the opaque tab (seamless).
-                                (videoSurfaceView as? android.view.SurfaceView)?.setZOrderMediaOverlay(false)
+                                (videoSurfaceView as? android.view.SurfaceView)?.apply {
+                                    setZOrderMediaOverlay(false)
+                                    // Mark the surface SECURE so the compositor grants HDCP-protected HD
+                                    // output. Without it the OS lets SD through but blocks HD with
+                                    // "Required output protections are not active" (Netflix marks its
+                                    // surface secure — that's why it does 1080p here and we were stuck at
+                                    // 480p). A secure surface also reads back BLACK in screenshots.
+                                    setSecure(true)
+                                }
                                 player = mvPlayer
                             }
                         },

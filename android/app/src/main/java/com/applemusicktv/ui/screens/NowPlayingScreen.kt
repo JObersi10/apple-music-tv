@@ -767,7 +767,16 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
     var ready by remember(url) { mutableStateOf(false) }
 
     val exo = remember(url) {
-        androidx.media3.exoplayer.ExoPlayer.Builder(context).build().apply {
+        // Apple's motion-art master offers variants up to ~6 Mbps 1080p HEVC. That's absurd for a
+        // small square loop and it choked this MediaTek Fire TV (sustained 4-6 Mbps HEVC → visibly
+        // choppy). Cap the ladder to a small, low-bitrate rung — the cover is only ~300dp.
+        val selector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
+            parameters = buildUponParameters()
+                .setMaxVideoSize(640, 640)
+                .setMaxVideoBitrate(1_500_000)
+                .build()
+        }
+        androidx.media3.exoplayer.ExoPlayer.Builder(context).setTrackSelector(selector).build().apply {
             setMediaItem(androidx.media3.common.MediaItem.fromUri(url))
             repeatMode = androidx.media3.common.Player.REPEAT_MODE_ALL
             volume = 0f
@@ -1750,10 +1759,11 @@ private fun TransportButton(
     loading: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val btnSize = if (large) 64.dp else 48.dp
+    val btnSize = if (large) 64.dp else 54.dp
     // SF Symbols sit inside an optical bounding box (~30% padding), so they render smaller than the
     // old edge-to-edge Canvas glyphs at the same size — bump to compensate and read as Apple-sized.
-    val canvasSize = if (large) 34.dp else 25.dp
+    // forward.fill/backward.fill pad even more than play.fill, so the non-large size is generous.
+    val canvasSize = if (large) 34.dp else 31.dp
     val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
     Surface(
         onClick = onClick,
