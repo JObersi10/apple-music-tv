@@ -281,6 +281,10 @@ interface ProxyApi {
     @GET("api/motion/{id}")
     suspend fun getMotion(@Path("id") id: String): MotionResponse
 
+    /** Animated artwork for any card (album/playlist/song), resolved on focus — proxy-path parity. */
+    @GET("api/motion/card/{type}/{id}")
+    suspend fun getCardMotion(@Path("type") type: String, @Path("id") id: String): MotionResponse
+
 
     // (stream URL is built client-side from PROXY_BASE_URL)
 

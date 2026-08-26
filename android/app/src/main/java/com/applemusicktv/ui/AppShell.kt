@@ -538,13 +538,23 @@ fun AppShell(modifier: Modifier = Modifier) {
             // is: (1) detachVideo() rebuilds the player audio-only SYNCHRONOUSLY, releasing the secure
             // decoder and clearing the surface, THEN (2) unmount the PlayerView so its now content-free
             // SurfaceView is destroyed cleanly and the plane is freed. Audio never stops.
+            val lowPower by playerVm.lowPowerMode.collectAsState()
+            // Two strategies, chosen by the Low Power toggle:
+            //  • Low Power ON  → FREE the secure decoder off Now Playing (detach video track + unmount
+            //    the SurfaceView). Lightest on a starved Fire TV, but re-acquiring the codec blips ~0.5s
+            //    on return.
+            //  • Low Power OFF (default) → keep the decoder ALIVE: the PlayerView stays mounted the whole
+            //    time a video is active, just shrunk to 1px BEHIND the window off Now Playing (default
+            //    z-order = behind, so the opaque tab fully covers it — no bleed, no dispose-orphan). The
+            //    surface keeps compositing (no latched stale frame), so returning is instant.
             var surfaceMounted by remember { mutableStateOf(false) }
-            LaunchedEffect(isOnNowPlaying) {
-                if (isOnNowPlaying) {
-                    surfaceMounted = true             // mount; attachVideo runs once the surface exists
+            LaunchedEffect(isOnNowPlaying, lowPower) {
+                if (lowPower) {
+                    if (isOnNowPlaying) surfaceMounted = true
+                    else { mvVm.detachVideo(); surfaceMounted = false }
                 } else {
-                    mvVm.detachVideo()                // release secure decoder + clear surface (sync)
-                    surfaceMounted = false            // then destroy the content-free SurfaceView
+                    surfaceMounted = true                       // keep alive; never free the decoder
+                    if (isOnNowPlaying) mvVm.attachVideo()       // re-enable if we came from low-power
                 }
             }
             Box(Modifier.fillMaxSize()) {
@@ -555,23 +565,30 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 useController = false
                                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                                 setKeepScreenOn(true)
+                                // Quality change rebuilds the player (single-variant master). Without this
+                                // the view blanks to BLACK the instant the old player detaches and only
+                                // repaints when the new decoder emits its first frame — that black flash is
+                                // the "480p→1080p glitch". Keeping the last frame up bridges the reload.
+                                setKeepContentOnPlayerReset(true)
                                 // DO NOT setZOrderMediaOverlay/OnTop(true). That puts the secure SurfaceView
                                 // on a hardware plane ABOVE the window, which bleeds over Library and can't be
                                 // reaped by any View teardown. DEFAULT z-order sits it BEHIND the window,
-                                // punching a hole only where mounted — unmounting it off Now Playing removes
-                                // the hole, so nothing can draw over other tabs.
+                                // punching a hole only where mounted — off Now Playing we either unmount it
+                                // (low power) or shrink it to 1px behind the opaque tab (seamless).
                                 (videoSurfaceView as? android.view.SurfaceView)?.setZOrderMediaOverlay(false)
                                 player = mvPlayer
                             }
                         },
                         update = { pv ->
-                            android.util.Log.i("AMMV", "surface mounted: route=$currentRoute")
                             pv.player = mvPlayer
                             pv.visibility = android.view.View.VISIBLE
-                            mvVm.attachVideo()        // rebuild WITH video (no-op on first play)
+                            if (lowPower && isOnNowPlaying) mvVm.attachVideo()
                         },
                         onRelease = { it.player = null },
-                        modifier = Modifier.fillMaxSize(),
+                        // Seamless mode off Now Playing: 1px behind the window (decoder keeps running,
+                        // invisible). Everywhere else: fullscreen.
+                        modifier = if (!isOnNowPlaying && !lowPower) Modifier.size(1.dp)
+                                   else Modifier.fillMaxSize(),
                     )
                 }
                 if (isOnNowPlaying) {

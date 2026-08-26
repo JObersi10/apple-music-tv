@@ -203,9 +203,10 @@ class MusicRepository @Inject constructor(
     /** Motion loop for any card (editorial playlist / album / song), or null. Used for
      *  focus-triggered animated artwork on every shelf. Proxy exposes only song→album motion. */
     suspend fun cardMotion(id: String, type: String): String? = runCatching {
+        if (useProxy) return@runCatching runCatching { api.getCardMotion(type, id).video }.getOrNull()
         when {
             id.startsWith("pl.") || type == "playlists" -> getPlaylistMotion(id).getOrNull()
-            type == "albums" || id.startsWith("l.")      -> if (!useProxy) direct.albumMotion(id).getOrNull() else null
+            type == "albums" || id.startsWith("l.")      -> direct.albumMotion(id).getOrNull()
             type == "songs"                              -> getMotion(id).getOrNull()
             else -> null
         }

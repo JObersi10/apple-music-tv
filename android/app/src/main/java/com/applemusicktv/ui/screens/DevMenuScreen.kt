@@ -90,6 +90,13 @@ fun DevMenuScreen(
                 sub = if (state.standaloneOn) "Decode on this device — no PC required" else "Stream through the PC server",
                 onToggle = { vm.toggleStandalone() },
             )
+            val lowPower by playerVm.lowPowerMode.collectAsState()
+            Toggle(
+                label = "Low Power Mode", on = lowPower,
+                sub = if (lowPower) "Frees the video decoder off Now Playing — lighter, tiny blip on return"
+                      else "Keeps video ready across tabs — seamless return, more memory",
+                onToggle = { playerVm.setLowPower(!lowPower) },
+            )
             Toggle(
                 label = "Volume leveling", on = pstate.volumeLeveling,
                 sub = if (pstate.volumeLeveling) "Even out loudness across tracks" else "Play each track at its own level",

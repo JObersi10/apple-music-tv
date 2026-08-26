@@ -55,6 +55,7 @@ fun AlbumDetailScreen(
 
     val album = state.album ?: return
     var menuSong by remember { mutableStateOf<Song?>(null) }
+    var addToSong by remember { mutableStateOf<Song?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
     Row(modifier = Modifier.fillMaxSize().padding(48.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
@@ -166,6 +167,7 @@ fun AlbumDetailScreen(
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
                 AlbumContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
                 AlbumContextItem(Glyph.PLUS, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                AlbumContextItem(Glyph.PLUS, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
                 val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
                 val goAlbum  = s.albumId ?: album.id
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
@@ -173,6 +175,10 @@ fun AlbumDetailScreen(
                 if (goAlbum  != null) AlbumContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(goAlbum);   dismissMenu() } })
             }
         }
+    }
+
+    addToSong?.let { s ->
+        com.applemusicktv.ui.components.AddToDialog(playerVm, s, onDismiss = { addToSong = null })
     }
 
     } // outer Box
