@@ -215,8 +215,8 @@ fun PlaylistDetailScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
                 PlaylistContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                PlaylistContextItem(Glyph.PLUS, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                PlaylistContextItem(Glyph.PLUS, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
+                PlaylistContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                PlaylistContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
                 s.artistId?.let { aid -> PlaylistContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(aid); dismissMenu() } }) }
                 s.albumId?.let  { alid -> PlaylistContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(alid);  dismissMenu() } }) }

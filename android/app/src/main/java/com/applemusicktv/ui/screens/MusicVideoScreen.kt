@@ -359,31 +359,15 @@ private fun RoundGlyph(kind: GlyphKind, focused: Boolean, size: androidx.compose
         Modifier.size(size).clip(RoundedCornerShape(50)).background(if (focused) Color.White else Color(0x2EFFFFFF)),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(size * 0.4f)) {
-            val w = this.size.width; val h = this.size.height
-            when (kind) {
-                GlyphKind.PLAY -> drawPath(Path().apply { moveTo(w * 0.12f, 0f); lineTo(w, h / 2f); lineTo(w * 0.12f, h); close() }, fg)
-                GlyphKind.PAUSE -> {
-                    val bw = w * 0.28f
-                    drawRect(fg, Offset(w * 0.14f, 0f), Size(bw, h))
-                    drawRect(fg, Offset(w * 0.58f, 0f), Size(bw, h))
-                }
-                GlyphKind.NEXT -> {
-                    drawPath(Path().apply { moveTo(0f, 0f); lineTo(w * 0.5f, h / 2f); lineTo(0f, h); close() }, fg)
-                    drawPath(Path().apply { moveTo(w * 0.45f, 0f); lineTo(w * 0.95f, h / 2f); lineTo(w * 0.45f, h); close() }, fg)
-                    drawRect(fg, Offset(w * 0.9f, 0f), Size(w * 0.12f, h))
-                }
-                GlyphKind.PREV -> {
-                    drawRect(fg, Offset(0f, 0f), Size(w * 0.12f, h))
-                    drawPath(Path().apply { moveTo(w * 0.55f, 0f); lineTo(w * 0.1f, h / 2f); lineTo(w * 0.55f, h); close() }, fg)
-                    drawPath(Path().apply { moveTo(w, 0f); lineTo(w * 0.55f, h / 2f); lineTo(w, h); close() }, fg)
-                }
-                GlyphKind.QUEUE -> {
-                    val sw = h * 0.16f
-                    for (r in 0..2) drawRect(fg, Offset(0f, r * h * 0.42f), Size(w, sw))
-                }
-            }
+        // SF Symbol glyphs (same set as the rest of the app).
+        val glyph = when (kind) {
+            GlyphKind.PLAY  -> com.applemusicktv.ui.components.Glyph.PLAY
+            GlyphKind.PAUSE -> com.applemusicktv.ui.components.Glyph.PAUSE
+            GlyphKind.NEXT  -> com.applemusicktv.ui.components.Glyph.NEXT
+            GlyphKind.PREV  -> com.applemusicktv.ui.components.Glyph.PREV
+            GlyphKind.QUEUE -> com.applemusicktv.ui.components.Glyph.QUEUE
         }
+        com.applemusicktv.ui.components.Icon(glyph, size = size * 0.42f, color = fg)
     }
 }
 

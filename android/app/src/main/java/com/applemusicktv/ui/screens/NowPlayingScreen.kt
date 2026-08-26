@@ -421,7 +421,7 @@ fun NowPlayingScreen(
                                 val repeatLabel = when (state.repeatMode) { RepeatMode.Off -> "Repeat: Off"; RepeatMode.All -> "Repeat: All"; RepeatMode.One -> "Repeat: One" }
                                 NpMenuItem(repeatLabel, icon = if (state.repeatMode == RepeatMode.One) Glyph.REPEAT_ONE else Glyph.REPEAT, checked = state.repeatMode != RepeatMode.Off) { playerVm.toggleRepeat() }
                                 if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics", icon = Glyph.LYRICS) { fullScreenLyrics = true; showOptionsMenu = false }
-                                NpMenuItem("Add to…", icon = Glyph.PLUS) { showAddTo = true; showOptionsMenu = false }
+                                NpMenuItem("Add to…", icon = Glyph.ADD_TO) { showAddTo = true; showOptionsMenu = false }
                                 NpMenuItem("Start Screensaver", icon = Glyph.STAR) { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
                                 if (song.artistId != null) NpMenuItem("Go to Artist", icon = Glyph.ARTIST) { onArtistClick(song.artistId); showOptionsMenu = false }
                                 if (song.albumId != null) NpMenuItem("Go to Album", icon = Glyph.ALBUM) { onAlbumClick(song.albumId); showOptionsMenu = false }
@@ -604,7 +604,14 @@ private fun FullScreenLyrics(
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
     // lyrics don't get stranded scrolled-away after you fiddle with the D-pad.
     val playFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
+    // Retry a few frames: a single requestFocus() on first composition fires before the play button
+    // is attached, so it silently failed and focus fell through to the nav bar.
+    LaunchedEffect(Unit) {
+        repeat(8) {
+            if (runCatching { playFocus.requestFocus() }.isSuccess) return@LaunchedEffect
+            kotlinx.coroutines.delay(50)
+        }
+    }
 
     // Transport controls fade out after 5s of no input; any key brings them back.
     var lastInputMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -1793,60 +1800,15 @@ private fun TransportButton(
                 }
             }
             val color = if (loading) Color.White.copy(alpha = 0.45f) else Color.White
-            val strokeW = if (large) 3.2f else 2.6f
-            Canvas(Modifier.size(canvasSize)) {
-                // Use DrawScope.size (canvas px dimensions), not the Dp variables above
-                val w = this.size.width
-                val h = this.size.height
-                val sw = strokeW
-                when (icon) {
-                    TransportIcon.Play -> {
-                        val path = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(w * 0.12f, 0f)
-                            lineTo(w, h * 0.5f)
-                            lineTo(w * 0.12f, h)
-                            close()
-                        }
-                        drawPath(path, color = color)
-                    }
-                    TransportIcon.Pause -> {
-                        drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(w * 0.10f, 0f), size = androidx.compose.ui.geometry.Size(w * 0.28f, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw, sw))
-                        drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(w * 0.62f, 0f), size = androidx.compose.ui.geometry.Size(w * 0.28f, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw, sw))
-                    }
-                    TransportIcon.Prev -> {
-                        drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(sw * 1.5f, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw, sw))
-                        val path = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(w, 0f)
-                            lineTo(sw * 2.5f, h * 0.5f)
-                            lineTo(w, h)
-                            close()
-                        }
-                        drawPath(path, color = color)
-                    }
-                    TransportIcon.Panel -> {
-                        // Three stacked bars — "show the list"
-                        val barH = sw * 1.2f
-                        listOf(0f, (h - barH) * 0.5f, h - barH).forEach { top ->
-                            drawRoundRect(
-                                color,
-                                topLeft = androidx.compose.ui.geometry.Offset(0f, top),
-                                size = androidx.compose.ui.geometry.Size(w, barH),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barH / 2f, barH / 2f),
-                            )
-                        }
-                    }
-                    TransportIcon.Next -> {
-                        val path = androidx.compose.ui.graphics.Path().apply {
-                            moveTo(0f, 0f)
-                            lineTo(w - sw * 2.5f, h * 0.5f)
-                            lineTo(0f, h)
-                            close()
-                        }
-                        drawPath(path, color = color)
-                        drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(w - sw * 1.5f, 0f), size = androidx.compose.ui.geometry.Size(sw * 1.5f, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(sw, sw))
-                    }
-                }
+            // SF Symbol transport glyphs (same set as the rest of the app).
+            val glyph = when (icon) {
+                TransportIcon.Play  -> com.applemusicktv.ui.components.Glyph.PLAY
+                TransportIcon.Pause -> com.applemusicktv.ui.components.Glyph.PAUSE
+                TransportIcon.Prev  -> com.applemusicktv.ui.components.Glyph.PREV
+                TransportIcon.Next  -> com.applemusicktv.ui.components.Glyph.NEXT
+                TransportIcon.Panel -> com.applemusicktv.ui.components.Glyph.QUEUE
             }
+            com.applemusicktv.ui.components.Icon(glyph, size = canvasSize, color = color)
         }
     }
 }

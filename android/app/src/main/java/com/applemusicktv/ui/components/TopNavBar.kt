@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
 import com.applemusicktv.ui.navigation.TopNavTab
+import com.applemusicktv.ui.components.Glyph
+import com.applemusicktv.ui.components.Icon
 
 @Composable
 private fun EqualizerDot() {
@@ -101,18 +103,23 @@ fun TopNavBar(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Text(
-                                text       = tab.label,
-                                fontSize   = 13.sp,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                letterSpacing = if (isSelected) (-0.1).sp else 0.sp,
-                                color      = textColor,
-                            )
+                            if (tab == TopNavTab.Dev) {
+                                // Settings tab is a gear (with a badge when an update is available).
+                                Icon(
+                                    if (updateAvailable) Glyph.GEAR_BADGE else Glyph.GEAR,
+                                    size = 18.dp, color = textColor,
+                                )
+                            } else {
+                                Text(
+                                    text       = tab.label,
+                                    fontSize   = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                    letterSpacing = if (isSelected) (-0.1).sp else 0.sp,
+                                    color      = textColor,
+                                )
+                            }
                             if (tab == TopNavTab.NowPlaying && isPlaying && !isSelected) {
                                 EqualizerDot()
-                            }
-                            if (tab == TopNavTab.Dev && updateAvailable) {
-                                Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(Color(0xFFFA233B)))
                             }
                         }
                     }

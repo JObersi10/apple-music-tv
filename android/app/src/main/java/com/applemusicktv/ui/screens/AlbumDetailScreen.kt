@@ -166,8 +166,8 @@ fun AlbumDetailScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
                 AlbumContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                AlbumContextItem(Glyph.PLUS, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                AlbumContextItem(Glyph.PLUS, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
+                AlbumContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                AlbumContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
                 val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
                 val goAlbum  = s.albumId ?: album.id
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
