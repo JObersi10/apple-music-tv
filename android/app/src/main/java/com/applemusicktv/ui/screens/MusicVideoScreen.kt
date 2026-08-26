@@ -367,7 +367,7 @@ private fun RoundGlyph(kind: GlyphKind, focused: Boolean, size: androidx.compose
             GlyphKind.PREV  -> com.applemusicktv.ui.components.Glyph.PREV
             GlyphKind.QUEUE -> com.applemusicktv.ui.components.Glyph.QUEUE
         }
-        com.applemusicktv.ui.components.Icon(glyph, size = size * 0.42f, color = fg)
+        com.applemusicktv.ui.components.Icon(glyph, size = size * 0.55f, color = fg)
     }
 }
 

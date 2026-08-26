@@ -183,8 +183,10 @@ class PlayerViewModel @Inject constructor(
     private fun hasMUT() = mutPrefs.hasMUT()
     private fun isStandalone() = !serverPrefs.hasPcServer()
 
-    /** Resolve a card's animated-artwork loop lazily (on focus). Null = stay static. */
-    suspend fun cardMotion(album: Album): String? = repo.cardMotion(album.id, album.type)
+    /** Resolve a card's animated-artwork loop lazily (on focus). Null = stay static.
+     *  Honors the "Motion artwork" setting so cards don't spin up video decoders when it's off. */
+    suspend fun cardMotion(album: Album): String? =
+        if (!_state.value.motionArtworkEnabled) null else repo.cardMotion(album.id, album.type)
 
 
     private val prefs: SharedPreferences =

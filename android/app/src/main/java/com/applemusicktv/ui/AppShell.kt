@@ -224,13 +224,22 @@ fun AppShell(modifier: Modifier = Modifier) {
     // offers to exit. Detail screens keep the normal pop behaviour.
     val topLevelTabs = setOf(
         Screen.Browse.route, Screen.Library.route, Screen.Search.route,
-        Screen.NowPlaying.route, Screen.Radio.route, Screen.DevMenu.route,
+        Screen.Radio.route, Screen.DevMenu.route,
     )
     BackHandler(enabled = !showExitDialog && currentRoute in topLevelTabs) {
         selectedTab = TopNavTab.ListenNow
         navController.navigate(Screen.Home.route) {
             popUpTo(Screen.Home.route) { inclusive = true }
             launchSingleTop = true
+        }
+    }
+    // Now Playing (for a SONG) pops back to wherever you opened it from — same as the video player —
+    // instead of collapsing to Listen Now. The video path runs its own Back in MusicVideoScreen, so
+    // this only handles the audio case. Nothing below → fall back to Listen Now.
+    BackHandler(enabled = !showExitDialog && currentRoute == Screen.NowPlaying.route && !videoActive) {
+        if (!navController.popBackStack()) {
+            selectedTab = TopNavTab.ListenNow
+            navController.navigate(Screen.Home.route) { popUpTo(Screen.Home.route) { inclusive = true }; launchSingleTop = true }
         }
     }
 
@@ -240,6 +249,8 @@ fun AppShell(modifier: Modifier = Modifier) {
     val motionCache = remember { mutableMapOf<String, String?>() }
     val cardMotionResolver: suspend (com.applemusicktv.data.model.Album) -> String? = remember {
         { album ->
+            // cardMotion() returns null when the user's "Motion artwork" setting is off, so animated
+            // card art follows that toggle too (no card video decoders spin up when it's off).
             if (motionCache.containsKey(album.id)) motionCache[album.id]
             else playerVm.cardMotion(album).also { motionCache[album.id] = it }
         }
@@ -643,7 +654,10 @@ fun AppShell(modifier: Modifier = Modifier) {
                         // "video in library" bleed was actually this), and Back landed on Library.
                         // Plain popUpTo(Home) keeps one entry per tab and always lands on the tab asked for.
                         navController.navigate(route) {
-                            popUpTo(Screen.Home.route)
+                            // Now Playing is PUSHED on top (no popUpTo) so Back returns to the screen
+                            // you opened it from — matching the video player. Every other tab collapses
+                            // to a single entry via popUpTo(Home).
+                            if (route != Screen.NowPlaying.route) popUpTo(Screen.Home.route)
                             launchSingleTop = true
                         }
                     }

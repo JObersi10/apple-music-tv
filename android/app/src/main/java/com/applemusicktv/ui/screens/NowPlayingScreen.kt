@@ -1750,8 +1750,10 @@ private fun TransportButton(
     loading: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val btnSize = if (large) 60.dp else 44.dp
-    val canvasSize = if (large) 28.dp else 20.dp
+    val btnSize = if (large) 64.dp else 48.dp
+    // SF Symbols sit inside an optical bounding box (~30% padding), so they render smaller than the
+    // old edge-to-edge Canvas glyphs at the same size — bump to compensate and read as Apple-sized.
+    val canvasSize = if (large) 34.dp else 25.dp
     val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
     Surface(
         onClick = onClick,
