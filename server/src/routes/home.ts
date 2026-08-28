@@ -172,27 +172,31 @@ home.get("/", async (c) => {
   }
   } // end fallback
 
-  // The SPOTLIGHT hero = a genuine personalized recommendation (never "Recently Played"). Prefer
-  // Apple's "Top Picks for You" / "New Releases for You" when present, else the first
-  // music-recommendations shelf that isn't "Playlists Made for You". It leads the page as big
-  // gradient cards.
   const isMade = (s: { title: string }) => /^Playlists Made for You/i.test(s.title);
-  const heroPrefs = [/^Top Picks for You/i, /^New Releases for You/i, /^Made For You/i];
-  let heroIdx = -1;
-  for (const re of heroPrefs) { heroIdx = sections.findIndex((s) => re.test(s.title)); if (heroIdx >= 0) break; }
-  if (heroIdx < 0) heroIdx = sections.findIndex((s) => s.kind === "music-recommendations" && !isMade(s));
 
-  const ordered = [...sections];
-  let hero: typeof sections[number] | undefined;
-  if (heroIdx >= 0) { hero = ordered.splice(heroIdx, 1)[0]; hero.style = "gradient"; }
+  // "Top Picks for You" — Apple's web Home leads with this hero, but /me/recommendations doesn't
+  // return it as a named shelf. Its cards ARE the lead item of each personalized artist/station
+  // recommendation ("Featuring LAUV", "More from BTS: Deep Cuts", "… Similar Artists Station"), each
+  // captioned by its row title. We rebuild it from exactly those rows, then lead the page with it.
+  const pickRows = sections.filter((s) => s.kind === "music-recommendations" && !isMade(s));
+  const topPicks: any[] = [];
+  const pseen = new Set<string>();
+  for (const row of pickRows) {
+    const lead = (row.albums ?? []).find((a: any) => a && !pseen.has(a.id));
+    if (!lead) continue;
+    pseen.add(lead.id);
+    topPicks.push({ ...lead, title: row.title }); // caption = the row title
+    if (topPicks.length >= 10) break;
+  }
 
-  // "Playlists Made for You" also renders as gradient cards, pulled down to ~4th.
-  const made = ordered.filter(isMade).map((s) => ({ ...s, style: "gradient" }));
-  const rest = ordered.filter((s) => !isMade(s));
-  if (made.length) rest.splice(Math.min(2, rest.length), 0, ...made);
+  const made = sections.filter(isMade).map((s) => ({ ...s, style: "gradient" }));
+  const rest = sections.filter((s) => !isMade(s));
 
-  const final = hero ? [hero, ...rest] : rest;
-  return c.json({ sections: final });
+  const out: Array<{ title: string; albums: any[]; style?: string }> = [];
+  if (topPicks.length >= 3) out.push({ title: "Top Picks for You", albums: topPicks, style: "picks" });
+  out.push(...made);
+  out.push(...rest);
+  return c.json({ sections: out });
 });
 
 export default home;

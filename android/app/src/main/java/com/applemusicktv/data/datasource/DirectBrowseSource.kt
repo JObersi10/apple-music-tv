@@ -126,19 +126,19 @@ class DirectBrowseSource @Inject constructor(
                         kinds[title] = kind
                     }
                 }
-                // Lead with the recommendation hero (Top Picks / New Releases / first
-                // music-recommendations that isn't Playlists Made for You).
-                val heroPrefs = listOf("Top Picks for You", "New Releases for You", "Made For You")
+                // "Top Picks for You" hero — rebuilt from the lead item of each personalized
+                // artist/station recommendation (captioned by its row title), exactly like home.ts.
                 fun isMade(t: String) = t.startsWith("Playlists Made for You", ignoreCase = true)
-                var heroTitle = heroPrefs.firstNotNullOfOrNull { p ->
-                    sections.firstOrNull { it.first.startsWith(p, ignoreCase = true) }?.first
-                } ?: sections.firstOrNull { kinds[it.first] == "music-recommendations" && !isMade(it.first) }?.first
-                heroTitle?.let { ht ->
-                    val hero = sections.first { it.first == ht }
-                    sections.remove(hero)
-                    sections.add(0, hero)
+                val pseen = HashSet<String>()
+                val topPicks = ArrayList<AlbumDto>()
+                for ((title, items) in sections) {
+                    if (kinds[title] != "music-recommendations" || isMade(title)) continue
+                    val lead = items.firstOrNull { pseen.add(it.id) } ?: continue
+                    topPicks += lead.copy(title = title)
+                    if (topPicks.size >= 10) break
                 }
-                android.util.Log.i("AMHome", "recommendation sections=${sections.size} hero=$heroTitle")
+                if (topPicks.size >= 3) sections.add(0, "Top Picks for You" to topPicks)
+                android.util.Log.i("AMHome", "recommendation sections=${sections.size} picks=${topPicks.size}")
             }.onFailure { android.util.Log.w("AMHome", "recommendations failed: ${it.message}") }
         }
 

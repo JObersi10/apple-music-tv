@@ -283,6 +283,8 @@ function curatorCard(item: any): any | null {
     artistName: "",
     artworkUrl: url,
     artworkBgColor: null,
+    editorialNotes: shortNote(attr),
+    wideArtworkUrl: wideArtFrom(ea),
   };
 }
 
@@ -350,25 +352,33 @@ browse.get("/", async (c) => {
       }).filter(Boolean);
       if (albums.length) sections.push({ title, albums, roomId });
     }
+
+    // The real Featured "New" shelf (Apple's own big editorial spotlight cards). It is the grouping
+    // element of kind 316 whose children are editorial cards (317 album/playlist, 320 radio-show).
+    // Each card carries a designBadge — the exact label ("ADD TO YOUR LIBRARY", "UPDATED PLAYLIST",
+    // "NEW RADIO SHOW") — plus one content item (album/playlist/curator/station). We lead the page
+    // with it as the spotlight row so playlists and radio shows show, not just albums.
+    const featuredEl = kids.find((k: any) => k.attributes?.editorialElementKind === "316");
+    const featured: any[] = [];
+    const fseen = new Set<string>();
+    for (const card of featuredEl?.relationships?.children?.data ?? []) {
+      const content = card.relationships?.contents?.data?.[0];
+      if (!content) continue;
+      const t = content.type;
+      const obj = (t === "playlists") ? playlistCard(content)
+        : (t === "apple-curators" || t === "curators") ? curatorCard(content)
+        : (t === "songs" || t === "music-videos") ? songCard(content)
+        : itemFromRaw(content);
+      if (!obj || fseen.has(obj.id)) continue;
+      fseen.add(obj.id);
+      obj.tagline = card.attributes?.designBadge ?? obj.tagline ?? null;   // Apple's real label
+      obj.editorialNotes = obj.editorialNotes ?? shortNote(content.attributes) ?? card.attributes?.designTag ?? null;
+      if (!obj.wideArtworkUrl) obj.wideArtworkUrl = wideArtFrom(content.attributes?.editorialArtwork);
+      featured.push(obj);
+    }
+    if (featured.length >= 2) sections.unshift({ title: "New", albums: featured, style: "spotlight" } as any);
   } catch (e: any) {
     console.warn("[browse] editorial grouping failed:", e?.response?.status, e?.message);
-  }
-
-  // "New" spotlight: a leading row of big landscape editorial cards. We take the lead item from
-  // each of the first few content shelves that ships wide editorial art + a tagline — that yields
-  // the mixed-label hero row Apple shows atop Browse (New Release / New Music Daily / Apple Music 1…)
-  // without reordering or hiding the normal shelves below.
-  if (sections.length) {
-    const seen = new Set<string>();
-    const spotlight: any[] = [];
-    for (const s of sections) {
-      const lead = (s.albums ?? []).find((a: any) => a?.wideArtworkUrl && !seen.has(a.id));
-      if (lead) { seen.add(lead.id); spotlight.push(lead); }
-      if (spotlight.length >= 8) break;
-    }
-    if (spotlight.length >= 3) {
-      sections.unshift({ title: "New", albums: spotlight, style: "spotlight" } as any);
-    }
   }
 
   // Fallback: if the editorial page returned nothing (no MUT / Apple hiccup), show charts so the

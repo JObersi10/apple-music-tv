@@ -94,7 +94,28 @@ private fun ContentRow(
         }
     }
 
-    // Spotlight rows ("Top Picks for You", "Playlists Made for You") render as big gradient cards.
+    // "Top Picks for You" hero — big square lockups with the caption below (like apple.com).
+    if (section.style == "picks") {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 48.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(section.albums, key = { it.id }, contentType = { "picks" }) { album ->
+                    AlbumCard(
+                        album = album, size = 210,
+                        onClick = { openCard(album) },
+                        onLongClick = { if (album.id.startsWith("pl.") || album.id.startsWith("p.")) playerVm.shufflePlayPlaylist(album.id) },
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    // Spotlight rows ("Playlists Made for You") render as big gradient cards.
     if (section.style == "gradient") {
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,

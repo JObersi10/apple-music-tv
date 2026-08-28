@@ -131,14 +131,18 @@ class MusicRepository @Inject constructor(
             sectionsOf(directBrowse.home(mutPrefs.hasMUT()))
         }
 
-    private val gradientTitleRe = Regex("^(Top Picks for You|Playlists Made for You|New Releases for You|More For You|Made for You)", RegexOption.IGNORE_CASE)
+    private val gradientTitleRe = Regex("^Playlists Made for You", RegexOption.IGNORE_CASE)
 
-    // The direct path already leads with the recommendation hero (DirectBrowseSource.home); style
-    // index 0 as the gradient hero, plus any title-matched gradient shelf.
+    // Style by title so the direct path matches the proxy: "Top Picks for You" is the big-lockup
+    // hero, "Playlists Made for You" is the gradient shelf.
     private fun sectionsOf(pairs: List<Pair<String, List<com.applemusicktv.data.network.AlbumDto>>>) =
         com.applemusicktv.data.network.HomeResponse(
-            sections = pairs.mapIndexed { index, (title, albums) ->
-                val style = if (index == 0 || gradientTitleRe.containsMatchIn(title)) "gradient" else null
+            sections = pairs.map { (title, albums) ->
+                val style = when {
+                    title.equals("Top Picks for You", ignoreCase = true) -> "picks"
+                    gradientTitleRe.containsMatchIn(title) -> "gradient"
+                    else -> null
+                }
                 com.applemusicktv.data.network.HomeSection(title, albums, style = style)
             }
         )
