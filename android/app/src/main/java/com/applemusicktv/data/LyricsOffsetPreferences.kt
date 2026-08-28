@@ -22,4 +22,17 @@ class LyricsOffsetPreferences @Inject constructor(@ApplicationContext private va
         prefs.edit { putLong("offset_ms", ms) }
         _offsetMs.value = ms
     }
+
+    // Live-radio lyrics run off an approximate clock (elapsed since the track's in-band metadata
+    // arrived), which is ahead of the audio by the playback buffer. This separate offset lets the
+    // user dial that lag out without touching the normal-song offset.
+    private val _radioOffsetMs = MutableStateFlow(prefs.getLong("radio_offset_ms", 0L))
+    val radioOffsetMs: StateFlow<Long> = _radioOffsetMs
+
+    fun getRadioOffset(): Long = _radioOffsetMs.value
+
+    fun setRadioOffset(ms: Long) {
+        prefs.edit { putLong("radio_offset_ms", ms) }
+        _radioOffsetMs.value = ms
+    }
 }

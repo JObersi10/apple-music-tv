@@ -32,6 +32,7 @@ data class DevMenuState(
     val standaloneMode: Boolean        = false,
     val standaloneOn:   Boolean        = false,
     val lyricsOffsetMs: Long           = 0L,
+    val radioLyricsOffsetMs: Long      = 0L,
     val crossfadeMs:    Long           = 7_000L,
     val beatLatencyMs:  Long           = 0L,
     val logs:           List<LogEntry> = emptyList(),
@@ -53,6 +54,7 @@ class DevMenuViewModel @Inject constructor(
         webServerUrl   = webServer.serverUrl(),
         pcServerIp     = serverPrefs.getPcServerIp(),
         lyricsOffsetMs = lyricsOffsetPrefs.getOffset(),
+        radioLyricsOffsetMs = lyricsOffsetPrefs.getRadioOffset(),
         crossfadeMs    = crossfadePrefs.getDuration(),
         beatLatencyMs  = beatAnalyzer.latencyMs,
         standaloneOn   = standalonePrefs.isEnabled(),
@@ -116,6 +118,11 @@ class DevMenuViewModel @Inject constructor(
     fun setLyricsOffset(ms: Long) {
         lyricsOffsetPrefs.setOffset(ms)
         _state.update { it.copy(lyricsOffsetMs = lyricsOffsetPrefs.getOffset()) }
+    }
+
+    fun setRadioLyricsOffset(ms: Long) {
+        lyricsOffsetPrefs.setRadioOffset(ms)
+        _state.update { it.copy(radioLyricsOffsetMs = lyricsOffsetPrefs.getRadioOffset()) }
     }
 
     fun setBeatLatency(ms: Long) {

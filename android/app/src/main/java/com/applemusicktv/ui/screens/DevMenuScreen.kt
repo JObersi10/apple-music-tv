@@ -223,6 +223,12 @@ fun DevMenuScreen(
                 onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 50) },
                 onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 50) },
             )
+            Stepper(
+                label = "Radio lyric offset", value = "${state.radioLyricsOffsetMs}ms",
+                sub = "Live radio only. Lyrics run early off the buffer-ahead clock — go negative to delay them onto the audio; positive pushes them earlier",
+                onDec = { vm.setRadioLyricsOffset(state.radioLyricsOffsetMs - 250) },
+                onInc = { vm.setRadioLyricsOffset(state.radioLyricsOffsetMs + 250) },
+            )
 
             Spacer(Modifier.height(6.dp))
             // ── Reveal dev menu ───────────────────────────────────────────

@@ -494,7 +494,7 @@ fun NowPlayingScreen(
                             LyricsPanel(
                                 lyrics = state.lyrics,
                                 progressState = radioLyricProgress,
-                                offsetMs = state.avLyricsMs,
+                                offsetMs = state.radioLyricsOffsetMs,   // radio-only tunable lag
                                 onSeek = {},              // can't seek a live stream
                                 playFocus = playFocus,
                                 fontScale = state.lyricsScale,

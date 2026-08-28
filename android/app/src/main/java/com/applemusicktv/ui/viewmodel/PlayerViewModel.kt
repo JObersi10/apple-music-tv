@@ -167,6 +167,8 @@ data class PlayerState(
     /** elapsedRealtime() when the current live-radio track's metadata first arrived — the lyric
      *  clock's zero. Best-effort: a track joined mid-way is offset (we can't know its true start). */
     val radioTrackStartMs: Long           = 0L,
+    /** User-tunable extra offset for live-radio lyrics only (ms). Compensates the buffer lag. */
+    val radioLyricsOffsetMs: Long         = 0L,
     /** Keep audio playing when the app goes to the background / home is pressed. */
     val backgroundPlayEnabled: Boolean    = true,
     /** True while the activity is in Picture-in-Picture (renders the minimal PiP view). */
@@ -474,12 +476,23 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             crossfadePrefs.durationMs.collect { crossfadeDurationMs = it }
         }
+        // Radio-only lyric offset, editable live from the phone page / Dev menu.
+        viewModelScope.launch {
+            lyricsOffsetPrefs.radioOffsetMs.collect { ms ->
+                _state.update { it.copy(radioLyricsOffsetMs = ms) }
+            }
+        }
     }
 
     fun setLyricsOffset(ms: Long) {
         lyricsOffsetPrefs.setOffset(ms)
         _state.update { it.copy(lyricsOffsetMs = ms) }
         updateOutputLatency()
+    }
+
+    fun setRadioLyricsOffset(ms: Long) {
+        lyricsOffsetPrefs.setRadioOffset(ms)
+        _state.update { it.copy(radioLyricsOffsetMs = ms) }
     }
 
     fun setAvSyncAuto(auto: Boolean) {
