@@ -162,6 +162,8 @@ data class PlayerState(
     val isLoading:        Boolean         = false,
     /** True while the current track is playing via on-device Widevine. */
     val standaloneActive: Boolean         = false,
+    /** Live radio: continuous DRM stream. Drives the LIVE badge, hides Up Next, disables skip. */
+    val isLiveRadio: Boolean              = false,
     /** Keep audio playing when the app goes to the background / home is pressed. */
     val backgroundPlayEnabled: Boolean    = true,
     /** True while the activity is in Picture-in-Picture (renders the minimal PiP view). */
@@ -414,6 +416,23 @@ class PlayerViewModel @Inject constructor(
 
     /** True while [player] is the MediaCodec-only radio instance. */
     private var radioActive = false
+    /** Bounded re-prepare attempts after a live-radio decoder/network drop; reset when it recovers. */
+    private var radioRecoveries = 0
+    private var lastMemWarn = 0L
+
+    /** Warn (throttled) when the device is under memory pressure — the Fire TV reclaims the media
+     *  codec when RAM runs low, which is what drops live radio. Thermal isn't readable without
+     *  privilege, but memory pressure tracks it closely here. */
+    private fun maybeWarnMemory() {
+        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mi)
+        val now = System.currentTimeMillis()
+        if ((mi.lowMemory || mi.availMem < mi.threshold * 2) && now - lastMemWarn > 60_000L) {
+            lastMemWarn = now
+            toast("High memory usage on this device — playback may stutter")
+        }
+    }
 
     /** Swap the shared [player] for a fresh instance built by [factory], carrying over the listener
      *  and MediaSession. Mirrors the crossfade snap swap. */
@@ -430,6 +449,8 @@ class PlayerViewModel @Inject constructor(
     private fun ensureMainPlayer() {
         if (!radioActive) return
         radioActive = false
+        radioRecoveries = 0
+        _state.update { it.copy(isLiveRadio = false) }
         swapPlayer { buildExoPlayer() }
     }
 
@@ -499,6 +520,7 @@ class PlayerViewModel @Inject constructor(
             val pos = player.currentPosition
             val song = _state.value.currentSong?.title ?: "?"
             webServer.addLog("EXO", "isPlaying=$isPlaying pos=${pos}ms song=$song cfade=$crossfadeInProgress")
+            if (isPlaying && radioActive) radioRecoveries = 0   // live radio recovered
             _state.update { it.copy(isPlaying = isPlaying) }
         }
         override fun onPlaybackStateChanged(state: Int) {
@@ -603,6 +625,23 @@ class PlayerViewModel @Inject constructor(
         }
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
             val pos = player.currentPosition
+            // Live radio: a single continuous stream, so advanceQueue() has nothing to skip to.
+            // Transient MediaCodec/network drops (esp. under thermal pressure) just kill it — so
+            // re-prepare the live source at the live edge. Bounded so a persistent failure doesn't spin.
+            if (radioActive) {
+                val sid = _state.value.currentSong?.id
+                maybeWarnMemory()   // a reclaimed codec under memory/thermal pressure is the usual cause
+                webServer.addLog("ERR", "live radio ${error.errorCodeName} — re-prepare $sid (#${radioRecoveries + 1})")
+                if (sid != null && sid.startsWith("ra.") && radioRecoveries < 6) {
+                    radioRecoveries++
+                    radioActive = false   // force a fresh MediaCodec player in playLiveStation
+                    viewModelScope.launch { kotlinx.coroutines.delay(800L * radioRecoveries); playLiveStation(sid) }
+                } else {
+                    toast("Live radio stopped — reopen the station to restart")
+                    _state.update { it.copy(isPlaying = false) }
+                }
+                return
+            }
             // Preserve the user's play/pause intent across error recovery — a restored-paused track
             // that fails standalone and retries via proxy must NOT auto-start playing.
             val wasPlaying = player.playWhenReady
@@ -1129,6 +1168,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false, userOpened: Boolean = false) {
         ensureMainPlayer()      // leaving live radio → restore the FFmpeg-preferring player
+        if (_state.value.isLiveRadio) _state.update { it.copy(isLiveRadio = false) }
         pendingRestore = null   // any real queue action supersedes a deferred restore
         val q = _state.value.queue
         if (q.isEmpty() || idx !in q.indices) {
@@ -1336,7 +1376,7 @@ class PlayerViewModel @Inject constructor(
             albumName = "", durationMs = 0L, artworkUrl = null, artworkBgColor = null,
             previewUrl = null, hasLyrics = false,
         )
-        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null) }
+        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null, isLiveRadio = true, userQueue = emptyList()) }
         player.setMediaItem(buildMediaItem(fakeSong, streamUrl))
         player.prepare()
         player.volume = 1f
@@ -1393,7 +1433,7 @@ class PlayerViewModel @Inject constructor(
             albumName = "", durationMs = 0L, artworkUrl = null, artworkBgColor = null,
             previewUrl = null, hasLyrics = false,
         )
-        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null) }
+        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null, isLiveRadio = true, userQueue = emptyList()) }
 
         // Live radio uses a STANDARD Widevine proxy (raw challenge → raw license) at Apple's
         // linear.tv key server — NOT the song `acquireWebPlaybackLicense` JSON wrapper. So the
@@ -1596,6 +1636,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun next() {
+        if (radioActive) return   // live radio is a single continuous stream — no skipping
         val s = _state.value
         webServer.addLog("NAV", "next() pos=${player.currentPosition}ms idx=${s.queueIndex} userQueue=${s.userQueue.size}")
         fadeJob?.cancel(); crossfadeInProgress = false; player.volume = 1f; player.repeatMode = Player.REPEAT_MODE_OFF
@@ -1617,6 +1658,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
     fun prev() {
+        if (radioActive) return   // live radio — no skipping back
         val s = _state.value
         val pos = player.currentPosition
         webServer.addLog("NAV", "prev() pos=${pos}ms idx=${s.queueIndex}")

@@ -308,6 +308,21 @@ fun NowPlayingScreen(
                     if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
+                    // Live radio: broadcast-style LIVE badge, top-centre of the cover.
+                    if (state.isLiveRadio) {
+                        Row(
+                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFFFA233B))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
+                            Text("LIVE", color = Color.White, fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(10.dp))
@@ -455,6 +470,7 @@ fun NowPlayingScreen(
                 if (state.showNowPlayingInfo && rightFocused) 1f else 0f, tween(250), label = "panelHint")
             Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (rightIsLyrics) 1f else chromeAlpha }) {
                 val label = when {
+                    state.isLiveRadio -> ""       // live radio has no queue/lyrics panel
                     showQueue -> "Queue  •  Menu = Lyrics"
                     state.lyrics.isNotEmpty() -> "Lyrics  •  Menu = Queue"
                     else -> "Queue"
@@ -466,7 +482,10 @@ fun NowPlayingScreen(
                     modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp).graphicsLayer { alpha = hintAlpha },
                 )
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight().onFocusChanged { rightFocused = it.hasFocus }) {
-                    if (showQueue) {
+                    if (state.isLiveRadio) {
+                        // No Up Next for a continuous live stream. (Lyrics could go here later —
+                        // the ID3 adamId gives the current track, but live has no per-word timing.)
+                    } else if (showQueue) {
                         QueuePanel(
                             queue = state.queue,
                             currentIndex = state.queueIndex,
@@ -1882,21 +1901,18 @@ private fun MarqueeText(
     val scrollState = rememberScrollState()
     var overflows by remember(text) { mutableStateOf(false) }
     var measured  by remember(text) { mutableStateOf(false) }
-    val alphaAnim = remember(text) { androidx.compose.animation.core.Animatable(1f) }
+    // Ping-pong: glide left→right to reveal the tail, pause, then glide back right→left — smooth
+    // both ways, no fade-and-jump. Ease-in-out easing softens each turnaround.
     LaunchedEffect(text, overflows) {
         if (!overflows) return@LaunchedEffect
-        alphaAnim.snapTo(1f)
-        kotlinx.coroutines.delay(1400)
-        scrollState.animateScrollTo(
-            scrollState.maxValue,
-            androidx.compose.animation.core.tween(6000, easing = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0.8f, 1f)),
-        )
-        kotlinx.coroutines.delay(600)
-        alphaAnim.animateTo(0f, androidx.compose.animation.core.tween(500))
+        val ease = androidx.compose.animation.core.CubicBezierEasing(0.4f, 0f, 0.6f, 1f)
         scrollState.scrollTo(0)
-        kotlinx.coroutines.delay(200)
-        alphaAnim.animateTo(1f, androidx.compose.animation.core.tween(500))
-        // stay — no further scroll
+        while (true) {
+            kotlinx.coroutines.delay(1400)
+            scrollState.animateScrollTo(scrollState.maxValue, androidx.compose.animation.core.tween(6000, easing = ease))
+            kotlinx.coroutines.delay(1400)
+            scrollState.animateScrollTo(0, androidx.compose.animation.core.tween(6000, easing = ease))
+        }
     }
     Box(
         modifier = modifier.clipToBounds().then(
@@ -1934,7 +1950,7 @@ private fun MarqueeText(
             textAlign = if (overflows) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center,
             overflow = if (overflows) androidx.compose.ui.text.style.TextOverflow.Visible else androidx.compose.ui.text.style.TextOverflow.Clip,
             modifier = if (overflows)
-                Modifier.horizontalScroll(scrollState, enabled = false).graphicsLayer { alpha = alphaAnim.value }
+                Modifier.horizontalScroll(scrollState, enabled = false)
             else
                 Modifier.fillMaxWidth(),
             onTextLayout = { result ->
