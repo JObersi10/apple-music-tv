@@ -29,6 +29,7 @@ class DirectBrowseSource @Inject constructor(
     private fun itemFromRaw(item: Map<*, *>): AlbumDto? {
         val attrs = item["attributes"] as? Map<*, *> ?: return null
         val url = art((attrs["artwork"] as? Map<*, *>)?.get("url") as? String) ?: return null
+        val ea = attrs["editorialArtwork"] as? Map<*, *>
         return AlbumDto(
             id = item["id"] as? String ?: return null,
             title = (attrs["name"] ?: "Unknown") as? String ?: "Unknown",
@@ -39,7 +40,26 @@ class DirectBrowseSource @Inject constructor(
             releaseDate = attrs["releaseDate"] as? String,
             trackCount = (attrs["trackCount"] as? Number)?.toInt() ?: 0,
             genreNames = (attrs["genreNames"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+            editorialNotes = shortNote(attrs["editorialNotes"]),
+            wideArtworkUrl = wideArt(ea),
         )
+    }
+
+    /** Short editorial blurb for a spotlight caption (editorialNotes is {short,standard} or String). */
+    private fun shortNote(n: Any?): String? = when (n) {
+        is String -> n
+        is Map<*, *> -> (n["short"] ?: n["standard"]) as? String
+        else -> null
+    }
+
+    /** Fill a wide editorial-art template at the artwork's OWN aspect ratio (no letterbox padding). */
+    private fun wideArt(ea: Map<*, *>?, w: Int = 1000): String? {
+        val obj = ((ea?.get("superHeroWide") ?: ea?.get("subscriptionHero") ?: ea?.get("storeFlowcase")) as? Map<*, *>)
+        val raw = obj?.get("url") as? String ?: return null
+        val ow = (obj["width"] as? Number)?.toDouble()
+        val oh = (obj["height"] as? Number)?.toDouble()
+        val h = if (ow != null && oh != null && ow > 0) (w * oh / ow).toInt() else (w * 9) / 16
+        return raw.replace("{w}", "$w").replace("{h}", "$h").replace("{f}", "jpg")
     }
 
     private fun listOfItems(raw: Any?): List<AlbumDto> =
@@ -234,6 +254,19 @@ class DirectBrowseSource @Inject constructor(
                 }
                 if (albums.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, albums, roomId = roomId)
             }
+        }
+        // "New" spotlight: leading row of big landscape editorial cards — the lead item of each of
+        // the first few shelves that ships wide art + a tagline. Mirrors browse.ts.
+        if (sections.isNotEmpty()) {
+            val seen = HashSet<String>()
+            val spotlight = mutableListOf<AlbumDto>()
+            for (s in sections) {
+                val lead = s.albums.firstOrNull { it.wideArtworkUrl != null && seen.add(it.id) }
+                if (lead != null) spotlight += lead
+                if (spotlight.size >= 8) break
+            }
+            if (spotlight.size >= 3)
+                sections.add(0, com.applemusicktv.data.network.HomeSection("New", spotlight, style = "spotlight"))
         }
         // Fallback: charts, so the tab is never blank if the editorial page fails.
         if (sections.isEmpty()) {

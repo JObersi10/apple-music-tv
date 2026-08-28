@@ -307,6 +307,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                 CategoryScreen(
                     onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                    onCuratorClick  = { navController.navigate(Screen.Category.route(it)) },
                 )
             }
             composable(Screen.Library.route) {
@@ -332,6 +333,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                         val prefix = when (kind) {
                             "multiroom"     -> "mr-"
                             "apple-curator" -> "ac-"
+                            "room"          -> "room-"
                             else            -> "c-"
                         }
                         navController.navigate(Screen.Category.route(prefix + id))

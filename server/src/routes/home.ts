@@ -172,6 +172,11 @@ home.get("/", async (c) => {
   }
   } // end fallback
 
+  // Spotlight styling: the personalized hero rows render as big gradient cards on the TV.
+  const gradientRe = /^(Top Picks for You|Playlists Made for You|More For You|Made for You)/i;
+  const styled = (arr: Array<{ title: string; albums: any[] }>) =>
+    arr.map((s) => gradientRe.test(s.title) ? { ...s, style: "gradient" } : s);
+
   // Apple leads with "Playlists Made for You"; the user wants it lower. Pull any such shelf down to
   // ~4th so the fresher personalized rows lead.
   const isMade = (s: { title: string }) => /^Playlists Made for You/i.test(s.title);
@@ -179,10 +184,10 @@ home.get("/", async (c) => {
   if (made.length) {
     const rest = sections.filter((s) => !isMade(s));
     rest.splice(Math.min(3, rest.length), 0, ...made);
-    return c.json({ sections: rest });
+    return c.json({ sections: styled(rest) });
   }
 
-  return c.json({ sections });
+  return c.json({ sections: styled(sections) });
 });
 
 export default home;

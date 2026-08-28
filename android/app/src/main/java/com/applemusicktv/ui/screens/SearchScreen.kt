@@ -422,6 +422,23 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                 }
                             }
                         }
+                        // "More to Explore" — the editorial link list from apple.com's Browse footer.
+                        // Each opens an editorial room via the "room" curator kind.
+                        item {
+                            Text("More to Explore", fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                                color = Color.White, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+                            val links = listOf(
+                                "Charts" to "6503108310",
+                                "Browse by Genre" to "6456176470",
+                                "Moods & Activities" to "6456176472",
+                                "Decades" to "6456176471",
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                links.forEach { (label, roomId) ->
+                                    ExploreLink(label) { onCuratorClick(roomId, "room") }
+                                }
+                            }
+                        }
                     }
                 } else {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -429,6 +446,30 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     }
                 }
             }
+        }
+    }
+}
+
+/** A full-width "More to Explore" pill: label left, chevron right — opens an editorial room. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ExploreLink(label: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF2E2E32)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.015f),
+        border = ClickableSurfaceDefaults.border(focusedBorder = Border(
+            BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)), shape = RoundedCornerShape(12.dp))),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFFA233B))
+            Spacer(Modifier.weight(1f))
+            com.applemusicktv.ui.components.Icon(
+                com.applemusicktv.ui.components.Glyph.NEXT, size = 16.dp, color = Color(0xFF8A8A8E))
         }
     }
 }

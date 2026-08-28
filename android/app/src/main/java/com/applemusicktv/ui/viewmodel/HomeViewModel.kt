@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
-data class HomeSection(val title: String, val albums: List<Album>)
+data class HomeSection(val title: String, val albums: List<Album>, val style: String? = null)
 
 data class HomeUiState(
     val isLoading: Boolean       = true,
@@ -65,7 +65,7 @@ class HomeViewModel @Inject constructor(
                 val result = repo.getHome()
                 result.onSuccess { home ->
                     val sections = home.sections.map { s ->
-                        HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto))
+                        HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style)
                     }
                     if (sections.isNotEmpty()) {
                         // A rich (personalized) feed replaces the cache. A thin fallback does NOT clobber

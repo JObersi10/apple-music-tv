@@ -18,6 +18,25 @@ function artUrl(raw: string | undefined, size = 500): string | null {
   return raw.replace("{w}", String(size)).replace("{h}", String(size)).replace("{f}", "jpg");
 }
 
+/** Fill a wide editorial-art template at the artwork's OWN aspect ratio (no letterbox padding —
+ *  forcing 16:9 on a ~2:1 hero pads it with bgColor, which reads as "off-centre"). */
+function wideArtFrom(ea: any): string | null {
+  const obj = ea?.superHeroWide ?? ea?.subscriptionHero ?? ea?.storeFlowcase;
+  const raw: string | undefined = obj?.url;
+  if (!raw) return null;
+  const w = 1000;
+  const ratio = obj.width && obj.height ? obj.height / obj.width : 9 / 16;
+  const h = Math.round(w * ratio);
+  return raw.replace("{w}", String(w)).replace("{h}", String(h)).replace("{f}", "jpg");
+}
+
+/** Short editorial blurb ("A decade on, his full-length introduction…") for a spotlight caption. */
+function shortNote(attr: any): string | null {
+  const n = attr?.editorialNotes;
+  if (!n) return null;
+  return (typeof n === "string" ? n : (n.short ?? n.standard ?? null)) || null;
+}
+
 function itemFromRaw(item: any): any | null {
   const attr = item.attributes ?? {};
   const url = artUrl(attr.artwork?.url);
@@ -34,6 +53,10 @@ function itemFromRaw(item: any): any | null {
     genreNames: attr.genreNames ?? [],
     durationMs: attr.durationInMillis ?? 0,
     previewUrl: attr.previews?.[0]?.url ?? null,
+    // Spotlight card: caption = the short editorial blurb; the small label above is derived on the
+    // client from `type` (NEW ALBUM / UPDATED PLAYLIST / NEW RADIO SHOW).
+    editorialNotes: shortNote(attr),
+    wideArtworkUrl: wideArtFrom(attr.editorialArtwork),
   };
 }
 
@@ -68,7 +91,9 @@ browse.get("/room/:id", async (c) => {
     const room = res.data?.data?.[0];
     const title: string = room?.attributes?.title ?? room?.attributes?.name ?? "";
     const items = (room?.relationships?.contents?.data ?? []).map((it: any) =>
-      it.type === "playlists" ? playlistCard(it) : itemFromRaw(it)).filter(Boolean);
+      (it.type === "apple-curators" || it.type === "curators") ? curatorCard(it)
+        : it.type === "playlists" ? playlistCard(it)
+        : itemFromRaw(it)).filter(Boolean);
     return c.json({ id, title, description: null, artworkUrl: null,
       sections: items.length ? [{ title, albums: items }] : [] });
   } catch (e: any) {
@@ -243,11 +268,31 @@ function songCard(item: any): any | null {
   };
 }
 
+/** A curator/apple-curator tile inside a room (Genres/Moods/Decades). The id is prefixed so the
+ *  Category screen re-opens it as a nested category page instead of trying an album lookup. */
+function curatorCard(item: any): any | null {
+  const attr = item.attributes ?? {};
+  const ea = attr.editorialArtwork ?? {};
+  const url = artUrl((ea.subscriptionCover ?? ea.brandLogo ?? attr.artwork)?.url, 600);
+  if (!url) return null;
+  const isApple = item.type === "apple-curators";
+  return {
+    id: (isApple ? "ac-" : "c-") + item.id,
+    type: "curators",
+    title: (attr.name ?? "Unknown").replace(/^Apple Music (?=\S)/, "").replace(/^Apple (?=\S)/, ""),
+    artistName: "",
+    artworkUrl: url,
+    artworkBgColor: null,
+  };
+}
+
 function playlistCard(item: any): any | null {
   const p = normalisePlaylist(item);
   const url = artUrl(p.artworkUrl) ?? p.artworkUrl;
   if (!url) return null;
-  return { ...p, artworkUrl: url, title: p.name, artistName: p.curatorName, type: "playlists" };
+  const attr = item.attributes ?? {};
+  return { ...p, artworkUrl: url, title: p.name, artistName: p.curatorName, type: "playlists",
+    editorialNotes: shortNote(attr), wideArtworkUrl: wideArtFrom(attr.editorialArtwork) };
 }
 
 // The real music.apple.com "Browse"/New page. It's a single editorial GROUPING (name="music")
@@ -307,6 +352,23 @@ browse.get("/", async (c) => {
     }
   } catch (e: any) {
     console.warn("[browse] editorial grouping failed:", e?.response?.status, e?.message);
+  }
+
+  // "New" spotlight: a leading row of big landscape editorial cards. We take the lead item from
+  // each of the first few content shelves that ships wide editorial art + a tagline — that yields
+  // the mixed-label hero row Apple shows atop Browse (New Release / New Music Daily / Apple Music 1…)
+  // without reordering or hiding the normal shelves below.
+  if (sections.length) {
+    const seen = new Set<string>();
+    const spotlight: any[] = [];
+    for (const s of sections) {
+      const lead = (s.albums ?? []).find((a: any) => a?.wideArtworkUrl && !seen.has(a.id));
+      if (lead) { seen.add(lead.id); spotlight.push(lead); }
+      if (spotlight.length >= 8) break;
+    }
+    if (spotlight.length >= 3) {
+      sections.unshift({ title: "New", albums: spotlight, style: "spotlight" } as any);
+    }
   }
 
   // Fallback: if the editorial page returned nothing (no MUT / Apple hiccup), show charts so the

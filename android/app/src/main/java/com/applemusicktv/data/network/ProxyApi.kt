@@ -40,6 +40,10 @@ data class AlbumDto(
     /** Square motion-artwork HLS loop (Apple `editorialVideo.motionSquareVideo1x1`). Only populated
      *  for shelves we deliberately animate — today just "Playlists Made for You". */
     val motionUrl:      String?      = null,
+    /** Editorial tagline for spotlight cards ("New Release", "New Music Daily"). */
+    val tagline:        String?      = null,
+    /** Pre-filled landscape editorial image URL (superHeroWide/subscriptionHero/storeFlowcase). */
+    val wideArtworkUrl: String?      = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -178,6 +182,8 @@ data class HomeSection(
     /** Apple editorial ROOM id for this shelf (the editorial-element's own id). When present the row
      *  ends with a "More" card that opens the full room — e.g. Daily Top 100 → all 100 country lists. */
     val roomId: String? = null,
+    /** Presentation hint: "spotlight" (big landscape cards) | "gradient" (big gradient cards) | null. */
+    val style: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

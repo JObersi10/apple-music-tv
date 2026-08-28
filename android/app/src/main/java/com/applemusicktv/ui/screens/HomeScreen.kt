@@ -79,6 +79,39 @@ private fun ContentRow(
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
     onCategoryClick: (String) -> Unit,
 ) {
+    val openCard: (Album) -> Unit = { album ->
+        val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+        val isStation = album.id.startsWith("ra.")
+        val isCategory = album.id.startsWith("ac-") || album.id.startsWith("c-") || album.id.startsWith("mr-")
+        when {
+            isCategory -> onCategoryClick(album.id)
+            isStation  -> playerVm.playStation(album.id, album.artworkUrl(600))
+            isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
+            else       -> onAlbumClick(album.id)
+        }
+    }
+
+    // Spotlight rows ("Top Picks for You", "Playlists Made for You") render as big gradient cards.
+    if (section.style == "gradient") {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 48.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(section.albums, key = { it.id }, contentType = { "gradient" }) { album ->
+                    com.applemusicktv.ui.components.GradientCard(
+                        album = album, width = 250,
+                        onClick = { openCard(album) },
+                        onLongClick = { if (album.id.startsWith("pl.") || album.id.startsWith("p.")) playerVm.shufflePlayPlaylist(album.id) },
+                    )
+                }
+            }
+        }
+        return
+    }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text       = section.title,
@@ -91,7 +124,7 @@ private fun ContentRow(
             contentPadding        = PaddingValues(horizontal = 48.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            items(section.albums, key = { it.id }) { album ->
+            items(section.albums, key = { it.id }, contentType = { "album" }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
                 val isStation = album.id.startsWith("ra.")
                 // "Find Your Mood" cards carry the CategoryScreen prefix ("ac-"/"c-").

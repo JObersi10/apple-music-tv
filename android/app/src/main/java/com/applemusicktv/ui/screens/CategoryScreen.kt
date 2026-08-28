@@ -29,6 +29,8 @@ import com.applemusicktv.ui.viewmodel.CategoryViewModel
 fun CategoryScreen(
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
+    /** A nested curator/category tile (a genre/mood room lists apple-curators) opens another page. */
+    onCuratorClick: (id: String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val vm: CategoryViewModel = hiltViewModel()
@@ -104,6 +106,7 @@ fun CategoryScreen(
                         ) {
                             items(section.albums, key = { it.id }) { dto ->
                                 val isPlaylist = dto.id.startsWith("pl.") || dto.id.startsWith("p.")
+                                val isCurator = dto.id.startsWith("ac-") || dto.id.startsWith("c-") || dto.id.startsWith("mr-")
                                 AlbumCard(
                                     album = Album(
                                         id = dto.id, title = dto.title, artistName = dto.artistName,
@@ -111,8 +114,11 @@ fun CategoryScreen(
                                     ),
                                     size = 150,
                                     onClick = {
-                                        if (isPlaylist) onPlaylistClick(dto.id, dto.title, (dto.artworkUrl ?: "").replace("{w}", "500").replace("{h}", "500").replace("{f}", "jpg"))
-                                        else onAlbumClick(dto.id)
+                                        when {
+                                            isCurator  -> onCuratorClick(dto.id)
+                                            isPlaylist -> onPlaylistClick(dto.id, dto.title, (dto.artworkUrl ?: "").replace("{w}", "500").replace("{h}", "500").replace("{f}", "jpg"))
+                                            else       -> onAlbumClick(dto.id)
+                                        }
                                     },
                                 )
                             }

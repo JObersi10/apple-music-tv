@@ -40,6 +40,8 @@ data class BrowseShelf(
     val videos: List<com.applemusicktv.data.model.Song> = emptyList(),
     /** Apple editorial room behind this shelf — when set the row ends with a "More" see-all card. */
     val roomId: String? = null,
+    /** Presentation hint: "spotlight" (big landscape editorial cards) | null (normal square shelf). */
+    val style: String? = null,
 )
 
 data class BrowseUiState(
@@ -63,7 +65,7 @@ class BrowseViewModel @Inject constructor(private val repo: MusicRepository) : V
                     _state.value = _state.value.copy(
                         isLoading = false,
                         shelves = resp.sections.map { s ->
-                            BrowseShelf(s.title, s.albums.map(repo::albumFromDto), s.videos.map(repo::songFromDto), s.roomId)
+                            BrowseShelf(s.title, s.albums.map(repo::albumFromDto), s.videos.map(repo::songFromDto), s.roomId, s.style)
                         },
                     )
                 }
@@ -120,9 +122,45 @@ fun BrowseScreen(
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
         items(state.shelves, key = { it.title }) { shelf ->
-            if (shelf.videos.isNotEmpty()) BrowseVideoRow(shelf.title, shelf.videos, playerVm)
-            else BrowseRow(shelf.title, shelf.albums, onAlbumClick, onPlaylistClick, playerVm,
-                shelf.roomId, onSeeAll)
+            when {
+                shelf.style == "spotlight" && shelf.albums.isNotEmpty() ->
+                    SpotlightRow(shelf.title, shelf.albums, onAlbumClick, onPlaylistClick, playerVm)
+                shelf.videos.isNotEmpty() -> BrowseVideoRow(shelf.title, shelf.videos, playerVm)
+                else -> BrowseRow(shelf.title, shelf.albums, onAlbumClick, onPlaylistClick, playerVm,
+                    shelf.roomId, onSeeAll)
+            }
+        }
+    }
+}
+
+/** The "New" spotlight row: big landscape editorial cards with tagline + title over the wide art. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SpotlightRow(
+    title: String,
+    albums: List<com.applemusicktv.data.model.Album>,
+    onAlbumClick: (String) -> Unit,
+    onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
+    playerVm: PlayerViewModel?,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
+            modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            items(albums, key = { it.id }, contentType = { "spotlight" }) { album ->
+                val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                val isStation = album.id.startsWith("ra.")
+                val isSong = album.type == "songs"
+                com.applemusicktv.ui.components.SpotlightHeroCard(album = album, width = 360, onClick = {
+                    when {
+                        isStation -> playerVm?.playStation(album.id, album.artworkUrl(600))
+                        isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
+                        isSong -> playerVm?.playSong(album)
+                        else -> onAlbumClick(album.id)
+                    }
+                })
+            }
         }
     }
 }

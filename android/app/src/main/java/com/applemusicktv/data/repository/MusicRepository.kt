@@ -131,10 +131,13 @@ class MusicRepository @Inject constructor(
             sectionsOf(directBrowse.home(mutPrefs.hasMUT()))
         }
 
+    private val gradientTitleRe = Regex("^(Top Picks for You|Playlists Made for You|More For You|Made for You)", RegexOption.IGNORE_CASE)
+
     private fun sectionsOf(pairs: List<Pair<String, List<com.applemusicktv.data.network.AlbumDto>>>) =
         com.applemusicktv.data.network.HomeResponse(
             sections = pairs.map { (title, albums) ->
-                com.applemusicktv.data.network.HomeSection(title, albums)
+                val style = if (gradientTitleRe.containsMatchIn(title)) "gradient" else null
+                com.applemusicktv.data.network.HomeSection(title, albums, style = style)
             }
         )
 
@@ -324,6 +327,8 @@ class MusicRepository @Inject constructor(
         copyright      = dto.copyright,
         editorialNotes = dto.editorialNotes,
         motionUrl      = dto.motionUrl,
+        tagline        = dto.tagline,
+        wideArtworkUrl = dto.wideArtworkUrl,
     )
 
     /** Search playlists render as album-style cards; the "pl.*" id routes to the playlist screen. */

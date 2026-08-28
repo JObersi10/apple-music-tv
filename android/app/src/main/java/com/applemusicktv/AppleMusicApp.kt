@@ -25,13 +25,19 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
      */
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
-            .memoryCache { MemoryCache.Builder(this).maxSizeBytes(48 * 1024 * 1024).build() }
+            .memoryCache { MemoryCache.Builder(this).maxSizeBytes(64 * 1024 * 1024).build() }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(100L * 1024 * 1024)
+                    .maxSizeBytes(150L * 1024 * 1024)
                     .build()
             }
+            // Fire TV menu smoothness: RGB_565 halves bitmap memory for opaque artwork (no alpha
+            // needed) → far less GC churn while flinging shelves. respectCacheHeaders(false) keeps
+            // decoded art in cache so re-focusing a shelf never re-fetches/re-decodes.
+            .allowRgb565(true)
+            .respectCacheHeaders(false)
+            .crossfade(false)
             .build()
 
     @Inject lateinit var webServer: InAppWebServer
