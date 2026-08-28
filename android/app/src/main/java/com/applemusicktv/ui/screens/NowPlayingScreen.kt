@@ -969,11 +969,23 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
                 .memoryCachePolicy(coil.request.CachePolicy.DISABLED).build()
             val result = loader.execute(request)
             val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
-            val p = Palette.from(bitmap).maximumColorCount(16).generate()
-            val swatches = listOfNotNull(
+            // Finer quantization (32 vs 16) surfaces smaller accent regions — a teal logo, a red
+            // jacket — that the 6 named roles miss entirely.
+            val p = Palette.from(bitmap).maximumColorCount(32).generate()
+            val hsvTmp = FloatArray(3)
+            // Use EVERY quantized swatch, not just the 6 named roles, so real accent colours are on
+            // the table. Rank by a blend of saturation and prominence so a vivid accent outranks a
+            // large dull background — that's what "grab more accent colours" needs.
+            val named = listOfNotNull(
                 p.vibrantSwatch, p.lightVibrantSwatch, p.darkVibrantSwatch,
                 p.mutedSwatch, p.lightMutedSwatch, p.darkMutedSwatch, p.dominantSwatch,
-            ).sortedByDescending { it.population }
+            )
+            val maxPop = (p.swatches.maxOfOrNull { it.population } ?: 1).coerceAtLeast(1)
+            val swatches = (named + p.swatches).distinctBy { it.rgb }
+                .sortedByDescending { sw ->
+                    android.graphics.Color.colorToHSV(sw.rgb, hsvTmp)
+                    hsvTmp[1] * 0.62f + (sw.population.toFloat() / maxPop) * 0.38f
+                }
             // Detect a grey / black-and-white cover from the ORIGINAL saturations, BEFORE the boost:
             // once every swatch is floored to SAT_FLOOR they all look colourful and the test can't
             // tell. A monochrome sleeve keeps its greys (and can go near-white), separated by

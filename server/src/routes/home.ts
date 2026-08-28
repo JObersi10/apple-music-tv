@@ -192,10 +192,10 @@ home.get("/", async (c) => {
   const made = sections.filter(isMade).map((s) => ({ ...s, style: "gradient" }));
   const rest = sections.filter((s) => !isMade(s));
 
-  const out: Array<{ title: string; albums: any[]; style?: string }> = [];
-  if (topPicks.length >= 3) out.push({ title: "Top Picks for You", albums: topPicks, style: "picks" });
-  out.push(...made);
-  out.push(...rest);
+  // Lead with Top Picks; "Playlists Made for You" sits lower (~4th) so fresher rows lead.
+  const out: Array<{ title: string; albums: any[]; style?: string }> = [...rest];
+  if (made.length) out.splice(Math.min(3, out.length), 0, ...made);
+  if (topPicks.length >= 3) out.unshift({ title: "Top Picks for You", albums: topPicks, style: "picks" });
   return c.json({ sections: out });
 });
 

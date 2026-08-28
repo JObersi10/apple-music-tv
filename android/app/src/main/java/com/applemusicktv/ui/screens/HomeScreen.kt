@@ -33,10 +33,8 @@ fun HomeScreen(
 ) {
     val state by vm.state.collectAsState()
 
-    if (state.isLoading) {
-        Box(modifier.fillMaxSize(), Alignment.Center) {
-            CircularProgressIndicator(color = Color(0xFFFA233B))
-        }
+    if (state.isLoading && state.sections.isEmpty()) {
+        Box(modifier.fillMaxSize()) { com.applemusicktv.ui.components.ShelfSkeleton() }
         return
     }
 
