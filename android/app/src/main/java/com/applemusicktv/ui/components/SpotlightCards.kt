@@ -2,6 +2,7 @@ package com.applemusicktv.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -55,10 +56,10 @@ fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit) {
         scale = CardDefaults.scale(focusedScale = 1.05f, pressedScale = 0.97f),
         glow = CardDefaults.glow(focusedGlow = Glow(Color.White.copy(alpha = 0.28f), 22.dp)),
         border = CardDefaults.border(focusedBorder = Border(
-            border = BorderStroke(2.dp, Color.White.copy(alpha = 0.7f)),
-            shape = RoundedCornerShape(16.dp))),
+            border = BorderStroke(2.5.dp, Color.White.copy(alpha = 0.85f)),
+            shape = RoundedCornerShape(9.dp))),
         colors = CardDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-        shape = CardDefaults.shape(RoundedCornerShape(16.dp)),
+        shape = CardDefaults.shape(RoundedCornerShape(9.dp)),
     ) {
         Column(Modifier.width(width.dp).padding(horizontal = 2.dp)) {
             // Text block ABOVE the image.
@@ -73,8 +74,12 @@ fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit) {
             }
             Spacer(Modifier.height(9.dp))
             // Wide art below, at its own ratio. Source is already native-ratio, so Crop centers with
-            // no letterbox padding.
-            Box(Modifier.fillMaxWidth().aspectRatio(1.86f).clip(RoundedCornerShape(12.dp)).background(tint)) {
+            // no letterbox padding. A permanent hairline frame (bigger + brighter on focus) gives the
+            // cards edges instead of soft-rounded blobs.
+            Box(Modifier.fillMaxWidth().aspectRatio(1.86f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(tint)
+                .border(1.5.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(8.dp))) {
                 val art = album.wideArtworkUrl ?: album.artworkUrl(width * 2)
                 if (art != null) {
                     AsyncImage(model = art, contentDescription = album.title,

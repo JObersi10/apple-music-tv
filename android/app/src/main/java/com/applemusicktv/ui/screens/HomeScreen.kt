@@ -13,6 +13,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.*
 import com.applemusicktv.data.model.Album
@@ -65,8 +66,10 @@ fun HomeScreen(
         contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        items(state.sections, key = { it.title }) { section ->
-            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick)
+        itemsIndexed(state.sections, key = { _, it -> it.title }) { index, section ->
+            // The first personalized row always leads as a big gradient hero.
+            val styled = if (index == 0 && section.style == null) section.copy(style = "gradient") else section
+            ContentRow(styled, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick)
         }
     }
 }
