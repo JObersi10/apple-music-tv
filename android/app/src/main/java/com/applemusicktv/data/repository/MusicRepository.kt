@@ -102,7 +102,7 @@ class MusicRepository @Inject constructor(
     // album's artist relationship, which AlbumDto doesn't carry. Standalone returns
     // nothing rather than guessing; the shelf just doesn't render.
     suspend fun getRelatedAlbums(id: String) =
-        if (!useProxy) Result.success(emptyList<com.applemusicktv.data.model.Album>())
+        if (!useProxy) direct.relatedAlbums(id).map { it.map(::albumFromDto) }
         else apiCall { api.getRelatedAlbums(id).albums.map(::albumFromDto) }
 
     suspend fun getSong(id: String) =
@@ -235,7 +235,8 @@ class MusicRepository @Inject constructor(
     suspend fun pingServer(): Boolean =
         runCatching { api.health(); true }.getOrDefault(false)
 
-    suspend fun getAppleStatus() = runCatching { api.appleStatus() }
+    suspend fun getAppleStatus() =
+        if (!useProxy) direct.appleStatus() else runCatching { api.appleStatus() }
 
     /** Pre-warm bearer token + storefront for standalone mode. */
     suspend fun prepareStandalone() {

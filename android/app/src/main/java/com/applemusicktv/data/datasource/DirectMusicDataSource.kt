@@ -282,6 +282,40 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         api.catalogArtist(storefront, catId ?: id).data.first().toArtistDto()
     }
 
+    /** Related albums, standalone: Apple has no "related" endpoint, so use other albums by the same
+     *  artist (derived from the album's first track), minus the album itself. */
+    suspend fun relatedAlbums(id: String): Result<List<AlbumDto>> = runCatching {
+        val artistId = albumTracks(id).getOrNull()?.firstOrNull()?.artistId ?: return@runCatching emptyList()
+        artistAlbums(artistId).getOrNull().orEmpty().filter { it.id != id }
+    }
+
+    /** Apple system status (Music services), standalone: fetch Apple's public status feed directly. */
+    suspend fun appleStatus(): Result<com.applemusicktv.data.network.AppleStatusResponse> = runCatching {
+        val txt = plainHttpText("https://www.apple.com/support/systemstatus/data/system_status_en_US.js")
+        val json = txt.trim().let { if (it.startsWith("{")) it else it.replace(Regex("^[^(]*\\("), "").replace(Regex("\\)\\s*;?\\s*$"), "") }
+        val obj = org.json.JSONObject(json)
+        val now = System.currentTimeMillis()
+        val keywords = listOf("Apple Music", "iTunes Match")
+        val out = ArrayList<com.applemusicktv.data.network.AppleServiceStatus>()
+        val services = obj.optJSONArray("services")
+        if (services != null) for (i in 0 until services.length()) {
+            val svc = services.getJSONObject(i)
+            val name = svc.optString("serviceName")
+            if (keywords.none { name.contains(it) }) continue
+            val events = svc.optJSONArray("events")
+            var live = 0
+            if (events != null) for (j in 0 until events.length()) {
+                val end = events.getJSONObject(j).opt("epochEndDate")
+                val ongoing = end == null || end == org.json.JSONObject.NULL ||
+                    ((end as? Number)?.toLong() ?: 0L) > now
+                if (ongoing) live++
+            }
+            out += com.applemusicktv.data.network.AppleServiceStatus(name, if (live > 0) "issue" else "operational")
+        }
+        com.applemusicktv.data.network.AppleStatusResponse(
+            ok = out.all { it.status == "operational" }, services = out, checkedAt = "")
+    }
+
     /** Standalone autoplay: Apple's song radio needs a bearer we don't hold on-disk, so
      *  derive a comparable queue from the seed's artist + similar artists' top songs. */
     suspend fun relatedSongs(seedId: String): Result<List<SongDto>> = runCatching {
