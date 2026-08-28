@@ -87,7 +87,9 @@ class MusicRepository @Inject constructor(
     suspend fun getStationTracks(id: String) =
         if (!useProxy) direct.stationTracks(id).map { it.map(::songFromDto) }
         else apiCall { api.getStationTracks(id).songs.map(::songFromDto) }
-    suspend fun getStationStream(id: String) = apiCall { api.getStationStream(id) }
+    suspend fun getStationStream(id: String) =
+        if (!useProxy) direct.stationStream(id)
+        else apiCall { api.getStationStream(id) }
     suspend fun getAlbum(id: String) =
         if (!useProxy) direct.album(id).map(::albumFromDto)
         else apiCall { albumFromDto(api.getAlbum(id)) }

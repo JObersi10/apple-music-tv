@@ -185,6 +185,18 @@ fun AppleItem<ApplePlaylistAttrs>.toPlaylistDto() = PlaylistDto(
     description    = attributes?.description?.short,
 )
 
+// ── Live-radio playback assets ────────────────────────────────────────────
+@JsonClass(generateAdapter = true)
+data class PlayAssetsResp(val results: PlayResults? = null)
+@JsonClass(generateAdapter = true)
+data class PlayResults(val assets: List<PlayAsset> = emptyList())
+@JsonClass(generateAdapter = true)
+data class PlayAsset(
+    val url: String? = null,
+    val keyServerUrl: String? = null,
+    val widevineKeyCertificateUrl: String? = null,
+)
+
 // ── Retrofit interface (base URL: https://amp-api-edge.music.apple.com/) ─
 
 interface DirectAppleApi {
@@ -364,6 +376,14 @@ interface DirectAppleApi {
         @Path("id") id: String,
         @Query("include") include: String = "tracks,contents,radio-show",
     ): Map<String, Any>
+
+    /** Live-radio playback assets. Absolute @Url — lives on amp-api.music.apple.com, not the
+     *  amp-api-edge base. The auth interceptor still adds bearer + Music-User-Token (both required). */
+    @GET
+    suspend fun playAssets(
+        @Url url: String,
+        @QueryMap params: Map<String, String>,
+    ): PlayAssetsResp
 
     /** Editorial playlists carry their own motion artwork, same shape as albums. */
     @GET("v1/catalog/{sf}/playlists/{id}")
