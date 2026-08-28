@@ -195,10 +195,32 @@ albumRoutes.get("/station/:id/stream", async (c) => {
     })
     const asset = res.data?.results?.assets?.[0]
     if (!asset?.url) return c.json({ liveStreamUrl: null })
+
+    // The web player's license body sends `uri` = the Widevine EXT-X-KEY URI from the media
+    // playlist (a data:…base64,<pssh> string). Resolve it here so the client doesn't have to
+    // parse HLS: master → first media playlist → the EXT-X-KEY whose KEYFORMAT is the Widevine
+    // UUID (edef8ba9-79d6-4ace-a3c8-27dcd51d21ed).
+    let wvKeyUri: string | null = null
+    try {
+      const master = await axios.get(asset.url, { responseType: "text" })
+      const mediaUrl = String(master.data).split("\n").find((l) => l.startsWith("http"))
+      if (mediaUrl) {
+        const media = await axios.get(mediaUrl.trim(), { responseType: "text" })
+        const line = String(media.data).split("\n").find(
+          (l) => l.startsWith("#EXT-X-KEY") && l.includes("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"),
+        )
+        const m = line?.match(/URI="([^"]*)"/)
+        if (m) wvKeyUri = m[1]
+      }
+    } catch (e: any) {
+      console.warn(`[station] wv key uri resolve failed:`, e?.message)
+    }
+
     return c.json({
       liveStreamUrl: asset.url,
       drmKeyUri:     asset.keyServerUrl ?? null,           // Widevine license server (linear.tv.apple.com)
       certUrl:       asset.widevineKeyCertificateUrl ?? null,
+      wvKeyUri,                                            // EXT-X-KEY URI → license body `uri`
       adamId:        id.replace(/^ra\./, ""),
     })
   } catch (e: any) {

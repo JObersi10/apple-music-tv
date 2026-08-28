@@ -381,6 +381,58 @@ class PlayerViewModel @Inject constructor(
             .build().also { it.repeatMode = Player.REPEAT_MODE_OFF }
     }
 
+    /**
+     * MediaCodec-only player for LIVE radio. Radio decodes Widevine-**secure** (L1) AAC inside
+     * ExoPlayer; the bundled FFmpeg software renderer can't read secure buffers (it throws
+     * `FfmpegAudioRenderer error … NO_UNSUPPORTED_DRM`). So this player uses
+     * EXTENSION_RENDERER_MODE_OFF — MediaCodec handles the secure path. The main [player] keeps
+     * PREFER because standalone songs need FFmpeg for HE-AAC; radio is always plain AAC-LC.
+     */
+    @OptIn(UnstableApi::class)
+    private fun buildRadioExoPlayer(): ExoPlayer {
+        val httpFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(60_000).setReadTimeoutMs(60_000)
+            .setAllowCrossProtocolRedirects(true)
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15_000, 60_000, 2_500, 5_000)
+            .setPrioritizeTimeOverSizeThresholds(true).build()
+        return ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)))
+            .setLoadControl(loadControl)
+            .setRenderersFactory(
+                BeatAwareRenderersFactory(context, beatAnalyzer.newProcessor().also { p ->
+                    mainProc = p; beatAnalyzer.activate(p)
+                }, com.applemusicktv.media.GapConcealProcessor())
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+                    .setEnableDecoderFallback(true)
+            )
+            .setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), false)
+            .setHandleAudioBecomingNoisy(false)
+            .build().also { it.repeatMode = Player.REPEAT_MODE_OFF }
+    }
+
+    /** True while [player] is the MediaCodec-only radio instance. */
+    private var radioActive = false
+
+    /** Swap the shared [player] for a fresh instance built by [factory], carrying over the listener
+     *  and MediaSession. Mirrors the crossfade snap swap. */
+    @OptIn(UnstableApi::class)
+    private fun swapPlayer(factory: () -> ExoPlayer) {
+        val oldP = player
+        try { oldP.removeListener(playerListener); oldP.stop(); oldP.release() } catch (_: Exception) {}
+        player = factory().also { it.addListener(playerListener) }
+        mediaSession?.release(); mediaSession = buildMediaSession(player)
+    }
+
+    /** Leaving radio → restore the FFmpeg-preferring player the rest of playback expects. */
+    @OptIn(UnstableApi::class)
+    private fun ensureMainPlayer() {
+        if (!radioActive) return
+        radioActive = false
+        swapPlayer { buildExoPlayer() }
+    }
+
     @OptIn(UnstableApi::class)
     var player: ExoPlayer = buildExoPlayer()
         private set
@@ -442,6 +494,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     private val playerListener = object : Player.Listener {
+        override fun onMetadata(metadata: androidx.media3.common.Metadata) = onRadioMetadata(metadata)
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             val pos = player.currentPosition
             val song = _state.value.currentSong?.title ?: "?"
@@ -1075,6 +1128,7 @@ class PlayerViewModel @Inject constructor(
     @Volatile private var awaitingSongStart: String? = null
 
     private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false, userOpened: Boolean = false) {
+        ensureMainPlayer()      // leaving live radio → restore the FFmpeg-preferring player
         pendingRestore = null   // any real queue action supersedes a deferred restore
         val q = _state.value.queue
         if (q.isEmpty() || idx !in q.indices) {
@@ -1289,7 +1343,45 @@ class PlayerViewModel @Inject constructor(
         player.play()
     }
 
+    /** In-band timed metadata from the live radio stream. Apple ships the current track as ID3
+     *  frames inside each CMAF segment: TIT2 title, TPE1 artist, TALB album, and WXXX artwork URLs
+     *  (390px + 1400px). Fires every segment, so only push a state update when the track changes. */
     @OptIn(UnstableApi::class)
+    private fun onRadioMetadata(metadata: androidx.media3.common.Metadata) {
+        if (!radioActive) return
+        var title: String? = null
+        var artist: String? = null
+        var album: String? = null
+        var art: String? = null
+        for (i in 0 until metadata.length()) {
+            when (val e = metadata.get(i)) {
+                is androidx.media3.extractor.metadata.id3.TextInformationFrame -> {
+                    val v = e.values.firstOrNull()
+                    when (e.id) {
+                        "TIT2", "TT2" -> title = v
+                        "TPE1", "TP1" -> artist = v
+                        "TALB", "TAL" -> album = v
+                    }
+                }
+                is androidx.media3.extractor.metadata.id3.UrlLinkFrame ->
+                    if (e.id == "WXXX") { if (art == null || e.url.contains("1400")) art = e.url }
+            }
+        }
+        if (title == null && artist == null) return   // a jingle/ping ping has no track frames
+        val cur = _state.value.currentSong
+        if (cur != null && cur.title == title && cur.artistName == artist) return  // unchanged
+        _state.update {
+            val c = it.currentSong ?: return@update it
+            val s = c.copy(
+                title = title ?: c.title,
+                artistName = artist ?: c.artistName,
+                albumName = album ?: c.albumName,
+                artworkUrl = art ?: c.artworkUrl,
+            )
+            it.copy(currentSong = s, song = s, queue = listOf(s), motionUrl = null)
+        }
+    }
+
     fun playLiveStation(stationId: String) = viewModelScope.launch {
         val info = repo.getStationStream(stationId).getOrNull() ?: return@launch
         val url = info.liveStreamUrl ?: return@launch
@@ -1309,14 +1401,15 @@ class PlayerViewModel @Inject constructor(
         val keyUri = info.drmKeyUri
         if (keyUri != null) {
             try {
+                // Secure Widevine AAC needs the MediaCodec-only player (FFmpeg can't decode it).
+                if (!radioActive) { swapPlayer { buildRadioExoPlayer() }; radioActive = true }
                 val bearer = appleClient.getBearer()
                 val mut = mutPrefs.getMUT()
-                val licenseHttp = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-                val drmCallback = androidx.media3.exoplayer.drm.HttpMediaDrmCallback(keyUri, licenseHttp).apply {
-                    setKeyRequestProperty("Authorization", "Bearer $bearer")
-                    setKeyRequestProperty("Media-User-Token", mut)
-                    setKeyRequestProperty("Origin", "https://music.apple.com")
-                }
+                val drmCallback = com.applemusicktv.media.LiveRadioDrmCallback(
+                    keyUri = keyUri, bearer = bearer, mut = mut,
+                    adamId = info.adamId ?: stationId.removePrefix("ra."),
+                    wvKeyUri = info.wvKeyUri ?: "",
+                )
                 val drmManager = DefaultDrmSessionManager.Builder()
                     .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                     .setMultiSession(false)

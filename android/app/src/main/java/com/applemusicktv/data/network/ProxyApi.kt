@@ -121,6 +121,7 @@ data class StationStreamResponse(
     val liveStreamUrl: String? = null,
     val drmKeyUri:     String? = null,   // Widevine key server (linear.tv.apple.com)
     val certUrl:       String? = null,   // Widevine service certificate URL
+    val wvKeyUri:      String? = null,   // Widevine EXT-X-KEY URI → license body `uri`
     val adamId:        String? = null,
     val isLive:        Boolean = true,
 )
