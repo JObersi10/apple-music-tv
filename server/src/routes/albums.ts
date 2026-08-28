@@ -181,9 +181,31 @@ albumRoutes.get("/station/:id/tracks", async (c) => {
   return c.json({ songs: [] })
 })
 
-// Apple Music Radio live streams (isLive:true, hasDrm:true) are not accessible
-// via any public API — webPlayback rejects them (failureType 3077), radioPlayback
-// 404s, and radio.apple.com doesn't resolve. Kept as a stub; returns null.
+// Apple Music Radio LIVE streams (isLive:true). The web player resolves them via
+// GET /v1/play/assets?kind=radioStation — returns a live CMAF HLS m3u8 plus a Widevine
+// key server + service-cert URL. (webPlayback/radioPlayback 404 for these; play/assets
+// is the one that works.) The client plays the HLS with a Widevine session pointed at
+// keyServerUrl. stationHash is NOT required.
+albumRoutes.get("/station/:id/stream", async (c) => {
+  const id = decodeStationId(c.req.param("id"))
+  try {
+    const res = await axios.get("https://amp-api.music.apple.com/v1/play/assets", {
+      headers: ampHeaders(),
+      params: { format: "stream", hasDrm: true, id, kind: "radioStation", mediaType: 0, keyFormat: "web" },
+    })
+    const asset = res.data?.results?.assets?.[0]
+    if (!asset?.url) return c.json({ liveStreamUrl: null })
+    return c.json({
+      liveStreamUrl: asset.url,
+      drmKeyUri:     asset.keyServerUrl ?? null,           // Widevine license server (linear.tv.apple.com)
+      certUrl:       asset.widevineKeyCertificateUrl ?? null,
+      adamId:        id.replace(/^ra\./, ""),
+    })
+  } catch (e: any) {
+    console.warn(`[station] live stream failed:`, e?.response?.status, e.message)
+    return c.json({ liveStreamUrl: null })
+  }
+})
 
 albumRoutes.get("/:id/related", async (c) => {
   const id  = c.req.param("id")

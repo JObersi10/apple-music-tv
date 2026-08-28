@@ -119,7 +119,8 @@ data class SongsResponse(val songs: List<SongDto> = emptyList())
 @JsonClass(generateAdapter = true)
 data class StationStreamResponse(
     val liveStreamUrl: String? = null,
-    val drmKeyUri:     String? = null,
+    val drmKeyUri:     String? = null,   // Widevine key server (linear.tv.apple.com)
+    val certUrl:       String? = null,   // Widevine service certificate URL
     val adamId:        String? = null,
     val isLive:        Boolean = true,
 )

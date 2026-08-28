@@ -91,6 +91,18 @@ enum class NowPlayingBackground(val label: String) {
     }
 }
 
+// Apple Music live radio stations (isLive=true). Fixed set — these stream a live Widevine HLS
+// feed via /v1/play/assets, unlike personal/genre stations which return a next-tracks song queue.
+private val LIVE_STATION_IDS = setOf(
+    "ra.978194965",   // Apple Music 1
+    "ra.1498155548",  // Apple Music Hits
+    "ra.1498157166",  // Apple Music Country
+    "ra.1740613864",  // Apple Música Uno
+    "ra.1740614260",  // Apple Music Chill
+    "ra.1740613859",  // Apple Music Club
+    "ra.1534941676",  // Apple Music TV (video)
+)
+
 data class PlayerState(
     val currentSong:      Song?           = null,
     val song:             Song?           = null,
@@ -1242,9 +1254,14 @@ class PlayerViewModel @Inject constructor(
             .onFailure { toast("Couldn't add to playlist") }
     }
 
-    fun playStation(stationId: String) = viewModelScope.launch {
-        val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
-        if (songs.isNotEmpty()) playAlbum(songs)
+    fun playStation(stationId: String) {
+        // Apple's LIVE radio stations (fixed set) stream a live Widevine HLS feed via /play/assets,
+        // not a next-tracks song queue — route them to the live path.
+        if (stationId in LIVE_STATION_IDS) { playLiveStation(stationId); return }
+        viewModelScope.launch {
+            val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
+            if (songs.isNotEmpty()) playAlbum(songs)
+        }
     }
 
     /** Genre station — shuffled top songs for the genre, played standalone. */
@@ -1286,18 +1303,27 @@ class PlayerViewModel @Inject constructor(
         )
         _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null) }
 
+        // Live radio uses a STANDARD Widevine proxy (raw challenge → raw license) at Apple's
+        // linear.tv key server — NOT the song `acquireWebPlaybackLicense` JSON wrapper. So the
+        // built-in HttpMediaDrmCallback is the right callback; we only add the auth headers.
         val keyUri = info.drmKeyUri
-        val adamId = info.adamId ?: stationId.replace(Regex("^ra\\."), "")
         if (keyUri != null) {
             try {
                 val bearer = appleClient.getBearer()
                 val mut = mutPrefs.getMUT()
-                val drmCallback = AppleMusicDrmCallback(adamId, keyUri, bearer, mut)
+                val licenseHttp = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                val drmCallback = androidx.media3.exoplayer.drm.HttpMediaDrmCallback(keyUri, licenseHttp).apply {
+                    setKeyRequestProperty("Authorization", "Bearer $bearer")
+                    setKeyRequestProperty("Media-User-Token", mut)
+                    setKeyRequestProperty("Origin", "https://music.apple.com")
+                }
                 val drmManager = DefaultDrmSessionManager.Builder()
                     .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                     .setMultiSession(false)
                     .build(drmCallback)
-                val mediaSource = DefaultMediaSourceFactory(context)
+                val mediaSource = androidx.media3.exoplayer.hls.HlsMediaSource.Factory(
+                    androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                )
                     .setDrmSessionManagerProvider { drmManager }
                     .createMediaSource(buildMediaItem(fakeSong, url))
                 player.setMediaSource(mediaSource)
