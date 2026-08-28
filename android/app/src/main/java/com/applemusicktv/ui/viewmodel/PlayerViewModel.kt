@@ -1586,34 +1586,43 @@ class PlayerViewModel @Inject constructor(
         playQueueItem(insertIdx, skipFadeIn = true)
     }
 
+    // One shared in-flight fetch per song id: a song is often prefetched (as the next track) and then
+    // asked for again via loadLyrics when it becomes current. Without this, both fire a full network
+    // fetch for the same id at once (seen as two concurrent getLyrics in logcat). Both paths now await
+    // the same Deferred.
+    private val lyricsInFlight = mutableMapOf<String, kotlinx.coroutines.Deferred<List<LyricLine>>>()
+
+    private fun fetchLyricsShared(id: String, title: String, artist: String, durationSec: Long): kotlinx.coroutines.Deferred<List<LyricLine>> {
+        lyricsCache[id]?.let { return kotlinx.coroutines.CompletableDeferred(it) }
+        lyricsInFlight[id]?.let { return it }
+        val d = viewModelScope.async {
+            val lines = repo.getLyrics(id, title, artist, durationSec).getOrDefault(emptyList())
+            if (lines.isNotEmpty()) lyricsCache[id] = lines
+            lyricsInFlight.remove(id)
+            lines
+        }
+        lyricsInFlight[id] = d
+        return d
+    }
+
     private fun loadLyrics(songId: String) {
         lyricsJob?.cancel()
         lyricsCache[songId]?.let { cached ->
             if (_state.value.currentSong?.id == songId) _state.update { it.copy(lyrics = cached) }
             return
         }
-        val song = _state.value.currentSong
+        val song = _state.value.currentSong?.takeIf { it.id == songId }
         lyricsJob = viewModelScope.launch {
-            repo.getLyrics(
-                songId,
-                title      = song?.title ?: "",
-                artist     = song?.artistName ?: "",
-                durationSec = (song?.durationMs ?: 0L) / 1000,
-            ).onSuccess { lines ->
-                lyricsCache[songId] = lines
-                if (_state.value.currentSong?.id == songId)
-                    _state.update { it.copy(lyrics = lines) }
-            }
+            val lines = fetchLyricsShared(songId, song?.title ?: "", song?.artistName ?: "", (song?.durationMs ?: 0L) / 1000).await()
+            if (lines.isNotEmpty() && _state.value.currentSong?.id == songId)
+                _state.update { it.copy(lyrics = lines) }
         }
     }
 
     /** Warm the lyrics cache for an upcoming song so a track change shows them with no blank flash. */
     private fun prefetchLyrics(song: Song) {
-        if (lyricsCache.containsKey(song.id)) return
-        viewModelScope.launch {
-            repo.getLyrics(song.id, song.title, song.artistName, song.durationMs / 1000)
-                .onSuccess { lyricsCache[song.id] = it }
-        }
+        if (lyricsCache.containsKey(song.id) || lyricsInFlight.containsKey(song.id)) return
+        fetchLyricsShared(song.id, song.title, song.artistName, song.durationMs / 1000)
     }
 
     private fun loadMotion(songId: String) {

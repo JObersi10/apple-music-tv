@@ -230,12 +230,7 @@ fun MusicVideoScreen(
                             Text(state.title, color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp)
                         }
                         if (auds.isNotEmpty()) { PillButton("Audio", focus == MvTarget.AUDIO); Spacer(Modifier.width(10.dp)) }
-                        QualityPill(
-                            // Show what's ACTUALLY decoding (falls back to the requested tier before the
-                            // first frame). Snap the odd ladder height (432p) to the nearest clean tier.
-                            label = qualityLabel(snapTier(if (state.actualHeight > 0) state.actualHeight else state.qualityHeight)),
-                            focused = focus == MvTarget.QUALITY,
-                        ); Spacer(Modifier.width(10.dp))
+                        QualityPill(focused = focus == MvTarget.QUALITY); Spacer(Modifier.width(10.dp))
                         RoundGlyph(GlyphKind.QUEUE, focus == MvTarget.QUEUE, 44.dp)
                     }
                     Spacer(Modifier.height(18.dp))
@@ -348,7 +343,7 @@ private fun snapTier(h: Int): Int = MV_QUALITY_TIERS.minByOrNull { kotlin.math.a
 
 /** Quality control: just the sparkles.tv glyph (no resolution readout). */
 @androidx.compose.runtime.Composable
-private fun QualityPill(label: String, focused: Boolean) {
+private fun QualityPill(focused: Boolean) {
     Box(
         Modifier.size(44.dp).clip(RoundedCornerShape(50))
             .background(if (focused) Color.White else Color(0x2EFFFFFF)),
