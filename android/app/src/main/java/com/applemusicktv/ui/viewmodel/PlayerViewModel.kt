@@ -164,11 +164,8 @@ data class PlayerState(
     val standaloneActive: Boolean         = false,
     /** Live radio: continuous DRM stream. Drives the LIVE badge, hides Up Next, disables skip. */
     val isLiveRadio: Boolean              = false,
-    /** elapsedRealtime() when the current live-radio track's metadata first arrived — the lyric
-     *  clock's zero. Best-effort: a track joined mid-way is offset (we can't know its true start). */
-    val radioTrackStartMs: Long           = 0L,
-    /** User-tunable extra offset for live-radio lyrics only (ms). Compensates the buffer lag. */
-    val radioLyricsOffsetMs: Long         = 0L,
+    /** Station cover, shown on the Now Playing art when a live station is paused. */
+    val radioStationArt: String?          = null,
     /** Keep audio playing when the app goes to the background / home is pressed. */
     val backgroundPlayEnabled: Boolean    = true,
     /** True while the activity is in Picture-in-Picture (renders the minimal PiP view). */
@@ -424,6 +421,9 @@ class PlayerViewModel @Inject constructor(
     /** Bounded re-prepare attempts after a live-radio decoder/network drop; reset when it recovers. */
     private var radioRecoveries = 0
     private var lastMemWarn = 0L
+    /** The station's own cover (Apple Music 1 logo, etc.) — shown when paused, since a paused
+     *  stream has no "current track". Kept across the metadata track-art swaps. */
+    private var radioStationArt: String? = null
 
     /** Warn (throttled) when the device is under memory pressure — the Fire TV reclaims the media
      *  codec when RAM runs low, which is what drops live radio. Thermal isn't readable without
@@ -476,12 +476,6 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             crossfadePrefs.durationMs.collect { crossfadeDurationMs = it }
         }
-        // Radio-only lyric offset, editable live from the phone page / Dev menu.
-        viewModelScope.launch {
-            lyricsOffsetPrefs.radioOffsetMs.collect { ms ->
-                _state.update { it.copy(radioLyricsOffsetMs = ms) }
-            }
-        }
     }
 
     fun setLyricsOffset(ms: Long) {
@@ -490,10 +484,6 @@ class PlayerViewModel @Inject constructor(
         updateOutputLatency()
     }
 
-    fun setRadioLyricsOffset(ms: Long) {
-        lyricsOffsetPrefs.setRadioOffset(ms)
-        _state.update { it.copy(radioLyricsOffsetMs = ms) }
-    }
 
     fun setAvSyncAuto(auto: Boolean) {
         prefs.edit().putBoolean("av_auto", auto).apply()
@@ -1364,10 +1354,10 @@ class PlayerViewModel @Inject constructor(
             .onFailure { toast("Couldn't add to playlist") }
     }
 
-    fun playStation(stationId: String) {
+    fun playStation(stationId: String, stationArt: String? = null) {
         // Apple's LIVE radio stations (fixed set) stream a live Widevine HLS feed via /play/assets,
         // not a next-tracks song queue — route them to the live path.
-        if (stationId in LIVE_STATION_IDS) { playLiveStation(stationId); return }
+        if (stationId in LIVE_STATION_IDS) { playLiveStation(stationId, stationArt); return }
         viewModelScope.launch {
             val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
             if (songs.isNotEmpty()) playAlbum(songs)
@@ -1430,7 +1420,6 @@ class PlayerViewModel @Inject constructor(
         if (title == null && artist == null) return   // a jingle/ping has no track frames
         val cur = _state.value.currentSong
         if (cur != null && cur.title == title && cur.artistName == artist) return  // unchanged
-        // New track on the live stream — reset the lyric clock and pull the track's lyrics.
         _state.update {
             val c = it.currentSong ?: return@update it
             val s = c.copy(
@@ -1439,39 +1428,25 @@ class PlayerViewModel @Inject constructor(
                 artistName = artist ?: c.artistName,
                 albumName = album ?: c.albumName,
                 artworkUrl = art ?: c.artworkUrl,
-                hasLyrics = true,
             )
-            it.copy(currentSong = s, song = s, queue = listOf(s), motionUrl = null,
-                lyrics = emptyList(), radioTrackStartMs = android.os.SystemClock.elapsedRealtime())
-        }
-        if (adamId != null) loadRadioLyrics(adamId, title ?: "", artist ?: "")
-    }
-
-    /** Fetch the current live-radio track's lyrics by catalog id. Only applied if the track hasn't
-     *  changed again by the time they arrive (radio moves on). Timing is approximate — see
-     *  [PlayerState.radioTrackStartMs]. */
-    @OptIn(UnstableApi::class)
-    private fun loadRadioLyrics(adamId: String, title: String, artist: String) {
-        lyricsJob?.cancel()
-        lyricsJob = viewModelScope.launch {
-            val lines = fetchLyricsShared(adamId, title, artist, 0L).await()
-            if (lines.isNotEmpty() && radioActive && _state.value.currentSong?.id == adamId)
-                _state.update { it.copy(lyrics = lines) }
+            it.copy(currentSong = s, song = s, queue = listOf(s), motionUrl = null)
         }
     }
 
-    fun playLiveStation(stationId: String) = viewModelScope.launch {
+    fun playLiveStation(stationId: String, stationArt: String? = null) = viewModelScope.launch {
         val info = repo.getStationStream(stationId).getOrNull() ?: return@launch
         val url = info.liveStreamUrl ?: return@launch
         Log.d("PlayerVM", "playLiveStation id=$stationId url=${url.take(80)} keyUri=${info.drmKeyUri?.take(40)}")
         usingStandalone = false
         lastErrorKey = null
+        val art = stationArt ?: radioStationArt
+        radioStationArt = art
         val fakeSong = com.applemusicktv.data.model.Song(
             id = stationId, title = "Apple Music Radio", artistName = "Apple Music",
-            albumName = "", durationMs = 0L, artworkUrl = null, artworkBgColor = null,
+            albumName = "", durationMs = 0L, artworkUrl = art, artworkBgColor = null,
             previewUrl = null, hasLyrics = false,
         )
-        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null, isLiveRadio = true, userQueue = emptyList()) }
+        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null, isLiveRadio = true, userQueue = emptyList(), radioStationArt = art) }
 
         // Live radio uses a STANDARD Widevine proxy (raw challenge → raw license) at Apple's
         // linear.tv key server — NOT the song `acquireWebPlaybackLicense` JSON wrapper. So the

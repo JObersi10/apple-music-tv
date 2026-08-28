@@ -197,9 +197,7 @@ class DirectBrowseSource @Inject constructor(
     @Suppress("UNCHECKED_CAST")
     suspend fun browse(): List<com.applemusicktv.data.network.HomeSection> {
         val sections = mutableListOf<com.applemusicktv.data.network.HomeSection>()
-        // Live Radio is playable (Widevine live HLS) — keep that shelf; drop only interviews and
-        // on-demand radio episodes we can't stream. Mirrors browse.ts.
-        val dropTitle = Regex("watch interviews|radio episode", RegexOption.IGNORE_CASE)
+        // Live Radio, Watch Interviews and New Radio Episodes all surface now. Mirrors browse.ts.
         runCatching {
             val raw = api.editorialGrouping(sf)
             val tab = (((raw["data"] as? List<*>)?.firstOrNull() as? Map<*, *>)
@@ -213,13 +211,12 @@ class DirectBrowseSource @Inject constructor(
                 val kind = attrs["editorialElementKind"] as? String
                 if (kind != "326" && kind != "327") continue
                 val title = (attrs["name"] ?: attrs["title"] ?: "") as? String ?: ""
-                if (title.isEmpty() || dropTitle.containsMatchIn(title)) continue
+                if (title.isEmpty()) continue
                 val contents = ((kk["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)
                     ?.get("data") as? List<*> ?: continue
                 val maps = contents.mapNotNull { it as? Map<*, *> }
                 if (maps.isEmpty()) continue
                 val types = maps.mapNotNull { it["type"] as? String }.toSet()
-                if (types.contains("uploaded-videos")) continue   // stations now play (live HLS)
                 // The editorial-element's own id IS its room id (verified: "Daily Top 100" -> 6503108310,
                 // the same id as music.apple.com/us/room/6503108310). Carried so the row can end in a
                 // "More" card that opens the full room.

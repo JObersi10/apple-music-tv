@@ -299,10 +299,13 @@ fun NowPlayingScreen(
                         .clip(RoundedCornerShape(if (state.artworkRounded) 18.dp else 0.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
-                    // Cross-fade the cover instead of hard-swapping it on song change.
-                    if (song.artworkUrl != null) {
+                    // Cross-fade the cover instead of hard-swapping it on song change. Live radio
+                    // paused → show the station's own cover (there's no "current track" while paused).
+                    val coverUrl = if (state.isLiveRadio && !state.isPlaying && state.radioStationArt != null)
+                        state.radioStationArt else song.artworkUrl(600)
+                    if (coverUrl != null) {
                         androidx.compose.animation.Crossfade(
-                            targetState = song.artworkUrl(600),
+                            targetState = coverUrl,
                             animationSpec = tween(1000),
                             label = "cover",
                         ) { url ->
@@ -483,23 +486,10 @@ fun NowPlayingScreen(
                     color = Color(0x99FFFFFF),
                     modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp).graphicsLayer { alpha = hintAlpha },
                 )
-                // Live radio lyric clock: elapsed since the track's metadata arrived (approximate —
-                // a track joined mid-way is offset, but it tracks forward from there, not 0:00).
-                val radioLyricProgress = rememberRadioLyricClock(state.radioTrackStartMs, state.isLiveRadio && state.isPlaying)
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight().onFocusChanged { rightFocused = it.hasFocus }) {
                     if (state.isLiveRadio) {
-                        // No Up Next for a continuous stream, but show the current track's lyrics
-                        // (timed to an approximate clock) when we have them.
-                        if (state.lyrics.isNotEmpty()) {
-                            LyricsPanel(
-                                lyrics = state.lyrics,
-                                progressState = radioLyricProgress,
-                                offsetMs = state.radioLyricsOffsetMs,   // radio-only tunable lag
-                                onSeek = {},              // can't seek a live stream
-                                playFocus = playFocus,
-                                fontScale = state.lyricsScale,
-                            )
-                        }
+                        // Live radio: no Up Next (single continuous stream) and no lyrics (can't sync
+                        // per-track reliably) — the panel is intentionally empty.
                     } else if (showQueue) {
                         QueuePanel(
                             queue = state.queue,
@@ -706,20 +696,6 @@ private fun FullScreenLyrics(
  * Interpolates smooth 60fps playback position between the ~200ms server
  * polling ticks, so word-by-word lyric animation doesn't stutter.
  */
-/** Approximate lyric clock for live radio: milliseconds since [trackStartMs] (an elapsedRealtime
- *  stamp), ticking per frame while playing. Not a seekable position — live radio has none. */
-@Composable
-private fun rememberRadioLyricClock(trackStartMs: Long, running: Boolean): androidx.compose.runtime.State<Long> {
-    val ms = remember { androidx.compose.runtime.mutableLongStateOf(0L) }
-    LaunchedEffect(trackStartMs, running) {
-        if (!running || trackStartMs <= 0L) return@LaunchedEffect
-        while (isActive) {
-            withFrameMillis { ms.longValue = android.os.SystemClock.elapsedRealtime() - trackStartMs }
-        }
-    }
-    return ms
-}
-
 @Composable
 private fun rememberSmoothProgressMs(reportedMs: Long, isPlaying: Boolean): androidx.compose.runtime.State<Long> {
     val anchorRealMs = remember { mutableLongStateOf(System.currentTimeMillis()) }

@@ -272,9 +272,6 @@ browse.get("/", async (c) => {
     });
     const tab = res.data?.data?.[0]?.relationships?.tabs?.data?.[0];
     const kids: any[] = tab?.relationships?.children?.data ?? [];
-    // Live Radio IS playable now (Widevine live HLS). Still drop interviews + on-demand
-    // radio episodes (uploaded-videos / non-live show recordings we can't stream).
-    const dropTitle = /watch interviews|radio episode/i;
 
     for (const k of kids) {
       const attr = k.attributes ?? {};
@@ -282,15 +279,14 @@ browse.get("/", async (c) => {
       // 326 = album/playlist shelf, 327 = song shelf. Others are heros/links/tiles — handled elsewhere.
       if (kind !== "326" && kind !== "327") continue;
       const title: string = attr.name ?? attr.title ?? "";
-      if (!title || dropTitle.test(title)) continue;
+      if (!title) continue;
 
       const contents: any[] = k.relationships?.contents?.data ?? [];
       if (!contents.length) continue;
 
       // A shelf is homogeneous by intent but "Everyone's Listening To..." mixes albums+playlists.
+      // Live Radio, Watch Interviews and New Radio Episodes all surface now.
       const types = new Set(contents.map((it: any) => it.type));
-      // Interview/uploaded-video shelves — nothing playable. Stations now play (live HLS).
-      if (types.has("uploaded-videos")) continue;
 
       // The editorial-element's own id IS its room id (verified: "Daily Top 100" -> 6503108310,
       // matching music.apple.com/us/room/6503108310). Sent so the row can end in a "More" card.

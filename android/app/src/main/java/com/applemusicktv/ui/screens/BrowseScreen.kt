@@ -189,7 +189,7 @@ private fun BrowseRow(
                 val isSong = album.type == "songs"
                 AlbumCard(album = album, size = 130, onClick = {
                     when {
-                        isStation -> playerVm?.playStation(album.id)
+                        isStation -> playerVm?.playStation(album.id, album.artworkUrl(600))
                         isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
                         isSong -> playerVm?.playSong(album)
                         else -> onAlbumClick(album.id)
