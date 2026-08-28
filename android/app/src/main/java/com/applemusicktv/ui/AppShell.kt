@@ -284,6 +284,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onAlbumClick   = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
                     onGenreClick   = { id, name -> navController.navigate(Screen.Genre.route(id, name)) },
+                    onCuratorClick = { navController.navigate(Screen.Category.route(it)) },
                     // "More" at the end of a shelf → that shelf's full editorial room page.
                     onSeeAll       = { navController.navigate(Screen.Category.route("room-$it")) },
                 )

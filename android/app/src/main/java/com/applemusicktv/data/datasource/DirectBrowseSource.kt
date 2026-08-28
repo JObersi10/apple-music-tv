@@ -62,6 +62,24 @@ class DirectBrowseSource @Inject constructor(
         return raw.replace("{w}", "$w").replace("{h}", "$h").replace("{f}", "jpg")
     }
 
+    /** An apple-curator/curator tile (radio show, genre) — id prefixed so CategoryScreen opens it. */
+    private fun curatorCard(item: Map<*, *>): AlbumDto? {
+        val attrs = item["attributes"] as? Map<*, *> ?: return null
+        val ea = attrs["editorialArtwork"] as? Map<*, *>
+        val cover = ((ea?.get("subscriptionCover") ?: ea?.get("brandLogo") ?: attrs["artwork"]) as? Map<*, *>)?.get("url") as? String
+        val url = art(cover) ?: return null
+        val isApple = item["type"] == "apple-curators"
+        val name = ((attrs["name"] ?: "Unknown") as? String ?: "Unknown")
+            .replace(Regex("^Apple Music (?=\\S)"), "").replace(Regex("^Apple (?=\\S)"), "")
+        return AlbumDto(
+            id = (if (isApple) "ac-" else "c-") + (item["id"] as? String ?: return null),
+            title = name, artistName = "", artworkUrl = url, type = "curators",
+            artworkBgColor = null, releaseDate = null, trackCount = 0,
+            editorialNotes = shortNote(attrs["editorialNotes"]),
+            wideArtworkUrl = wideArt(ea),
+        )
+    }
+
     private fun listOfItems(raw: Any?): List<AlbumDto> =
         (raw as? List<*>)?.mapNotNull { (it as? Map<*, *>)?.let(::itemFromRaw) } ?: emptyList()
 
@@ -271,19 +289,32 @@ class DirectBrowseSource @Inject constructor(
                 }
                 if (albums.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, albums, roomId = roomId)
             }
-        }
-        // "New" spotlight: leading row of big landscape editorial cards — the lead item of each of
-        // the first few shelves that ships wide art + a tagline. Mirrors browse.ts.
-        if (sections.isNotEmpty()) {
-            val seen = HashSet<String>()
-            val spotlight = mutableListOf<AlbumDto>()
-            for (s in sections) {
-                val lead = s.albums.firstOrNull { it.wideArtworkUrl != null && seen.add(it.id) }
-                if (lead != null) spotlight += lead
-                if (spotlight.size >= 8) break
+
+            // Real Featured "New" shelf (grouping kind 316 -> editorial cards 317/320). Each card
+            // carries designBadge (the exact label) + one content item. Mirrors browse.ts.
+            val featEl = kids.mapNotNull { it as? Map<*, *> }
+                .firstOrNull { (it["attributes"] as? Map<*, *>)?.get("editorialElementKind") == "316" }
+            val featCards = ((featEl?.get("relationships") as? Map<*, *>)?.get("children") as? Map<*, *>)
+                ?.get("data") as? List<*> ?: emptyList<Any>()
+            val featured = mutableListOf<AlbumDto>()
+            val fseen = HashSet<String>()
+            for (card in featCards) {
+                val cm = card as? Map<*, *> ?: continue
+                val cAttrs = cm["attributes"] as? Map<*, *>
+                val content = (((cm["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)
+                    ?.get("data") as? List<*>)?.firstOrNull() as? Map<*, *> ?: continue
+                val t = content["type"] as? String
+                var obj = when (t) {
+                    "songs", "music-videos" -> songCard(content)
+                    "apple-curators", "curators" -> curatorCard(content)
+                    else -> itemFromRaw(content)
+                } ?: continue
+                if (!fseen.add(obj.id)) continue
+                obj = obj.copy(tagline = (cAttrs?.get("designBadge") as? String) ?: obj.tagline)
+                featured += obj
             }
-            if (spotlight.size >= 3)
-                sections.add(0, com.applemusicktv.data.network.HomeSection("New", spotlight, style = "spotlight"))
+            if (featured.size >= 2)
+                sections.add(0, com.applemusicktv.data.network.HomeSection("New", featured, style = "spotlight"))
         }
         // Fallback: charts, so the tab is never blank if the editorial page fails.
         if (sections.isEmpty()) {
