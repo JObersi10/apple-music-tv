@@ -103,11 +103,15 @@ class DirectBrowseSource @Inject constructor(
                 val raw = retry(3) { api.recommendationsRaw(limit = 25) }
                 val recs = (raw["data"] as? List<*>).orEmpty()
                 android.util.Log.i("AMHome", "recommendations recs=${recs.size}")
+                // Track kind per section so the SPOTLIGHT hero is a genuine recommendation, never
+                // "Recently Played" (kind recently-played).
+                val kinds = HashMap<String, String?>()
                 for (rec in recs) {
                     val r = rec as? Map<*, *> ?: continue
                     val attrs = r["attributes"] as? Map<*, *> ?: emptyMap<String, Any>()
                     val title = ((attrs["title"] as? Map<*, *>)?.get("stringForDisplay") as? String)
                         ?: (attrs["title"] as? String) ?: "For You"
+                    val kind = attrs["kind"] as? String
                     val contents = ((r["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)?.get("data")
                     val items = (contents as? List<*>).orEmpty()
                         .mapNotNull { it as? Map<*, *> }
@@ -119,9 +123,22 @@ class DirectBrowseSource @Inject constructor(
                         val withMotion = if (title.startsWith("Playlists Made for You", ignoreCase = true))
                             items.map { it.copy(motionUrl = motionForPlaylist(it.id)) } else items
                         sections += title to withMotion
+                        kinds[title] = kind
                     }
                 }
-                android.util.Log.i("AMHome", "recommendation sections=${sections.size}")
+                // Lead with the recommendation hero (Top Picks / New Releases / first
+                // music-recommendations that isn't Playlists Made for You).
+                val heroPrefs = listOf("Top Picks for You", "New Releases for You", "Made For You")
+                fun isMade(t: String) = t.startsWith("Playlists Made for You", ignoreCase = true)
+                var heroTitle = heroPrefs.firstNotNullOfOrNull { p ->
+                    sections.firstOrNull { it.first.startsWith(p, ignoreCase = true) }?.first
+                } ?: sections.firstOrNull { kinds[it.first] == "music-recommendations" && !isMade(it.first) }?.first
+                heroTitle?.let { ht ->
+                    val hero = sections.first { it.first == ht }
+                    sections.remove(hero)
+                    sections.add(0, hero)
+                }
+                android.util.Log.i("AMHome", "recommendation sections=${sections.size} hero=$heroTitle")
             }.onFailure { android.util.Log.w("AMHome", "recommendations failed: ${it.message}") }
         }
 

@@ -66,10 +66,10 @@ fun HomeScreen(
         contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        itemsIndexed(state.sections, key = { _, it -> it.title }) { index, section ->
-            // The first personalized row always leads as a big gradient hero.
-            val styled = if (index == 0 && section.style == null) section.copy(style = "gradient") else section
-            ContentRow(styled, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick)
+        items(state.sections, key = { it.title }) { section ->
+            // The hero row (a recommendation, never Recently Played) is chosen + styled server-side
+            // and on the direct path, so just render whatever style the section carries.
+            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick)
         }
     }
 }

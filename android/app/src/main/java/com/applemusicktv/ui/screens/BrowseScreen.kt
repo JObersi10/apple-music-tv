@@ -147,7 +147,7 @@ private fun SpotlightRow(
         Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
             modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(30.dp)) {
+            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(albums, key = { it.id }, contentType = { "spotlight" }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
                 val isStation = album.id.startsWith("ra.")

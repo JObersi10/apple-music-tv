@@ -48,7 +48,7 @@ home.get("/", async (c) => {
   const mut = resolveMUT(c);
   const sf = getStorefront() || "us";
   const h = mut ? appleHeaders(mut) : bearerOnly();
-  const sections: Array<{ title: string; albums: any[] }> = [];
+  const sections: Array<{ title: string; albums: any[]; kind?: string; style?: string }> = [];
 
   // Personalized recommendations feed — this IS the signed-in music.apple.com "Listen Now"/Home
   //    page. Each recommendation is a titled shelf ("Playlists Made for You", "Recently Played",
@@ -97,7 +97,7 @@ home.get("/", async (c) => {
               } catch { /* motion art is optional polish */ }
             }));
           }
-          sections.push({ title, albums: items });
+          sections.push({ title, albums: items, kind: rec.attributes?.kind });
         }
       }
     } catch (e: any) {
@@ -172,22 +172,27 @@ home.get("/", async (c) => {
   }
   } // end fallback
 
-  // Spotlight styling: the personalized hero rows render as big gradient cards on the TV.
-  const gradientRe = /^(Top Picks for You|Playlists Made for You|More For You|Made for You)/i;
-  const styled = (arr: Array<{ title: string; albums: any[] }>) =>
-    arr.map((s) => gradientRe.test(s.title) ? { ...s, style: "gradient" } : s);
-
-  // Apple leads with "Playlists Made for You"; the user wants it lower. Pull any such shelf down to
-  // ~4th so the fresher personalized rows lead.
+  // The SPOTLIGHT hero = a genuine personalized recommendation (never "Recently Played"). Prefer
+  // Apple's "Top Picks for You" / "New Releases for You" when present, else the first
+  // music-recommendations shelf that isn't "Playlists Made for You". It leads the page as big
+  // gradient cards.
   const isMade = (s: { title: string }) => /^Playlists Made for You/i.test(s.title);
-  const made = sections.filter(isMade);
-  if (made.length) {
-    const rest = sections.filter((s) => !isMade(s));
-    rest.splice(Math.min(3, rest.length), 0, ...made);
-    return c.json({ sections: styled(rest) });
-  }
+  const heroPrefs = [/^Top Picks for You/i, /^New Releases for You/i, /^Made For You/i];
+  let heroIdx = -1;
+  for (const re of heroPrefs) { heroIdx = sections.findIndex((s) => re.test(s.title)); if (heroIdx >= 0) break; }
+  if (heroIdx < 0) heroIdx = sections.findIndex((s) => s.kind === "music-recommendations" && !isMade(s));
 
-  return c.json({ sections: styled(sections) });
+  const ordered = [...sections];
+  let hero: typeof sections[number] | undefined;
+  if (heroIdx >= 0) { hero = ordered.splice(heroIdx, 1)[0]; hero.style = "gradient"; }
+
+  // "Playlists Made for You" also renders as gradient cards, pulled down to ~4th.
+  const made = ordered.filter(isMade).map((s) => ({ ...s, style: "gradient" }));
+  const rest = ordered.filter((s) => !isMade(s));
+  if (made.length) rest.splice(Math.min(2, rest.length), 0, ...made);
+
+  const final = hero ? [hero, ...rest] : rest;
+  return c.json({ sections: final });
 });
 
 export default home;
