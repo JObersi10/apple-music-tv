@@ -185,9 +185,11 @@ private fun BrowseRow(
         ) {
             items(albums, key = { it.id }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+                val isStation = album.id.startsWith("ra.")
                 val isSong = album.type == "songs"
                 AlbumCard(album = album, size = 130, onClick = {
                     when {
+                        isStation -> playerVm?.playStation(album.id)
                         isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
                         isSong -> playerVm?.playSong(album)
                         else -> onAlbumClick(album.id)

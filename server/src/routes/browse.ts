@@ -272,7 +272,9 @@ browse.get("/", async (c) => {
     });
     const tab = res.data?.data?.[0]?.relationships?.tabs?.data?.[0];
     const kids: any[] = tab?.relationships?.children?.data ?? [];
-    const dropTitle = /watch interviews|live radio|radio episode|radio now/i;
+    // Live Radio IS playable now (Widevine live HLS). Still drop interviews + on-demand
+    // radio episodes (uploaded-videos / non-live show recordings we can't stream).
+    const dropTitle = /watch interviews|radio episode/i;
 
     for (const k of kids) {
       const attr = k.attributes ?? {};
@@ -287,8 +289,8 @@ browse.get("/", async (c) => {
 
       // A shelf is homogeneous by intent but "Everyone's Listening To..." mixes albums+playlists.
       const types = new Set(contents.map((it: any) => it.type));
-      // Radio/interview shelves — nothing playable here yet.
-      if (types.has("stations") || types.has("uploaded-videos")) continue;
+      // Interview/uploaded-video shelves — nothing playable. Stations now play (live HLS).
+      if (types.has("uploaded-videos")) continue;
 
       // The editorial-element's own id IS its room id (verified: "Daily Top 100" -> 6503108310,
       // matching music.apple.com/us/room/6503108310). Sent so the row can end in a "More" card.
