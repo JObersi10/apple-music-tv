@@ -110,7 +110,9 @@ fun NowPlayingScreen(
     val toggleCount by navVm.toggleQueue.collectAsState()
     val showQueue = toggleCount % 2 == 1
 
-    val smoothProgress = rememberSmoothProgressMs(state.progressMs, state.isPlaying)
+    // While a track is still being fetched/decrypted (isLoading), freeze the clock: the seek bar
+    // and lyrics must not advance before there's actually audio. Resumes when playback really starts.
+    val smoothProgress = rememberSmoothProgressMs(state.progressMs, state.isPlaying && !state.isLoading)
 
     DisposableEffect(Unit) {
         playerVm.nowPlayingVisible = true
@@ -276,6 +278,21 @@ fun NowPlayingScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // Live radio: broadcast-style LIVE badge ABOVE the album art.
+                if (state.isLiveRadio) {
+                    Row(
+                        modifier = Modifier.padding(bottom = 10.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFFFA233B))
+                            .padding(horizontal = 9.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
+                        Text("LIVE", color = Color.White, fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .size(256.dp)
@@ -307,21 +324,6 @@ fun NowPlayingScreen(
                     @Suppress("ConstantConditionIf")
                     if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
-                    }
-                    // Live radio: broadcast-style LIVE badge, top-centre of the cover.
-                    if (state.isLiveRadio) {
-                        Row(
-                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFFFA233B))
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        ) {
-                            Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
-                            Text("LIVE", color = Color.White, fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-                        }
                     }
                 }
 
@@ -481,10 +483,23 @@ fun NowPlayingScreen(
                     color = Color(0x99FFFFFF),
                     modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp).graphicsLayer { alpha = hintAlpha },
                 )
+                // Live radio lyric clock: elapsed since the track's metadata arrived (approximate —
+                // a track joined mid-way is offset, but it tracks forward from there, not 0:00).
+                val radioLyricProgress = rememberRadioLyricClock(state.radioTrackStartMs, state.isLiveRadio && state.isPlaying)
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight().onFocusChanged { rightFocused = it.hasFocus }) {
                     if (state.isLiveRadio) {
-                        // No Up Next for a continuous live stream. (Lyrics could go here later —
-                        // the ID3 adamId gives the current track, but live has no per-word timing.)
+                        // No Up Next for a continuous stream, but show the current track's lyrics
+                        // (timed to an approximate clock) when we have them.
+                        if (state.lyrics.isNotEmpty()) {
+                            LyricsPanel(
+                                lyrics = state.lyrics,
+                                progressState = radioLyricProgress,
+                                offsetMs = state.avLyricsMs,
+                                onSeek = {},              // can't seek a live stream
+                                playFocus = playFocus,
+                                fontScale = state.lyricsScale,
+                            )
+                        }
                     } else if (showQueue) {
                         QueuePanel(
                             queue = state.queue,
@@ -691,6 +706,20 @@ private fun FullScreenLyrics(
  * Interpolates smooth 60fps playback position between the ~200ms server
  * polling ticks, so word-by-word lyric animation doesn't stutter.
  */
+/** Approximate lyric clock for live radio: milliseconds since [trackStartMs] (an elapsedRealtime
+ *  stamp), ticking per frame while playing. Not a seekable position — live radio has none. */
+@Composable
+private fun rememberRadioLyricClock(trackStartMs: Long, running: Boolean): androidx.compose.runtime.State<Long> {
+    val ms = remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+    LaunchedEffect(trackStartMs, running) {
+        if (!running || trackStartMs <= 0L) return@LaunchedEffect
+        while (isActive) {
+            withFrameMillis { ms.longValue = android.os.SystemClock.elapsedRealtime() - trackStartMs }
+        }
+    }
+    return ms
+}
+
 @Composable
 private fun rememberSmoothProgressMs(reportedMs: Long, isPlaying: Boolean): androidx.compose.runtime.State<Long> {
     val anchorRealMs = remember { mutableLongStateOf(System.currentTimeMillis()) }

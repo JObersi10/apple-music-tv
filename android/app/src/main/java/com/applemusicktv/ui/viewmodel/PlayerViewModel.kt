@@ -164,6 +164,9 @@ data class PlayerState(
     val standaloneActive: Boolean         = false,
     /** Live radio: continuous DRM stream. Drives the LIVE badge, hides Up Next, disables skip. */
     val isLiveRadio: Boolean              = false,
+    /** elapsedRealtime() when the current live-radio track's metadata first arrived — the lyric
+     *  clock's zero. Best-effort: a track joined mid-way is offset (we can't know its true start). */
+    val radioTrackStartMs: Long           = 0L,
     /** Keep audio playing when the app goes to the background / home is pressed. */
     val backgroundPlayEnabled: Boolean    = true,
     /** True while the activity is in Picture-in-Picture (renders the minimal PiP view). */
@@ -1393,6 +1396,7 @@ class PlayerViewModel @Inject constructor(
         var artist: String? = null
         var album: String? = null
         var art: String? = null
+        var adamId: String? = null
         for (i in 0 until metadata.length()) {
             when (val e = metadata.get(i)) {
                 is androidx.media3.extractor.metadata.id3.TextInformationFrame -> {
@@ -1405,20 +1409,41 @@ class PlayerViewModel @Inject constructor(
                 }
                 is androidx.media3.extractor.metadata.id3.UrlLinkFrame ->
                     if (e.id == "WXXX") { if (art == null || e.url.contains("1400")) art = e.url }
+                is androidx.media3.extractor.metadata.id3.PrivFrame ->
+                    if (e.owner == "com.apple.radio.adamid")
+                        adamId = String(e.privateData, Charsets.US_ASCII).filter { it.isDigit() }.ifEmpty { null }
             }
         }
-        if (title == null && artist == null) return   // a jingle/ping ping has no track frames
+        if (title == null && artist == null) return   // a jingle/ping has no track frames
         val cur = _state.value.currentSong
         if (cur != null && cur.title == title && cur.artistName == artist) return  // unchanged
+        // New track on the live stream — reset the lyric clock and pull the track's lyrics.
         _state.update {
             val c = it.currentSong ?: return@update it
             val s = c.copy(
+                id = adamId ?: c.id,
                 title = title ?: c.title,
                 artistName = artist ?: c.artistName,
                 albumName = album ?: c.albumName,
                 artworkUrl = art ?: c.artworkUrl,
+                hasLyrics = true,
             )
-            it.copy(currentSong = s, song = s, queue = listOf(s), motionUrl = null)
+            it.copy(currentSong = s, song = s, queue = listOf(s), motionUrl = null,
+                lyrics = emptyList(), radioTrackStartMs = android.os.SystemClock.elapsedRealtime())
+        }
+        if (adamId != null) loadRadioLyrics(adamId, title ?: "", artist ?: "")
+    }
+
+    /** Fetch the current live-radio track's lyrics by catalog id. Only applied if the track hasn't
+     *  changed again by the time they arrive (radio moves on). Timing is approximate — see
+     *  [PlayerState.radioTrackStartMs]. */
+    @OptIn(UnstableApi::class)
+    private fun loadRadioLyrics(adamId: String, title: String, artist: String) {
+        lyricsJob?.cancel()
+        lyricsJob = viewModelScope.launch {
+            val lines = fetchLyricsShared(adamId, title, artist, 0L).await()
+            if (lines.isNotEmpty() && radioActive && _state.value.currentSong?.id == adamId)
+                _state.update { it.copy(lyrics = lines) }
         }
     }
 
