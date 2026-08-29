@@ -330,11 +330,12 @@ class MusicVideoViewModel @Inject constructor(
                     .setRenderersFactory(
                         com.applemusicktv.media.DelayVideoRenderersFactory(context) { avVideoDelayUs() })
                     .setTrackSelector(selector)
-                    // Bigger buffer than the default so a slow proxy/WAN link rebuffers far less —
-                    // hold up to 60s, keep playing on 30s, resume after a stall with 5s buffered.
+                    // Start fast, resume fast. A large min-buffer (was 30s) made the player sit
+                    // pre-filling instead of playing — read as constant "buffering." Modest window:
+                    // begin at 1.5s, resume after a stall with 3s, cap the hoard at 30s.
                     .setLoadControl(
                         DefaultLoadControl.Builder()
-                            .setBufferDurationsMs(30_000, 60_000, 2_500, 5_000)
+                            .setBufferDurationsMs(15_000, 30_000, 1_500, 3_000)
                             .build())
                     .build()
                 exo.setMediaSource(source)

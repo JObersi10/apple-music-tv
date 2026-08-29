@@ -342,7 +342,7 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("views") views: String =
-            "top-songs,latest-release,full-albums,featured-albums,similar-artists",
+            "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos",
         @Query("extend") extend: String = "editorialArtwork,artistBio",
     ): Map<String, Any>
 

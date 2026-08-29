@@ -470,12 +470,13 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         fun artwork(m: Map<*, *>?): String? =
             (m?.get("artwork") as? Map<*, *>)?.get("url") as? String
 
-        fun songs(key: String): List<SongDto> =
+        fun songs(key: String, forceType: String? = null): List<SongDto> =
             ((views[key] as? Map<*, *>)?.get("data") as? List<*>)?.mapNotNull { e ->
                 val n = e as? Map<*, *> ?: return@mapNotNull null
                 val a = n["attributes"] as? Map<*, *> ?: return@mapNotNull null
                 SongDto(
                     id = n["id"] as? String ?: return@mapNotNull null,
+                    type = forceType ?: (n["type"] as? String ?: "songs"),
                     title = a["name"] as? String ?: "",
                     artistName = a["artistName"] as? String ?: "",
                     albumName = a["albumName"] as? String ?: "",
@@ -523,6 +524,7 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
             editorialNotes = ((attrs["editorialNotes"] as? Map<*, *>)?.get("standard")
                 ?: (attrs["editorialNotes"] as? Map<*, *>)?.get("short")) as? String,
             topSongs = songs("top-songs"),
+            musicVideos = songs("top-music-videos", forceType = "music-videos"),
             latestRelease = albums("latest-release").firstOrNull(),
             albums = albums("full-albums"),
             featuredAlbums = albums("featured-albums"),

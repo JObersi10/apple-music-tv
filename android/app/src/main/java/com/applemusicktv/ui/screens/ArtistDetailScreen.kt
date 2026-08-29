@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -102,6 +103,18 @@ fun ArtistDetailScreen(
             itemsIndexedTopSongs(state.topSongs, playerVm)
         }
 
+        // Music Videos (Essentials) — 16:9 thumbnails, play via the MV path.
+        if (state.musicVideos.isNotEmpty()) {
+            item { SectionTitle("Music Videos") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    itemsIndexed(state.musicVideos, key = { _, v -> v.id }) { i, v ->
+                        ArtistVideoCard(v) { playerVm.playAlbum(state.musicVideos, i) }
+                    }
+                }
+            }
+        }
+
         state.latestRelease?.let { latest ->
             item { SectionTitle("Latest Release") }
             item {
@@ -153,6 +166,35 @@ fun ArtistDetailScreen(
 private fun SectionTitle(title: String) {
     Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
         modifier = Modifier.padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 12.dp))
+}
+
+/** 16:9 music-video thumbnail with title/artist below — matches the video shelves elsewhere. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ArtistVideoCard(video: Song, onPlay: () -> Unit) {
+    Surface(
+        onClick = onPlay,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        modifier = Modifier.width(300.dp),
+    ) {
+        Column {
+            Box(
+                Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp)).background(Color(0xFF1A1A1C))
+            ) {
+                if (video.artworkUrl != null) AsyncImage(
+                    model = video.artworkUrl(600), contentDescription = null,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Text(video.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+                maxLines = 1, modifier = Modifier.padding(top = 8.dp))
+            Text(video.artistName, fontSize = 12.sp, color = Color(0xFF9A9A9A), maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp, bottom = 4.dp))
+        }
+    }
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

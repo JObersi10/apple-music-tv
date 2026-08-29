@@ -50,11 +50,11 @@ fun LibraryScreen(
     var section by remember { mutableStateOf(LibrarySection.Playlists) }
     val state by vm.state.collectAsState()
 
-    Column(modifier = modifier.fillMaxSize()) {
-        // Top segmented tabs (Songs / Albums / Artists / Playlists) — replaces the old sidebar.
-        SectionTabs(section) { section = it }
+    Row(modifier = modifier.fillMaxSize()) {
+        // Modern left sidebar (Playlists / Albums / Artists / Songs).
+        SectionSidebar(section) { section = it }
 
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
             val hasAnyData = state.playlists.isNotEmpty() || state.albums.isNotEmpty() ||
                 state.artists.isNotEmpty() || state.songs.isNotEmpty()
             when {
@@ -93,41 +93,53 @@ fun LibraryScreen(
     }
 }
 
-/** Top segmented tabs — a centered pill row matching the app's nav style. */
+/** Modern left sidebar — vertical section nav. Selected row = red-tinted pill with a
+ *  bright accent bar; unselected are quiet. Bigger, cleaner than the old sidebar. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SectionTabs(selected: LibrarySection, onSelect: (LibrarySection) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.Center,
+private fun SectionSidebar(selected: LibrarySection, onSelect: (LibrarySection) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(224.dp)
+            .background(Color(0xFF0A0A0A))
+            .padding(horizontal = 16.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Surface(
-            shape = RoundedCornerShape(50),
-            colors = androidx.tv.material3.SurfaceDefaults.colors(containerColor = Color(0xE61C1C1E)),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
+        Text(
+            "Library",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            modifier = Modifier.padding(start = 8.dp, bottom = 14.dp),
+        )
+        LibrarySection.entries.forEach { s ->
+            val isSel = s == selected
+            Surface(
+                onClick = { onSelect(s) },
+                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = if (isSel) Color(0x33FA233B) else Color.Transparent,
+                    focusedContainerColor = if (isSel) Color(0x4DFA233B) else Color(0xFF232325),
+                ),
+                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                LibrarySection.entries.forEach { s ->
-                    val isSel = s == selected
-                    Surface(
-                        onClick = { onSelect(s) },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor = if (isSel) Color.White else Color.Transparent,
-                            focusedContainerColor = if (isSel) Color.White else Color(0xFF2C2C2E),
-                        ),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-                    ) {
-                        Text(
-                            text = s.label,
-                            fontSize = 13.sp,
-                            fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (isSel) Color.Black else Color(0xFF9A9A9A),
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 7.dp),
-                        )
-                    }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        Modifier.width(3.dp).height(18.dp).clip(RoundedCornerShape(2.dp))
+                            .background(if (isSel) Color(0xFFFA233B) else Color.Transparent)
+                    )
+                    Text(
+                        text = s.label,
+                        fontSize = 16.sp,
+                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (isSel) Color.White else Color(0xFF9A9A9A),
+                    )
                 }
             }
         }

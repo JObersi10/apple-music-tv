@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
+import kotlin.math.pow
 import com.applemusicktv.ui.navigation.TopNavTab
 import com.applemusicktv.ui.components.Glyph
 import com.applemusicktv.ui.components.Icon
@@ -28,15 +29,18 @@ import com.applemusicktv.ui.components.Icon
 @Composable
 private fun EqBars(beatAnalyzer: com.applemusicktv.media.BeatAnalyzer?) {
     val energy by (beatAnalyzer?.energy?.collectAsState() ?: remember { mutableStateOf(0f) })
-    // Smooth the punch so bars fall gracefully rather than snapping.
-    val punch by animateFloatAsState(energy.coerceIn(0f, 1f), tween(90, easing = LinearEasing), label = "eqPunch")
+    // Sensitivity: bass-onset energy peaks low, so lift small values (gamma < 1) and add gain
+    // before clamping — a quiet beat should still visibly punch the bars.
+    val sens = (energy.coerceIn(0f, 1f).pow(0.55f) * 1.6f).coerceIn(0f, 1f)
+    // Snappy attack, graceful fall.
+    val punch by animateFloatAsState(sens, tween(55, easing = LinearEasing), label = "eqPunch")
     val inf = rememberInfiniteTransition(label = "eq")
     val w1 by inf.animateFloat(0.30f, 0.70f, infiniteRepeatable(tween(430, easing = LinearEasing), RepeatMode.Reverse), label = "w1")
     val w2 by inf.animateFloat(0.65f, 0.28f, infiniteRepeatable(tween(310, easing = LinearEasing), RepeatMode.Reverse), label = "w2")
     val w3 by inf.animateFloat(0.38f, 0.72f, infiniteRepeatable(tween(520, easing = LinearEasing), RepeatMode.Reverse), label = "w3")
     Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(12.dp)) {
         listOf(w1, w2, w3).forEach { wob ->
-            val frac = (wob * 0.45f + punch * 0.75f).coerceIn(0.22f, 1f)
+            val frac = (wob * 0.28f + punch * 0.9f).coerceIn(0.18f, 1f)
             Box(Modifier.width(2.dp).fillMaxHeight(frac).clip(RoundedCornerShape(1.dp)).background(Color(0xFFFA233B)))
         }
     }

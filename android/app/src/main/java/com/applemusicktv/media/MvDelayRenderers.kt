@@ -31,7 +31,12 @@ class DelayVideoRenderersFactory(
             override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
                 val p = super.getCurrentPositionUs(sourceEnded)
                 if (p == AudioSink.CURRENT_POSITION_NOT_SET) return p
-                return (p - offsetUsProvider()).coerceAtLeast(0)
+                val off = offsetUsProvider()
+                // No offset (not on Bluetooth) → report the true clock verbatim so the video
+                // renderer isn't chasing a shifted media clock. That chase was causing frame
+                // stutter/glitching on the common no-BT path.
+                if (off <= 0L) return p
+                return (p - off).coerceAtLeast(0)
             }
         }
     }
