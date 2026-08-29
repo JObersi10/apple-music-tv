@@ -98,12 +98,14 @@ fun CategoryScreen(
                         }
                     }
                 }
+                fun norm(s: String) = s.trim().removePrefix("Apple Music ").removePrefix("Apple ").trim().lowercase()
+                val pageTitleNorm = norm(state.title)
                 items(state.sections, key = { it.title }) { section ->
                     Column {
-                        // A single-shelf room (a "More" see-all page) names its shelf after the room,
-                        // so the heading would print twice — hide it when it dupes the page title or
-                        // when there's only the one shelf.
-                        if (state.sections.size > 1 && !section.title.trim().equals(state.title.trim(), ignoreCase = true)) {
+                        // A shelf named after the page itself (curator/room pages do this) would print
+                        // the title twice — hide the shelf header when it matches the page title after
+                        // normalising away the "Apple Music" prefix and case/whitespace.
+                        if (norm(section.title) != pageTitleNorm) {
                             Text(section.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
                                 color = Color.White, modifier = Modifier.padding(bottom = 10.dp, start = 8.dp))
                         }
