@@ -35,6 +35,7 @@ fun CategoryScreen(
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
     /** A nested curator/category tile (a genre/mood room lists apple-curators) opens another page. */
     onCuratorClick: (id: String) -> Unit = {},
+    onArtistClick: (id: String) -> Unit = {},
     /** Present for grouping pages (Music Videos) so video shelves can play in the video player. */
     playerVm: com.applemusicktv.ui.viewmodel.PlayerViewModel? = null,
     modifier: Modifier = Modifier,
@@ -100,8 +101,9 @@ fun CategoryScreen(
                 items(state.sections, key = { it.title }) { section ->
                     Column {
                         // A single-shelf room (a "More" see-all page) names its shelf after the room,
-                        // so the heading would print twice — show it once.
-                        if (!section.title.equals(state.title, ignoreCase = true)) {
+                        // so the heading would print twice — hide it when it dupes the page title or
+                        // when there's only the one shelf.
+                        if (state.sections.size > 1 && !section.title.trim().equals(state.title.trim(), ignoreCase = true)) {
                             Text(section.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
                                 color = Color.White, modifier = Modifier.padding(bottom = 10.dp, start = 8.dp))
                         }
@@ -115,11 +117,13 @@ fun CategoryScreen(
                                     val art = (v.artworkUrl ?: "").replace("{w}", "480").replace("{h}", "270").replace("{f}", "jpg")
                                     Surface(
                                         onClick = { playerVm.playVideos(section.videos, idx) },
-                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                                        // RectangleShape so the surface never clips the title/artist
+                                        // text below the thumbnail (a rounded surface rounded them off).
+                                        shape = ClickableSurfaceDefaults.shape(androidx.compose.ui.graphics.RectangleShape),
                                         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                                         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
                                     ) {
-                                        Column(Modifier.width(230.dp)) {
+                                        Column(Modifier.width(230.dp).padding(bottom = 8.dp)) {
                                             Box(Modifier.width(230.dp).height(129.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1A1A1A))) {
                                                 if (v.artworkUrl != null) AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                                             }
@@ -140,15 +144,22 @@ fun CategoryScreen(
                             items(section.albums, key = { it.id }) { dto ->
                                 val isPlaylist = dto.id.startsWith("pl.") || dto.id.startsWith("p.")
                                 val isCurator = dto.id.startsWith("ac-") || dto.id.startsWith("c-") || dto.id.startsWith("mr-")
+                                val isStation = dto.id.startsWith("ra.")
+                                val isArtist = dto.type == "artists" || dto.id.startsWith("r.")
+                                val isSong = dto.type == "songs"
                                 AlbumCard(
                                     album = Album(
                                         id = dto.id, title = dto.title, artistName = dto.artistName,
                                         artworkUrl = dto.artworkUrl, artworkBgColor = dto.artworkBgColor,
+                                        type = dto.type,
                                     ),
                                     size = 150,
                                     onClick = {
                                         when {
                                             isCurator  -> onCuratorClick(dto.id)
+                                            isStation  -> playerVm?.playStation(dto.id, (dto.artworkUrl ?: "").replace("{w}", "600").replace("{h}", "600").replace("{f}", "jpg"))
+                                            isArtist   -> onArtistClick(dto.id)
+                                            isSong     -> playerVm?.playSong(Album(id = dto.id, title = dto.title, artistName = dto.artistName, artworkUrl = dto.artworkUrl, artworkBgColor = dto.artworkBgColor, type = "songs"))
                                             isPlaylist -> onPlaylistClick(dto.id, dto.title, (dto.artworkUrl ?: "").replace("{w}", "500").replace("{h}", "500").replace("{f}", "jpg"))
                                             else       -> onAlbumClick(dto.id)
                                         }

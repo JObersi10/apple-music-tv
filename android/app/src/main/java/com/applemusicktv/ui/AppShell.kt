@@ -309,6 +309,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
                     onCuratorClick  = { navController.navigate(Screen.Category.route(it)) },
+                    onArtistClick   = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     playerVm        = playerVm,
                 )
             }

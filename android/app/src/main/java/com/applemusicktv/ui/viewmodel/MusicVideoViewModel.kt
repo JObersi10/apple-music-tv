@@ -81,11 +81,12 @@ class MusicVideoViewModel @Inject constructor(
     private val prefs = context.getSharedPreferences("mv_prefs", Context.MODE_PRIVATE)
     private var qualityHeight = prefs.getInt("quality_height", 1080)
     // HDCP ceiling learned from this display: Apple requires an active HDCP link for protected HD.
-    // When a tier fails with "Required output protections are not active" we cap here (persisted) so
-    // future videos start at a height this HDMI chain can actually show — no more fail-then-reload
-    // glitch on every play. Reset generously; a better display bumps it back up next launch only if
-    // the user raises quality again.
-    private var hdcpCap = prefs.getInt("hdcp_max_height_v3", 4320)
+    // When a tier fails with "Required output protections are not active" we cap here so the next
+    // video in THIS session starts at a height this HDMI chain can show (no fail-then-reload glitch
+    // every play). It is NOT persisted across launches: a persisted low cap trapped a good TV at
+    // 480p forever after the app had once run on a weak display. Each launch re-probes optimistically;
+    // a genuinely HDCP-limited display just re-learns with one glitch on the first HD play.
+    private var hdcpCap = 4320
     /** The height we actually request: the user's pick, clamped to what this display can decrypt. */
     private fun effHeight() = minOf(qualityHeight, hdcpCap)
 
@@ -344,8 +345,9 @@ class MusicVideoViewModel @Inject constructor(
                             // permanently lower quality.
                             hdcpCap = lower
                             if (isHdcp) {
-                                prefs.edit().putInt("hdcp_max_height_v3", hdcpCap).apply()
-                                Log.w("AMMV", "HDCP unavailable for ${failedAt}p → capping this display at ${lower}p (persisted)")
+                                // Session-only cap — NOT persisted (see the field comment): a persisted
+                                // low cap trapped a good TV at 480p forever. Re-probes next launch.
+                                Log.w("AMMV", "HDCP unavailable for ${failedAt}p → capping this session at ${lower}p")
                                 // Tell the user once why HD dropped — the display/HDMI link isn't
                                 // authenticating HDCP, so Apple blocks protected HD (not app-fixable).
                                 android.widget.Toast.makeText(
