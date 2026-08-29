@@ -148,6 +148,7 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - **··· menu**: Sleep Timer (15/30/45/60 min or End of Song), Beat Pulse (Normal 1×/Strong 2×/Insane 3.5×), Shuffle, Repeat (Off/All/One), Go to Artist, Go to Album. Settings items (Beat Pulse, Crossfade, Shuffle, Repeat) leave the menu open so the label flip is visible and cycling stays fast — only navigation and the sleep timer close it; Back dismisses.
 
 ## Library
+- **Left sidebar** (`SectionSidebar` in `LibraryScreen.kt`): vertical section nav — Playlists / Albums / Artists / Songs. Selected = red-tinted pill (`0x33FA233B`) with a red accent bar. Replaced an earlier top-tabs experiment (user wanted categories on the left, modernized). Sort bar + pins unchanged, still to the right of the sidebar.
 - Sort bar above content: SortField (DEFAULT/NAME/ARTIST/DATE) × SortDir (ASC/DESC), reversal applies to all fields incl. DEFAULT
 - Playlist cards have ▶ button on right side of name row; long-press to **pin** → pin floats to top (alphabetical among pins), pin icon overlay top-right. Pins persisted to `library_cache` SharedPreferences (`pinned_playlists` key, comma-separated IDs).
 - Play + Shuffle buttons at top of album/playlist track lists
