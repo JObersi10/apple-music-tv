@@ -219,7 +219,7 @@ fun DevMenuScreen(
             )
             Stepper(
                 label = "Extra offset", value = "${state.lyricsOffsetMs}ms",
-                sub = "On top of the built-in baseline. Negative = earlier, positive = later",
+                sub = "Applies to lyrics, beat AND music-video lip-sync. Negative = earlier, positive = later",
                 onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 50) },
                 onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 50) },
             )

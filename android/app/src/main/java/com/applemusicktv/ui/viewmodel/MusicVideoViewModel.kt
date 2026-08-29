@@ -76,9 +76,28 @@ class MusicVideoViewModel @Inject constructor(
     private val mutPrefs: com.applemusicktv.data.MutPreferences,
     private val appleClient: AppleDirectClient,
     private val videoQueue: com.applemusicktv.media.VideoQueue,
+    private val lyricsOffsetPrefs: com.applemusicktv.data.LyricsOffsetPreferences,
 ) : ViewModel() {
 
     private val prefs = context.getSharedPreferences("mv_prefs", Context.MODE_PRIVATE)
+
+    /** A/V-sync delay for the video, shared with the audio player's setting: the Bluetooth estimate
+     *  (when Automatic is on and a BT output is live) plus the user's extra offset. Read live per
+     *  frame so plugging BT in/out or nudging the offset applies instantly. Microseconds. */
+    private fun avVideoDelayUs(): Long {
+        val avAuto = context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
+            .getBoolean("av_auto", true)
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val btTypes = setOf(
+            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            android.media.AudioDeviceInfo.TYPE_BLE_HEADSET, android.media.AudioDeviceInfo.TYPE_BLE_SPEAKER,
+        )
+        val onBt = runCatching {
+            am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).any { it.type in btTypes }
+        }.getOrDefault(false)
+        val btDelta = if (onBt && avAuto) 350L else 0L
+        return (btDelta + lyricsOffsetPrefs.getOffset()).coerceAtLeast(0) * 1000L
+    }
     private var qualityHeight = prefs.getInt("quality_height", 1080)
     // HDCP ceiling learned from this display: Apple requires an active HDCP link for protected HD.
     // When a tier fails with "Required output protections are not active" we cap here so the next
@@ -305,6 +324,8 @@ class MusicVideoViewModel @Inject constructor(
                 }
                 trackSelector = selector
                 val exo = ExoPlayer.Builder(context)
+                    .setRenderersFactory(
+                        com.applemusicktv.media.DelayVideoRenderersFactory(context) { avVideoDelayUs() })
                     .setTrackSelector(selector)
                     .build()
                 exo.setMediaSource(source)
