@@ -50,19 +50,11 @@ fun LibraryScreen(
     var section by remember { mutableStateOf(LibrarySection.Playlists) }
     val state by vm.state.collectAsState()
 
-    Row(modifier = modifier.fillMaxSize()) {
-        // Sidebar
-        LazyColumn(
-            modifier = Modifier.width(190.dp).fillMaxHeight().background(Color(0xFF0D0D0D)),
-            contentPadding = PaddingValues(vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            items(LibrarySection.entries) { s ->
-                SidebarItem(s.label, s == section) { section = s }
-            }
-        }
+    Column(modifier = modifier.fillMaxSize()) {
+        // Top segmented tabs (Songs / Albums / Artists / Playlists) — replaces the old sidebar.
+        SectionTabs(section) { section = it }
 
-        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             val hasAnyData = state.playlists.isNotEmpty() || state.albums.isNotEmpty() ||
                 state.artists.isNotEmpty() || state.songs.isNotEmpty()
             when {
@@ -94,6 +86,47 @@ fun LibraryScreen(
                             LibrarySection.Artists -> ArtistList(vm.sortedArtists(), onArtistClick)
                             LibrarySection.Songs   -> SongList(vm.sortedSongs(), playerVm, onArtistClick, onAlbumClick)
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Top segmented tabs — a centered pill row matching the app's nav style. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SectionTabs(selected: LibrarySection, onSelect: (LibrarySection) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            colors = androidx.tv.material3.SurfaceDefaults.colors(containerColor = Color(0xE61C1C1E)),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                LibrarySection.entries.forEach { s ->
+                    val isSel = s == selected
+                    Surface(
+                        onClick = { onSelect(s) },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = if (isSel) Color.White else Color.Transparent,
+                            focusedContainerColor = if (isSel) Color.White else Color(0xFF2C2C2E),
+                        ),
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+                    ) {
+                        Text(
+                            text = s.label,
+                            fontSize = 13.sp,
+                            fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (isSel) Color.Black else Color(0xFF9A9A9A),
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 7.dp),
+                        )
                     }
                 }
             }

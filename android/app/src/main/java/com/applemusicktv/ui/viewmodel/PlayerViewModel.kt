@@ -1365,6 +1365,9 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
             if (songs.isNotEmpty()) playAlbum(songs)
+            // Radio-SHOW episodes are `stations` too, but they have no next-tracks song queue — they
+            // stream as a live-style HLS feed. Fall back to the live path so radio shows actually play.
+            else playLiveStation(stationId, stationArt)
         }
     }
 

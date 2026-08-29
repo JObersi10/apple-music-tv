@@ -646,6 +646,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                 // Waveform animates for video playback too, not just audio.
                 isPlaying = playerState.isPlaying || (videoActive && mvState.playing),
                 updateAvailable = pendingUpdate != null,
+                beatAnalyzer = playerVm.beatAnalyzer,
                 onSelect = { tab ->
                     selectedTab = tab
                     val route = when (tab) {

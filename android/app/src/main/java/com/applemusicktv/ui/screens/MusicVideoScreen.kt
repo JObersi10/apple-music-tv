@@ -179,7 +179,7 @@ fun MusicVideoScreen(
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (state.loading) CircularProgressIndicator(
+        if (state.loading || state.buffering) CircularProgressIndicator(
             color = Color.White, strokeWidth = 3.dp,
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 52.dp, bottom = 54.dp).size(26.dp),
         )

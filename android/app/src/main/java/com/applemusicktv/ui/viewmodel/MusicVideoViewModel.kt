@@ -9,6 +9,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
@@ -31,6 +32,8 @@ data class SubtitleOption(val label: String, val index: Int)
 
 data class MvUiState(
     val loading:  Boolean = true,
+    /** Mid-playback rebuffer (not the first load) — shows the same spinner. */
+    val buffering: Boolean = false,
     val error:    String? = null,
     val playing:  Boolean = false,
     val title:    String  = "",
@@ -327,6 +330,12 @@ class MusicVideoViewModel @Inject constructor(
                     .setRenderersFactory(
                         com.applemusicktv.media.DelayVideoRenderersFactory(context) { avVideoDelayUs() })
                     .setTrackSelector(selector)
+                    // Bigger buffer than the default so a slow proxy/WAN link rebuffers far less —
+                    // hold up to 60s, keep playing on 30s, resume after a stall with 5s buffered.
+                    .setLoadControl(
+                        DefaultLoadControl.Builder()
+                            .setBufferDurationsMs(30_000, 60_000, 2_500, 5_000)
+                            .build())
                     .build()
                 exo.setMediaSource(source)
                 if (seekMs > 0) exo.seekTo(seekMs)   // resume position (quality change / detach-attach swap)
@@ -343,7 +352,10 @@ class MusicVideoViewModel @Inject constructor(
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         if (state == Player.STATE_READY) {
-                            _state.value = _state.value.copy(loading = false, durationMs = exo.duration.coerceAtLeast(0))
+                            _state.value = _state.value.copy(loading = false, buffering = false, durationMs = exo.duration.coerceAtLeast(0))
+                        } else if (state == Player.STATE_BUFFERING) {
+                            // Mid-playback rebuffer — show the same spinner as the first load.
+                            if (!_state.value.loading) _state.value = _state.value.copy(buffering = true)
                         } else if (state == Player.STATE_ENDED) {
                             // Auto-advance through the queue, exactly like the audio player.
                             onRequestNext()   // auto-advance through the shared queue

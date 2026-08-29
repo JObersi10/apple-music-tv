@@ -23,14 +23,20 @@ import com.applemusicktv.ui.navigation.TopNavTab
 import com.applemusicktv.ui.components.Glyph
 import com.applemusicktv.ui.components.Icon
 
+/** Beat-reactive 3-bar equalizer beside the Now Playing tab. A gentle per-bar wobble keeps it alive
+ *  between beats; the live [BeatAnalyzer] energy punches all three up on each beat (Apple-style). */
 @Composable
-private fun EqualizerDot() {
+private fun EqBars(beatAnalyzer: com.applemusicktv.media.BeatAnalyzer?) {
+    val energy by (beatAnalyzer?.energy?.collectAsState() ?: remember { mutableStateOf(0f) })
+    // Smooth the punch so bars fall gracefully rather than snapping.
+    val punch by animateFloatAsState(energy.coerceIn(0f, 1f), tween(90, easing = LinearEasing), label = "eqPunch")
     val inf = rememberInfiniteTransition(label = "eq")
-    val h1 by inf.animateFloat(0.3f, 1f, infiniteRepeatable(tween(400, easing = LinearEasing), RepeatMode.Reverse), label = "h1")
-    val h2 by inf.animateFloat(1f, 0.3f, infiniteRepeatable(tween(300, easing = LinearEasing), RepeatMode.Reverse), label = "h2")
-    val h3 by inf.animateFloat(0.5f, 1f, infiniteRepeatable(tween(500, easing = LinearEasing), RepeatMode.Reverse), label = "h3")
+    val w1 by inf.animateFloat(0.30f, 0.70f, infiniteRepeatable(tween(430, easing = LinearEasing), RepeatMode.Reverse), label = "w1")
+    val w2 by inf.animateFloat(0.65f, 0.28f, infiniteRepeatable(tween(310, easing = LinearEasing), RepeatMode.Reverse), label = "w2")
+    val w3 by inf.animateFloat(0.38f, 0.72f, infiniteRepeatable(tween(520, easing = LinearEasing), RepeatMode.Reverse), label = "w3")
     Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(12.dp)) {
-        listOf(h1, h2, h3).forEach { frac ->
+        listOf(w1, w2, w3).forEach { wob ->
+            val frac = (wob * 0.45f + punch * 0.75f).coerceIn(0.22f, 1f)
             Box(Modifier.width(2.dp).fillMaxHeight(frac).clip(RoundedCornerShape(1.dp)).background(Color(0xFFFA233B)))
         }
     }
@@ -43,6 +49,7 @@ fun TopNavBar(
     onSelect: (TopNavTab) -> Unit,
     isPlaying: Boolean = false,
     updateAvailable: Boolean = false,
+    beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null,
     modifier: Modifier = Modifier,
 ) {
     var isFocused by remember { mutableStateOf(false) }
@@ -119,7 +126,7 @@ fun TopNavBar(
                                 )
                             }
                             if (tab == TopNavTab.NowPlaying && isPlaying && !isSelected) {
-                                EqualizerDot()
+                                EqBars(beatAnalyzer)
                             }
                         }
                     }
