@@ -27,7 +27,7 @@ import com.applemusicktv.data.model.Album
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: () -> Unit = {}, modifier: Modifier = Modifier) {
+fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: () -> Unit = {}, motionEnabled: Boolean = true, modifier: Modifier = Modifier) {
     // Motion artwork (Playlists Made for You) plays while the card is focused — see MotionArtwork
     // for why it isn't five decoders at once.
     var focused by remember { mutableStateOf(false) }
@@ -35,7 +35,7 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
     // Lazily fetching + decoding a motion video on EVERY focused card kept a HEVC decoder running
     // continuously as you browsed — it saturated this Fire TV and made the whole app janky. One
     // focused decoder on the one animated shelf is what the app shipped smooth with.
-    val motionUrl = album.motionUrl
+    val motionUrl = if (motionEnabled) album.motionUrl else null
     Card(
         onClick  = onClick,
         onLongClick = onLongClick,

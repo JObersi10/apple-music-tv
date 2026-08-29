@@ -51,12 +51,25 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
 
     private fun edItemToAlbumDto(it: EdItem): AlbumDto? {
         val a = it.attributes ?: return null
+        // Curators (genre/mood/decade tiles, radio shows) carry editorial artwork, not `artwork`,
+        // and MUST be id-prefixed so the Category screen opens them as a nested page (not an album).
+        if (it.type == "apple-curators" || it.type == "curators") {
+            val ea = a.editorialArtwork
+            val curUrl = (ea?.subscriptionCover ?: ea?.brandLogo)?.url ?: a.artwork?.url ?: return null
+            val name = (a.name ?: "Unknown").replace(Regex("^Apple Music (?=\\S)"), "").replace(Regex("^Apple (?=\\S)"), "")
+            return AlbumDto(
+                id = (if (it.type == "apple-curators") "ac-" else "c-") + it.id,
+                title = name, artistName = "", artworkUrl = curUrl, type = "curators",
+                artworkBgColor = null, releaseDate = null,
+            )
+        }
         val url = a.artwork?.url ?: return null   // require artwork, same as the proxy
         return AlbumDto(
             id             = it.id,
             title          = a.name ?: "Unknown",
             artistName     = a.artistName ?: a.curatorName ?: "",
             artworkUrl     = url,
+            type           = it.type ?: "albums",
             artworkBgColor = a.artwork.bgColor,
             releaseDate    = null,
         )

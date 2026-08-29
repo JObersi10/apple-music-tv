@@ -62,14 +62,15 @@ fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit) {
         shape = CardDefaults.shape(RoundedCornerShape(9.dp)),
     ) {
         Column(Modifier.width(width.dp).padding(horizontal = 2.dp)) {
-            // Text block ABOVE the image.
-            Text(spotlightLabel(album), color = Color(0xFF9A9AA0), fontSize = 10.sp,
-                fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp, maxLines = 1)
-            Spacer(Modifier.height(3.dp))
-            Text(album.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.2).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (album.artistName.isNotBlank()) {
-                Text(album.artistName, color = Color(0xFF8A8A8E), fontSize = 12.sp,
+            // Fixed-height text block so every card's image starts at the same Y — radio/curator
+            // cards have no artist line and were misaligning the row.
+            Column(Modifier.height(58.dp)) {
+                Text(spotlightLabel(album), color = Color(0xFF9A9AA0), fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp, maxLines = 1)
+                Spacer(Modifier.height(3.dp))
+                Text(album.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.2).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(album.artistName.ifBlank { " " }, color = Color(0xFF8A8A8E), fontSize = 12.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 1.dp))
             }
             Spacer(Modifier.height(9.dp))
@@ -104,7 +105,7 @@ fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit) {
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun GradientCard(album: Album, width: Int = 250, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
+fun GradientCard(album: Album, width: Int = 250, onClick: () -> Unit, onLongClick: () -> Unit = {}, motionEnabled: Boolean = true) {
     var focused by remember { mutableStateOf(false) }
     val tint = bgColor(album.artworkBgColor)
     Card(
@@ -123,7 +124,7 @@ fun GradientCard(album: Album, width: Int = 250, onClick: () -> Unit, onLongClic
             if (album.artworkUrl != null) {
                 AsyncImage(model = album.artworkUrl(width * 2), contentDescription = album.title,
                     contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                album.motionUrl?.let { mu -> MotionArtwork(mu, play = focused, modifier = Modifier.fillMaxSize()) }
+                if (motionEnabled) album.motionUrl?.let { mu -> MotionArtwork(mu, play = focused, modifier = Modifier.fillMaxSize()) }
             }
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                 0.4f to Color.Transparent,

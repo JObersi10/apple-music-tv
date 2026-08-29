@@ -32,6 +32,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by vm.state.collectAsState()
+    val lowPower = playerVm.state.collectAsState().value.lowPowerMode
 
     if (state.isLoading && state.sections.isEmpty()) {
         Box(modifier.fillMaxSize()) { com.applemusicktv.ui.components.ShelfSkeleton() }
@@ -67,7 +68,7 @@ fun HomeScreen(
         items(state.sections, key = { it.title }) { section ->
             // The hero row (a recommendation, never Recently Played) is chosen + styled server-side
             // and on the direct path, so just render whatever style the section carries.
-            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick)
+            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick, motionEnabled = !lowPower)
         }
     }
 }
@@ -79,6 +80,7 @@ private fun ContentRow(
     onAlbumClick: (String) -> Unit,
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
     onCategoryClick: (String) -> Unit,
+    motionEnabled: Boolean = true,
 ) {
     val openCard: (Album) -> Unit = { album ->
         val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
@@ -106,6 +108,7 @@ private fun ContentRow(
                         album = album, size = 210,
                         onClick = { openCard(album) },
                         onLongClick = { if (album.id.startsWith("pl.") || album.id.startsWith("p.")) playerVm.shufflePlayPlaylist(album.id) },
+                        motionEnabled = motionEnabled,
                     )
                 }
             }
@@ -127,6 +130,7 @@ private fun ContentRow(
                         album = album, width = 250,
                         onClick = { openCard(album) },
                         onLongClick = { if (album.id.startsWith("pl.") || album.id.startsWith("p.")) playerVm.shufflePlayPlaylist(album.id) },
+                        motionEnabled = motionEnabled,
                     )
                 }
             }
@@ -165,6 +169,7 @@ private fun ContentRow(
                     onLongClick = {
                         if (isPlaylist) playerVm.shufflePlayPlaylist(album.id)
                     },
+                    motionEnabled = motionEnabled,
                 )
             }
         }
