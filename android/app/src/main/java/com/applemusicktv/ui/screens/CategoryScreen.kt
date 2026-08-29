@@ -20,17 +20,23 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.Text
+import androidx.tv.material3.Surface
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.ExperimentalTvMaterial3Api
 import com.applemusicktv.data.model.Album
 import com.applemusicktv.ui.components.AlbumCard
 import com.applemusicktv.ui.viewmodel.CategoryViewModel
 
 /** Editorial category page (Apple "multiroom") — a title, a blurb, and several playlist/album shelves. */
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun CategoryScreen(
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
     /** A nested curator/category tile (a genre/mood room lists apple-curators) opens another page. */
     onCuratorClick: (id: String) -> Unit = {},
+    /** Present for grouping pages (Music Videos) so video shelves can play in the video player. */
+    playerVm: com.applemusicktv.ui.viewmodel.PlayerViewModel? = null,
     modifier: Modifier = Modifier,
 ) {
     val vm: CategoryViewModel = hiltViewModel()
@@ -98,6 +104,33 @@ fun CategoryScreen(
                         if (!section.title.equals(state.title, ignoreCase = true)) {
                             Text(section.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
                                 color = Color.White, modifier = Modifier.padding(bottom = 10.dp, start = 8.dp))
+                        }
+                        if (section.videos.isNotEmpty() && playerVm != null) {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                            ) {
+                                items(section.videos.size) { idx ->
+                                    val v = section.videos[idx]
+                                    val art = (v.artworkUrl ?: "").replace("{w}", "480").replace("{h}", "270").replace("{f}", "jpg")
+                                    Surface(
+                                        onClick = { playerVm.playVideos(section.videos, idx) },
+                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                                        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+                                    ) {
+                                        Column(Modifier.width(230.dp)) {
+                                            Box(Modifier.width(230.dp).height(129.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1A1A1A))) {
+                                                if (v.artworkUrl != null) AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                            }
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(v.title, fontSize = 12.5.sp, color = Color(0xFFF2F2F5), maxLines = 1, fontWeight = FontWeight.SemiBold)
+                                            Text(v.artistName, fontSize = 10.5.sp, color = Color(0xFF8A8A8E), maxLines = 1)
+                                        }
+                                    }
+                                }
+                            }
+                            return@Column
                         }
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),

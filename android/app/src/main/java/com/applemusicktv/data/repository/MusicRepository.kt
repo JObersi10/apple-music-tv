@@ -170,6 +170,11 @@ class MusicRepository @Inject constructor(
         if (!useProxy) runCatching { direct.getMultiRoom(id) }
         else runCatching { api.getMultiRoom(id) }
 
+    /** A catalog grouping page (e.g. Music Videos = grouping 34). */
+    suspend fun getGrouping(id: String) =
+        if (!useProxy) runCatching { direct.getGrouping(id) }
+        else runCatching { api.getGrouping(id) }
+
     // Genre/mood/decade tile grid (each tile is a curator → category page).
     suspend fun getCategories(): Result<List<CategoryGroup>> =
         if (!useProxy) runCatching { direct.getCategories().map { it.toGroup() } }

@@ -427,15 +427,19 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         item {
                             Text("More to Explore", fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
                                 color = Color.White, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+                            // Triple(label, id, kind): rooms open editorial rooms, grouping opens a
+                            // catalog grouping (Music Videos), apple-curator opens a curator page.
                             val links = listOf(
-                                "Charts" to "6503108310",
-                                "Browse by Genre" to "6456176470",
-                                "Moods & Activities" to "6456176472",
-                                "Decades" to "6456176471",
+                                Triple("Music Videos", "34", "grouping"),
+                                Triple("Behind the Songs", "1554941247", "apple-curator"),
+                                Triple("Charts", "6503108310", "room"),
+                                Triple("Browse by Genre", "6456176470", "room"),
+                                Triple("Moods & Activities", "6456176472", "room"),
+                                Triple("Decades", "6456176471", "room"),
                             )
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                links.forEach { (label, roomId) ->
-                                    ExploreLink(label) { onCuratorClick(roomId, "room") }
+                                links.forEach { (label, id, kind) ->
+                                    ExploreLink(label) { onCuratorClick(id, kind) }
                                 }
                             }
                         }

@@ -180,6 +180,38 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         )
     }
 
+    /** A catalog grouping (e.g. Music Videos = grouping 34). Video shelves become `videos` sections
+     *  so CategoryScreen plays them in the video player; everything else is album/curator cards. */
+    suspend fun getGrouping(id: String): MultiRoomDto {
+        val g = api.edGrouping(storefront, id).data.firstOrNull() ?: return MultiRoomDto(id = id)
+        val tab = g.relationships?.tabs?.data?.firstOrNull()
+        val sections = (tab?.relationships?.children?.data ?: emptyList()).mapNotNull { k ->
+            val kind = k.attributes?.editorialElementKind
+            if (kind != "326" && kind != "327") return@mapNotNull null
+            val title = k.attributes?.name ?: k.attributes?.title ?: return@mapNotNull null
+            val contents = k.relationships?.contents?.data ?: emptyList()
+            val types = contents.map { it.type }.toSet()
+            if (types.isNotEmpty() && types.all { it == "music-videos" || it == "uploaded-videos" }) {
+                val videos = contents.mapNotNull(::edItemToVideo)
+                if (videos.isEmpty()) null else HomeSection(title, videos = videos)
+            } else {
+                val albums = contents.mapNotNull(::edItemToAlbumDto)
+                if (albums.isEmpty()) null else HomeSection(title, albums)
+            }
+        }
+        return MultiRoomDto(id = id, title = g.attributes?.title ?: g.attributes?.name ?: "", sections = sections)
+    }
+
+    private fun edItemToVideo(it: EdItem): com.applemusicktv.data.network.SongDto? {
+        val a = it.attributes ?: return null
+        val url = a.artwork?.url ?: return null
+        return com.applemusicktv.data.network.SongDto(
+            id = it.id, type = "music-videos", title = a.name ?: "Unknown",
+            artistName = a.artistName ?: "", albumName = "", durationMs = 0L,
+            artworkUrl = url, artworkBgColor = a.artwork.bgColor, previewUrl = null, previewHlsUrl = null,
+        )
+    }
+
     suspend fun getMultiRoom(id: String): MultiRoomDto {
         val room = api.edMultiRoom(storefront, id).data.firstOrNull()
             ?: return MultiRoomDto(id = id)

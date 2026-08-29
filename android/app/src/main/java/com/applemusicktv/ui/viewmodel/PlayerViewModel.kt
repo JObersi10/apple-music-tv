@@ -1311,6 +1311,10 @@ class PlayerViewModel @Inject constructor(
         if (song.artistId == null || song.albumId == null) enrichSongIds(song.id)
     }
 
+    /** Play a shelf of video DTOs (music-videos / interviews) in the video player. */
+    fun playVideos(dtos: List<com.applemusicktv.data.network.SongDto>, startIndex: Int = 0) =
+        playAlbum(dtos.map(repo::songFromDto), startIndex)
+
     fun playAlbum(songs: List<Song>, startIndex: Int = 0, useFullStream: Boolean = hasMUT(), shuffle: Boolean = false) {
         if (songs.isEmpty()) return
         val stack = Thread.currentThread().stackTrace

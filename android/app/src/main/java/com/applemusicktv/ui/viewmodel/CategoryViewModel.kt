@@ -33,7 +33,9 @@ class CategoryViewModel @Inject constructor(
     private val isMultiRoom = rawId.startsWith("mr-")
     // "room-<id>" is a plain editorial room — the "More" (see all) page at the end of a Browse shelf.
     private val isRoom = rawId.startsWith("room-")
-    private val realId = rawId.removePrefix("ac-").removePrefix("c-").removePrefix("mr-").removePrefix("room-")
+    // "grouping-<id>" is a catalog grouping page (e.g. Music Videos = grouping 34).
+    private val isGrouping = rawId.startsWith("grouping-")
+    private val realId = rawId.removePrefix("ac-").removePrefix("c-").removePrefix("mr-").removePrefix("room-").removePrefix("grouping-")
     private val _state = MutableStateFlow(CategoryUiState())
     val state: StateFlow<CategoryUiState> = _state
 
@@ -43,6 +45,7 @@ class CategoryViewModel @Inject constructor(
         (when {
             isRoom      -> repo.getRoom(realId)
             isMultiRoom -> repo.getMultiRoom(realId)
+            isGrouping  -> repo.getGrouping(realId)
             else        -> repo.getCurator(realId, isApple)
         })
             .onSuccess { d ->

@@ -166,7 +166,7 @@ browse.get("/curator/:id", async (c) => {
     // Rich curators (e.g. Tomorrowland Live Sets) hang their content off an editorial
     // "grouping" — a set of named shelves (2026, 2025, …). Expand that when present;
     // otherwise fall back to the curator's flat playlists relationship (e.g. Formula 1).
-    let sections: Array<{ title: string; albums: any[] }> = [];
+    let sections: Array<{ title: string; albums?: any[]; videos?: any[] }> = [];
     const groupingId = cur.relationships?.grouping?.data?.[0]?.id;
     if (groupingId) {
       sections = await groupingSections(sf, groupingId, mut);
@@ -194,6 +194,50 @@ const CATEGORY_ROOMS: Array<{ title: string; room: string }> = [
   { title: "Moods & Activities", room: "6456176472" },
   { title: "Decades",           room: "6456176471" },
 ]
+// A catalog GROUPING page (e.g. Music Videos = grouping 34). Its default tab holds shelves of
+// music-videos, uploaded-videos (interviews), video playlists and curators. Returned in the same
+// MultiRoomDto shape as a curator page so CategoryScreen renders it — video shelves use `videos`.
+browse.get("/grouping/:id", async (c) => {
+  const id = c.req.param("id");
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  const sf = getStorefront() || "us";
+  try {
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/groupings/${id}`, {
+      headers: hdrs(mut),
+      params: { include: "tabs", extend: "editorialArtwork", "art[url]": "f", "limit[contents]": 24, l: "en-US", platform: "web" },
+    });
+    const g = res.data?.data?.[0];
+    const tab = g?.relationships?.tabs?.data?.[0];
+    const kids: any[] = tab?.relationships?.children?.data ?? [];
+    const sections: Array<{ title: string; albums?: any[]; videos?: any[] }> = [];
+    for (const k of kids) {
+      const attr = k.attributes ?? {};
+      if (attr.editorialElementKind !== "326" && attr.editorialElementKind !== "327") continue;
+      const title: string = attr.name ?? attr.title ?? "";
+      if (!title) continue;
+      const contents: any[] = k.relationships?.contents?.data ?? [];
+      if (!contents.length) continue;
+      const types = new Set(contents.map((it: any) => it.type));
+      if ([...types].every((t) => t === "music-videos" || t === "uploaded-videos")) {
+        const videos = contents.map(normaliseSong).filter((v: any) => v.artworkUrl);
+        if (videos.length) sections.push({ title, videos });
+        continue;
+      }
+      const albums = contents.map((it: any) => {
+        if (it.type === "music-videos" || it.type === "uploaded-videos" || it.type === "songs") return songCard(it);
+        if (it.type === "playlists") return playlistCard(it);
+        if (it.type === "apple-curators" || it.type === "curators") return curatorCard(it);
+        return itemFromRaw(it);
+      }).filter(Boolean);
+      if (albums.length) sections.push({ title, albums });
+    }
+    return c.json({ id, title: g?.attributes?.title ?? g?.attributes?.name ?? "", description: null, artworkUrl: null, sections });
+  } catch (e: any) {
+    console.warn("[browse] grouping failed:", e?.response?.status, e?.message);
+    return c.json({ id, title: "", sections: [] });
+  }
+});
+
 browse.get("/categories", async (c) => {
   const mut = c.req.header("X-Music-User-Token") || getMUT();
   const sf = getStorefront() || "us";
@@ -229,7 +273,7 @@ browse.get("/categories", async (c) => {
 
 // An editorial grouping → its default tab's children are named content shelves.
 // Shelf title is `attributes.name` (NOT `title` — that field is empty here).
-async function groupingSections(sf: string, groupingId: string, mut?: string): Promise<Array<{ title: string; albums: any[] }>> {
+async function groupingSections(sf: string, groupingId: string, mut?: string): Promise<Array<{ title: string; albums?: any[]; videos?: any[] }>> {
   try {
     const res = await axios.get(`${APPLE}/v1/editorial/${sf}/groupings/${groupingId}`, {
       headers: hdrs(mut),
@@ -243,7 +287,18 @@ async function groupingSections(sf: string, groupingId: string, mut?: string): P
       const kind = a.editorialElementKind;
       if (kind !== "326" && kind !== "345") continue;
       const title = a.name ?? a.title;
-      const albums = (k.relationships?.contents?.data ?? []).map(itemFromRaw).filter(Boolean);
+      const contents: any[] = k.relationships?.contents?.data ?? [];
+      const types = new Set(contents.map((it: any) => it.type));
+      if (contents.length && [...types].every((t) => t === "music-videos" || t === "uploaded-videos")) {
+        const videos = contents.map(normaliseSong).filter((v: any) => v.artworkUrl);
+        if (title && videos.length) out.push({ title, videos } as any);
+        continue;
+      }
+      const albums = contents.map((it: any) =>
+        (it.type === "music-videos" || it.type === "uploaded-videos" || it.type === "songs") ? songCard(it)
+          : (it.type === "playlists") ? playlistCard(it)
+          : (it.type === "apple-curators" || it.type === "curators") ? curatorCard(it)
+          : itemFromRaw(it)).filter(Boolean);
       if (title && albums.length) out.push({ title, albums });
     }
     return out;
@@ -339,14 +394,14 @@ browse.get("/", async (c) => {
       // matching music.apple.com/us/room/6503108310). Sent so the row can end in a "More" card.
       const roomId: string | undefined = k.id;
 
-      if ([...types].every((t) => t === "music-videos")) {
+      if ([...types].every((t) => t === "music-videos" || t === "uploaded-videos")) {
         const videos = contents.map(normaliseSong).filter((v: any) => v.artworkUrl);
         if (videos.length) sections.push({ title, videos, roomId });
         continue;
       }
 
       const albums = contents.map((it: any) => {
-        if (it.type === "songs" || it.type === "music-videos") return songCard(it);
+        if (it.type === "songs" || it.type === "music-videos" || it.type === "uploaded-videos") return songCard(it);
         if (it.type === "playlists") return playlistCard(it);
         return itemFromRaw(it);
       }).filter(Boolean);

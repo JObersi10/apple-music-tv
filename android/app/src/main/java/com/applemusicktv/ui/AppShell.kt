@@ -309,6 +309,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
                     onCuratorClick  = { navController.navigate(Screen.Category.route(it)) },
+                    playerVm        = playerVm,
                 )
             }
             composable(Screen.Library.route) {
@@ -335,6 +336,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                             "multiroom"     -> "mr-"
                             "apple-curator" -> "ac-"
                             "room"          -> "room-"
+                            "grouping"      -> "grouping-"
                             else            -> "c-"
                         }
                         navController.navigate(Screen.Category.route(prefix + id))

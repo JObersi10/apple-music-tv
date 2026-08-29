@@ -276,14 +276,14 @@ class DirectBrowseSource @Inject constructor(
                 // the same id as music.apple.com/us/room/6503108310). Carried so the row can end in a
                 // "More" card that opens the full room.
                 val roomId = kk["id"] as? String
-                if (types.isNotEmpty() && types.all { it == "music-videos" }) {
+                if (types.isNotEmpty() && types.all { it == "music-videos" || it == "uploaded-videos" }) {
                     val videos = maps.mapNotNull(::videoCard)
                     if (videos.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, videos = videos, roomId = roomId)
                     continue
                 }
                 val albums = maps.mapNotNull { m ->
                     when (m["type"] as? String) {
-                        "songs", "music-videos" -> songCard(m)
+                        "songs", "music-videos", "uploaded-videos" -> songCard(m)
                         else -> itemFromRaw(m)   // albums + playlists (playlist id prefix routes correctly)
                     }
                 }

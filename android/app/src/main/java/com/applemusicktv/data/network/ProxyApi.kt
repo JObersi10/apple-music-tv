@@ -269,6 +269,9 @@ interface ProxyApi {
     @GET("api/browse/multiroom/{id}")
     suspend fun getMultiRoom(@Path("id") id: String): MultiRoomDto
 
+    @GET("api/browse/grouping/{id}")
+    suspend fun getGrouping(@Path("id") id: String): MultiRoomDto
+
     @GET("api/browse/categories")
     suspend fun getCategories(): CategoriesResponse
 
