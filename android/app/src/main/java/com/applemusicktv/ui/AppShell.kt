@@ -200,9 +200,12 @@ fun AppShell(modifier: Modifier = Modifier) {
             // Menu), pop back to that instance so it keeps its state instead of
             // pushing a second copy on top and growing the back stack.
             if (!navController.popBackStack(Screen.NowPlaying.route, inclusive = false)) {
+                // Save the tab we're leaving (with its playlist/artist/etc.) so returning to it
+                // restores that page — same per-tab-back-stack behaviour as the nav bar.
                 navController.navigate(Screen.NowPlaying.route) {
-                    popUpTo(Screen.Home.route)
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                     launchSingleTop = true
+                    restoreState = true
                 }
             }
             navVm.consumeNowPlayingNavigation()
