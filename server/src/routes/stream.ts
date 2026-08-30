@@ -266,9 +266,20 @@ async function getStreamParams(songId: string, mut: string) {
 
   const WEB_PLAYBACK = "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback";
 
-  const bodies = isLibrary
-    ? [{ universalLibraryId: songId }, { salableAdamId: numericId }]
-    : [{ salableAdamId: numericId }, { universalLibraryId: songId }];
+  // For a library row, the salableAdamId fallback needs the REAL catalog id — stripping
+  // the "i." prefix just leaves the library suffix (not numeric), so the fallback never
+  // worked. Resolve the catalog id from the library song's catalog relationship. This is
+  // what recovers dead library rows (failureType 1010, NoSalableAdamId) whose catalog
+  // copy still plays.
+  const bodies: Array<Record<string, string>> = [];
+  if (isLibrary) {
+    bodies.push({ universalLibraryId: songId });
+    const catId = await resolveCatalogId(songId, mut);
+    if (catId && catId !== songId) bodies.push({ salableAdamId: catId });
+  } else {
+    bodies.push({ salableAdamId: numericId });
+    bodies.push({ universalLibraryId: songId });
+  }
 
   let entry: any;
   for (const bodyBase of bodies) {

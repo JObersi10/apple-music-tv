@@ -653,9 +653,8 @@ class PlayerViewModel @Inject constructor(
             val wasPlaying = player.playWhenReady
             val song = _state.value.currentSong?.title ?: "?"
             webServer.addLog("ERR", "${error.errorCodeName} pos=${pos}ms song=$song cfade=$crossfadeInProgress cause=${error.cause?.message}")
-            // Silence looks like a crash otherwise — say why we skipped.
-            toast(if (serverPrefs.serverReachable) "Couldn't play \"$song\" — skipping"
-                  else "Can't reach the server")
+            // NOTE: each branch below owns its own toast — the generic "skipping" one lives on the
+            // final give-up path so a single failure never fires two toasts (404 / proxy-retry did).
             val gone = error.errorCode ==
                 androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS &&
                 (error.cause?.message?.contains("404") == true)
@@ -698,6 +697,9 @@ class PlayerViewModel @Inject constructor(
                 // cfExo is audible; keep UI showing playing so it doesn't flash paused
                 _state.update { it.copy(isPlaying = true) }
             } else {
+                // Final give-up: neither standalone retry nor a 404 owned this — say why we skipped.
+                toast(if (serverPrefs.serverReachable) "Couldn't play \"$song\" — skipping"
+                      else "Can't reach the server")
                 advanceQueue()
             }
         }
