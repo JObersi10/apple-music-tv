@@ -251,7 +251,9 @@ fun MusicVideoScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            if (!state.playing && !scrubbing) com.applemusicktv.ui.components.Icon(
+                            // Pause glyph only on real user-pause; spinner only on buffer. Both can
+                            // show together (paused mid-buffer), never a pause glyph for a plain load.
+                            if (state.paused && !scrubbing) com.applemusicktv.ui.components.Icon(
                                 com.applemusicktv.ui.components.Glyph.PAUSE, size = 12.dp, color = Color.White)
                             if (state.buffering) CircularProgressIndicator(
                                 color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(13.dp))

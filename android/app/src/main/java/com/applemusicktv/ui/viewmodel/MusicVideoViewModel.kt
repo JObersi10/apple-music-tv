@@ -36,6 +36,9 @@ data class MvUiState(
     val buffering: Boolean = false,
     val error:    String? = null,
     val playing:  Boolean = false,
+    /** User intent (playWhenReady=false) — distinct from `playing`, which also drops
+     *  to false during a buffer. Only THIS drives the paused glyph. */
+    val paused:   Boolean = false,
     val title:    String  = "",
     val artist:   String  = "",
     val positionMs: Long   = 0,
@@ -345,9 +348,14 @@ class MusicVideoViewModel @Inject constructor(
                 if (seekMs > 0) exo.seekTo(seekMs)   // resume position (quality change / detach-attach swap)
                 exo.prepare()
                 exo.playWhenReady = playWhenReady
+                _state.value = _state.value.copy(paused = !playWhenReady)
                 exo.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _state.value = _state.value.copy(playing = isPlaying)
+                    }
+                    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                        // User intent, not buffer state — this is what the paused glyph keys off.
+                        _state.value = _state.value.copy(paused = !playWhenReady)
                     }
                     override fun onVideoSizeChanged(vs: androidx.media3.common.VideoSize) {
                         // Show the resolution actually decoding, not the tier we asked for (HDCP can
