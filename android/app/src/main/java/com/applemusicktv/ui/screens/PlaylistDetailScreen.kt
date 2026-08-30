@@ -52,14 +52,25 @@ fun PlaylistDetailScreen(
 
     LaunchedEffect(playlistId) { vm.load(playlistId, artworkUrl) }
 
-    var sort by remember { mutableStateOf(PlaylistSort.DEFAULT) }
-    var descending by remember { mutableStateOf(false) }
+    // Sort is remembered PER PLAYLIST (keyed by id) in SharedPreferences.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sortPrefs = remember { context.getSharedPreferences("playlist_sort", android.content.Context.MODE_PRIVATE) }
+    var sort by remember(playlistId) {
+        mutableStateOf(
+            sortPrefs.getString("f_$playlistId", null)
+                ?.let { runCatching { PlaylistSort.valueOf(it) }.getOrNull() } ?: PlaylistSort.DEFAULT
+        )
+    }
+    var descending by remember(playlistId) { mutableStateOf(sortPrefs.getBoolean("d_$playlistId", false)) }
     var showSortDialog by remember { mutableStateOf(false) }
 
     if (showSortDialog) {
         PlaylistSortDialog(
             current = sort, descending = descending,
-            onPick = { f, desc -> sort = f; descending = desc },
+            onPick = { f, desc ->
+                sort = f; descending = desc
+                sortPrefs.edit().putString("f_$playlistId", f.name).putBoolean("d_$playlistId", desc).apply()
+            },
             onDismiss = { showSortDialog = false },
         )
     }

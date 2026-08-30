@@ -165,26 +165,22 @@ private fun SortBar(
     val dirArrow = if (currentDir == com.applemusicktv.ui.viewmodel.SortDir.ASC) "↑" else "↓"
     var showDialog by remember { mutableStateOf(false) }
 
+    // Round ⇅ sort button, right-aligned — matches the playlist detail's sort control.
     Row(
         modifier = Modifier.fillMaxWidth().background(Color(0xFF0A0A0A)).padding(horizontal = 32.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Surface(
             onClick = { showDialog = true },
-            shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
+            shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
             colors = ClickableSurfaceDefaults.colors(
-                containerColor = Color(0xFF1E1E1E), focusedContainerColor = Color(0xFF2A2A2A),
+                containerColor = Color(0xFF2A2A2C), focusedContainerColor = Color.White,
             ),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
         ) {
-            Row(
-                Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("Sort", fontSize = 12.sp, color = Color(0xFF9A9A9A))
-                Text("$curLabel $dirArrow", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                Text("⇅", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
     }
