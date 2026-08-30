@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -69,7 +70,7 @@ fun LibraryScreen(
                     Text("Error: ${state.error}", color = Color(0xFFFF3B30), fontSize = 14.sp)
                 }
                 else -> Column(Modifier.fillMaxSize()) {
-                    SortBar(section, state.sort.field, state.sort.dir.name) { vm.setSort(it) }
+                    SortBar(section, state.sort.field, state.sort.dir) { f, d -> vm.setSort(f, d) }
                     Box(Modifier.weight(1f)) {
                         when (section) {
                             LibrarySection.Playlists -> {
@@ -151,8 +152,8 @@ private fun SectionSidebar(selected: LibrarySection, onSelect: (LibrarySection) 
 private fun SortBar(
     section: LibrarySection,
     currentField: SortField,
-    currentDir: String,
-    onSort: (SortField) -> Unit,
+    currentDir: com.applemusicktv.ui.viewmodel.SortDir,
+    onSort: (SortField, com.applemusicktv.ui.viewmodel.SortDir) -> Unit,
 ) {
     val fields = when (section) {
         LibrarySection.Playlists -> listOf(SortField.DEFAULT to "Playlist Order", SortField.NAME to "Name")
@@ -160,31 +161,109 @@ private fun SortBar(
         LibrarySection.Artists   -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Name")
         LibrarySection.Songs     -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Title", SortField.ARTIST to "Artist")
     }
-    val dirArrow = if (currentDir == "ASC") " ↑" else " ↓"
+    val curLabel = fields.firstOrNull { it.first == currentField }?.second ?: "Sort"
+    val dirArrow = if (currentDir == com.applemusicktv.ui.viewmodel.SortDir.ASC) "↑" else "↓"
+    var showDialog by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier.fillMaxWidth().background(Color(0xFF0A0A0A)).padding(horizontal = 32.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Sort:", fontSize = 11.sp, color = Color(0xFF555555))
-        fields.forEach { (field, label) ->
-            val isActive = currentField == field
-            Surface(
-                onClick = { onSort(field) },
-                shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor        = if (isActive) Color(0xFFFA233B) else Color(0xFF1E1E1E),
-                    focusedContainerColor = if (isActive) Color(0xFFE01F33) else Color(0xFF2A2A2A),
-                ),
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        Surface(
+            onClick = { showDialog = true },
+            shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Color(0xFF1E1E1E), focusedContainerColor = Color(0xFF2A2A2A),
+            ),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        ) {
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = label + if (isActive) dirArrow else "",
-                    fontSize = 11.sp,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                )
+                Text("Sort", fontSize = 12.sp, color = Color(0xFF9A9A9A))
+                Text("$curLabel $dirArrow", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
             }
+        }
+    }
+
+    if (showDialog) {
+        SortDialog(
+            fields = fields,
+            currentField = currentField,
+            currentDir = currentDir,
+            onPick = { f, d -> onSort(f, d) },
+            onDismiss = { showDialog = false },
+        )
+    }
+}
+
+/** Sort chooser popup: pick a field, then a direction. Real Dialog so D-pad focus
+ *  stays inside it (a plain overlay Box lets focus walk out to the grid behind). */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SortDialog(
+    fields: List<Pair<SortField, String>>,
+    currentField: SortField,
+    currentDir: com.applemusicktv.ui.viewmodel.SortDir,
+    onPick: (SortField, com.applemusicktv.ui.viewmodel.SortDir) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val Asc = com.applemusicktv.ui.viewmodel.SortDir.ASC
+    val Desc = com.applemusicktv.ui.viewmodel.SortDir.DESC
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        val firstFocus = remember { FocusRequester() }
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            colors = androidx.tv.material3.SurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E)),
+            modifier = Modifier.width(340.dp),
+        ) {
+            Column(Modifier.padding(vertical = 18.dp)) {
+                Text("Sort By", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                    modifier = Modifier.padding(start = 22.dp, bottom = 10.dp))
+                fields.forEachIndexed { i, (field, label) ->
+                    SortRow(
+                        label = label,
+                        selected = field == currentField,
+                        modifier = if (i == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                    ) { onPick(field, currentDir) }
+                }
+                Box(Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 22.dp)
+                    .height(1.dp).background(Color(0xFF3A3A3C)))
+                SortRow("Ascending", currentDir == Asc) { onPick(currentField, Asc) }
+                SortRow("Descending", currentDir == Desc) { onPick(currentField, Desc) }
+            }
+        }
+        LaunchedEffect(Unit) { firstFocus.requestFocus() }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SortRow(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E),
+        ),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, fontSize = 14.sp, color = Color.White,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                modifier = Modifier.weight(1f))
+            if (selected) Text("✓", fontSize = 15.sp, color = Color(0xFFFA233B))
         }
     }
 }

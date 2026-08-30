@@ -101,8 +101,8 @@ fun MusicVideoScreen(
         if (c in rows[r].indices) focus = rows[r][c]
     }
 
-    LaunchedEffect(poke, picker, showQueue, state.playing) {
-        if (picker != MvPicker.NONE || showQueue || !state.playing) { controls = true; return@LaunchedEffect }
+    LaunchedEffect(poke, picker, showQueue, state.playing, state.buffering) {
+        if (picker != MvPicker.NONE || showQueue || !state.playing || state.buffering) { controls = true; return@LaunchedEffect }
         controls = true
         delay(3000)
         controls = false
@@ -179,7 +179,9 @@ fun MusicVideoScreen(
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (state.loading || state.buffering) CircularProgressIndicator(
+        // Cold-load spinner only (nothing on screen yet). Mid-playback buffering + pause are shown
+        // inline next to the play-head time in the transport bar (see below).
+        if (state.loading) CircularProgressIndicator(
             color = Color.White, strokeWidth = 3.dp,
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 52.dp, bottom = 54.dp).size(26.dp),
         )
@@ -242,9 +244,20 @@ fun MusicVideoScreen(
                     }
                     Spacer(Modifier.height(9.dp))
                     Box(Modifier.fillMaxWidth()) {
-                        Text(fmt(shownPos), color = if (scrubbing) Color.White else Color(0xE6FFFFFF), fontSize = 13.sp,
-                            fontWeight = if (scrubbing) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.align(BiasAlignment(horizontalBias = frac * 2f - 1f, verticalBias = 0f)))
+                        // Elapsed readout tracks the play-head. A pause glyph (when paused) and a
+                        // small spinner (when buffering mid-playback) ride right beside it.
+                        Row(
+                            modifier = Modifier.align(BiasAlignment(horizontalBias = frac * 2f - 1f, verticalBias = 0f)),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            if (!state.playing && !scrubbing) com.applemusicktv.ui.components.Icon(
+                                com.applemusicktv.ui.components.Glyph.PAUSE, size = 12.dp, color = Color.White)
+                            if (state.buffering) CircularProgressIndicator(
+                                color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(13.dp))
+                            Text(fmt(shownPos), color = if (scrubbing) Color.White else Color(0xE6FFFFFF), fontSize = 13.sp,
+                                fontWeight = if (scrubbing) FontWeight.Bold else FontWeight.Medium)
+                        }
                         // The elapsed readout tracks the bar position; near the end it slides into the
                         // fixed remaining label. Fade remaining out (0.85→0.95) so they never overlap.
                         val endAlpha = ((0.85f - frac) / 0.10f).coerceIn(0f, 1f)

@@ -330,12 +330,15 @@ class MusicVideoViewModel @Inject constructor(
                     .setRenderersFactory(
                         com.applemusicktv.media.DelayVideoRenderersFactory(context) { avVideoDelayUs() })
                     .setTrackSelector(selector)
-                    // Start fast, resume fast. A large min-buffer (was 30s) made the player sit
-                    // pre-filling instead of playing — read as constant "buffering." Modest window:
-                    // begin at 1.5s, resume after a stall with 3s, cap the hoard at 30s.
+                    // Startup speed is set by bufferForPlaybackMs (1.5s), NOT minBufferMs — so we
+                    // can hold a BIG lead (30–60s) to ride out the slow proxy without rebuffering,
+                    // yet still start in ~1.5s. prioritizeTimeOverSize buffers by seconds, not a
+                    // video-sized byte cap that would starve a 5 Mbps stream.
                     .setLoadControl(
                         DefaultLoadControl.Builder()
-                            .setBufferDurationsMs(15_000, 30_000, 1_500, 3_000)
+                            .setBufferDurationsMs(30_000, 60_000, 1_500, 3_000)
+                            .setPrioritizeTimeOverSizeThresholds(true)
+                            .setTargetBufferBytes(64 * 1024 * 1024)
                             .build())
                     .build()
                 exo.setMediaSource(source)
