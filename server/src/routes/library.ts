@@ -180,11 +180,14 @@ library.get("/playlists/:id/tracks", async (c) => {
       const sf = getStorefront() || "us";
       let offset = 0;
       while (songs.length < 2000) {
+        // Do NOT add include=artists,albums here — Apple's catalog playlist-tracks
+        // endpoint HANGS (never responds) for editorial playlists when that include is
+        // present (verified: 0.7s without, 20s+ timeout with). It made the whole playlist
+        // show "no songs". Artist/album ids are resolved lazily by the client instead.
         const res = await axios.get(`https://amp-api-edge.music.apple.com/v1/catalog/${sf}/playlists/${id}/tracks`, {
-          // include artists/albums so tracks (incl. music videos, which the client can't
-          // resolve lazily via the songs endpoint) carry artistId/albumId for "Go to Artist".
-          params: { limit: 100, offset, include: "artists,albums" },
+          params: { limit: 100, offset },
           headers: appleHeaders(mut),
+          timeout: 15000,
         });
         const batch = res.data?.data ?? [];
         songs.push(...batch.map((s: any) => normaliseSong(s)));
