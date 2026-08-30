@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,7 +49,9 @@ fun LibraryScreen(
     onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    var section by remember { mutableStateOf(LibrarySection.Playlists) }
+    // Survive navigation away/back (saved in the nav backstack), so returning to Library
+    // lands on the same section instead of resetting to Playlists.
+    var section by rememberSaveable { mutableStateOf(LibrarySection.Playlists) }
     val state by vm.state.collectAsState()
 
     Row(modifier = modifier.fillMaxSize()) {

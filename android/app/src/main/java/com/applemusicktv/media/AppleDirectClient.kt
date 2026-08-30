@@ -115,22 +115,55 @@ class AppleDirectClient @Inject constructor() {
             }
         }
 
+    /** A library song's catalog id (from its `catalog` relationship), or null. Used to
+     *  recover playback when the library release itself is unsalable (1010). */
+    private suspend fun resolveCatalogId(libraryId: String, bearer: String, mut: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val resp = http.newCall(
+                    Request.Builder()
+                        .url("https://amp-api-edge.music.apple.com/v1/me/library/songs/$libraryId?include=catalog")
+                        .addHeader("Authorization", "Bearer $bearer")
+                        .addHeader("Music-User-Token", mut)
+                        .addHeader("Origin", "https://music.apple.com")
+                        .build()
+                ).execute()
+                val body = resp.body!!.string()
+                val data = JSONObject(body).optJSONArray("data") ?: return@withContext null
+                if (data.length() == 0) return@withContext null
+                val cat = data.getJSONObject(0)
+                    .optJSONObject("relationships")?.optJSONObject("catalog")
+                    ?.optJSONArray("data")
+                if (cat == null || cat.length() == 0) return@withContext null
+                cat.getJSONObject(0).getString("id")
+            } catch (e: Exception) {
+                Log.w("AppleDirectClient", "resolveCatalogId failed for $libraryId: ${e.message}"); null
+            }
+        }
+
     suspend fun getWebPlayback(songId: String, bearer: String, mut: String): WebPlaybackResult =
         withContext(Dispatchers.IO) {
             // Apple's webPlayback wants a library song under "universalLibraryId"
-            // and a catalog song under "salableAdamId". Sending the wrong form
-            // returns failureType 1010 (NoSalableAdamId). We can't always tell
-            // which a given id is, so try the natural form first, then the other.
+            // and a catalog song under "salableAdamId". A library row can point at a
+            // release Apple no longer serves (failureType 1010, NoSalableAdamId) even
+            // though the SAME song plays fine under its catalog id — so for a library
+            // id we also resolve its catalog id and try salableAdamId with THAT (the
+            // old code re-sent the i.xxx id in both forms, which never helped).
             val isLibrary = songId.startsWith("i.")
-            val forms = if (isLibrary)
-                listOf("universalLibraryId", "salableAdamId")
-            else
-                listOf("salableAdamId", "universalLibraryId")
+            // (field, value) pairs to attempt, in order.
+            val attempts = ArrayList<Pair<String, String>>()
+            if (isLibrary) {
+                attempts.add("universalLibraryId" to songId)
+                resolveCatalogId(songId, bearer, mut)?.let { attempts.add("salableAdamId" to it) }
+            } else {
+                attempts.add("salableAdamId" to songId)
+                attempts.add("universalLibraryId" to songId)
+            }
 
             var entry: JSONObject? = null
             var lastBody = ""
-            for (field in forms) {
-                val bodyStr = """{"$field":"$songId","language":"en-US"}"""
+            for ((field, value) in attempts) {
+                val bodyStr = """{"$field":"$value","language":"en-US"}"""
                 val resp = http.newCall(
                     Request.Builder()
                         .url("https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback")

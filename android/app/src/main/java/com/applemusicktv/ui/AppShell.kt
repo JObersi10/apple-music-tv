@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
@@ -663,17 +664,17 @@ fun AppShell(modifier: Modifier = Modifier) {
                     val onThisTab = currentRoute == route ||
                         (route == Screen.Library.route && currentRoute?.startsWith("library") == true)
                     if (!onThisTab) {
-                        // NO saveState/restoreState. With them, switching tabs RESTORES a saved back
-                        // stack whose top could be now_playing — so pressing Library put you back on
-                        // the music-video screen with only the pill showing "Library" (the long-hunted
-                        // "video in library" bleed was actually this), and Back landed on Library.
-                        // Plain popUpTo(Home) keeps one entry per tab and always lands on the tab asked for.
+                        // Per-tab back stacks: each tab remembers the page you left it on (a playlist,
+                        // an artist, a category) and restores it when you return — including returning
+                        // from Now Playing. This is the canonical multi-back-stack recipe. Crucially
+                        // EVERY tab (Now Playing included) pops up to the start destination with
+                        // saveState, so Now Playing gets its OWN saved stack and can never sit nested
+                        // under another tab — which is what used to bleed the video screen into Library.
+                        val startId = navController.graph.findStartDestination().id
                         navController.navigate(route) {
-                            // Now Playing is PUSHED on top (no popUpTo) so Back returns to the screen
-                            // you opened it from — matching the video player. Every other tab collapses
-                            // to a single entry via popUpTo(Home).
-                            if (route != Screen.NowPlaying.route) popUpTo(Screen.Home.route)
+                            popUpTo(startId) { saveState = true }
                             launchSingleTop = true
+                            restoreState = true
                         }
                     }
                 },
