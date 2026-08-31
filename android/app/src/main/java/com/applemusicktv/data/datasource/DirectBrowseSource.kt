@@ -281,12 +281,18 @@ class DirectBrowseSource @Inject constructor(
                     if (videos.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, videos = videos, roomId = roomId)
                     continue
                 }
-                val albums = maps.mapNotNull { m ->
-                    when (m["type"] as? String) {
-                        "songs", "music-videos", "uploaded-videos" -> songCard(m)
-                        else -> itemFromRaw(m)   // albums + playlists (playlist id prefix routes correctly)
+                val albums = maps
+                    // Keep Apple Music Radio LIVE stations (isLive); drop only non-live radio shows.
+                    .filter { m ->
+                        m["type"] as? String != "stations" ||
+                            (m["attributes"] as? Map<*, *>)?.get("isLive") == true
                     }
-                }
+                    .mapNotNull { m ->
+                        when (m["type"] as? String) {
+                            "songs", "music-videos", "uploaded-videos" -> songCard(m)
+                            else -> itemFromRaw(m)   // albums + playlists (playlist id prefix routes correctly)
+                        }
+                    }
                 if (albums.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, albums, roomId = roomId)
             }
 
@@ -304,6 +310,7 @@ class DirectBrowseSource @Inject constructor(
                 val content = (((cm["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)
                     ?.get("data") as? List<*>)?.firstOrNull() as? Map<*, *> ?: continue
                 val t = content["type"] as? String
+                if (t == "stations" && (content["attributes"] as? Map<*, *>)?.get("isLive") != true) continue   // non-live radio shows don't play — omit; keep live radio
                 var obj = when (t) {
                     "songs", "music-videos" -> songCard(content)
                     "apple-curators", "curators" -> curatorCard(content)

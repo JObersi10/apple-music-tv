@@ -50,11 +50,9 @@ class SearchViewModel @Inject constructor(
                     _state.update { it.copy(isLoading = true, error = null) }
                     repo.search(term)
                         .onSuccess  { r ->
-                            // Only remember terms that actually found something —
-                            // half-typed words would otherwise fill the list.
-                            if (r.songs.isNotEmpty() || r.albums.isNotEmpty() || r.artists.isNotEmpty()) {
-                                history.add(term)
-                            }
+                            // History is NOT written here — live keystroke searches would
+                            // fill it with "d", "da", "dai". Only commitSearch() (the Go/Search
+                            // key) records a term. Results still update live as you type.
                             _state.update { it.copy(isLoading = false, results = r) }
                         }
                         .onFailure  { e -> _state.update { it.copy(isLoading = false, error = e.message) } }
@@ -76,7 +74,12 @@ class SearchViewModel @Inject constructor(
         }
         queryFlow.value = q
     }
-    fun runRecent(term: String) { onQueryChange(term) }
+    /** Called when the user presses Go/Search on the IME — the only place a term is saved. */
+    fun commitSearch() {
+        val q = _state.value.query.trim()
+        if (q.length >= 2) history.add(q)
+    }
+    fun runRecent(term: String) { onQueryChange(term); history.add(term) }
     fun removeRecent(term: String) = history.remove(term)
     fun clearRecents() = history.clear()
 

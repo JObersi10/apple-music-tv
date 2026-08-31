@@ -168,6 +168,7 @@ fun AlbumDetailScreen(
                 AlbumContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
                 AlbumContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
                 AlbumContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
+                AlbumContextItem(Glyph.RADIO, "Create Station", { if (!clickBlocked) { playerVm.createSongStation(s); dismissMenu() } })
                 val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
                 val goAlbum  = s.albumId ?: album.id
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))

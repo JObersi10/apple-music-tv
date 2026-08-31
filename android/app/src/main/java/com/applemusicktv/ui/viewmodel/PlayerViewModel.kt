@@ -54,6 +54,8 @@ enum class RepeatMode { Off, One, All }
 
 /** Rebuffers on one song before standalone is abandoned for it. */
 private const val STUTTER_LIMIT = 3
+/** Sleep timer eases the volume down over this window before pausing. */
+private const val SLEEP_FADE_MS = 5_000L
 
 /** Dump schm/tenc/pssh of the standalone init segment. Costs a full segment download. */
 private const val PROBE_INIT_SEGMENT = false
@@ -252,6 +254,10 @@ class PlayerViewModel @Inject constructor(
     private var cfWindowLoggedForSongId: String? = null
     /** Title of the song whose standalone attempt already failed — retry proxy once, then give up. */
     private var standaloneFailedSongId: String? = null
+    /** True while the sleep timer's final-5s volume ramp is active (so a cancel can restore volume). */
+    private var sleepFadeActive = false
+    /** Library song id whose catalog (not-in-library) on-device retry already ran — try once. */
+    private var catalogRetriedSongId: String? = null
     /** Songs Apple 404s on (pulled from the catalogue). Skipped without a retry. */
     private val unavailableSongIds = mutableSetOf<String>()
     /** Avoids re-logging the audio format on every READY (seeks re-enter it). */
@@ -667,6 +673,46 @@ class PlayerViewModel @Inject constructor(
                 return
             }
 
+            // Dead LIBRARY song: its in-library release is withdrawn (webPlayback returns a
+            // songList for universalLibraryId but the assets fail DRM), yet the SAME song
+            // plays from the catalog. Before touching the proxy, retry the catalog
+            // (not-in-library) version ON-DEVICE — exactly like playing it from Apple Music.
+            run {
+                val cur = _state.value.queue.getOrNull(_state.value.queueIndex)
+                if (usingStandalone && !crossfadeInProgress && cur != null &&
+                    cur.id.startsWith("i.") && catalogRetriedSongId != cur.id) {
+                    catalogRetriedSongId = cur.id
+                    val myGen = ++playGen
+                    webServer.addLog("PLR", "standalone failed for $song — retrying catalog copy on-device")
+                    viewModelScope.launch {
+                        val mut = mutPrefs.getMUT()
+                        // 1) linked catalog release; 2) if none, catalog search by title+artist
+                        //    (uploaded/matched "internet songs" have no catalog relationship).
+                        val catId = appleClient.resolveCatalogFor(cur.id, mut)
+                            ?: appleClient.searchCatalogSongId(cur.title, cur.artistName, mut)
+                        if (catId == null || catId == cur.id || myGen != playGen) {
+                            webServer.addLog("PLR", "no catalog copy for ${cur.title} — falling through")
+                            if (myGen == playGen) retryStandaloneOrProxy(cur, pos, wasPlaying, song)
+                            return@launch
+                        }
+                        webServer.addLog("PLR", "catalog copy id=$catId for ${cur.title}")
+                        val catSong = cur.copy(id = catId)
+                        val src = buildStandaloneSource(catSong)
+                        if (myGen != playGen) return@launch
+                        if (src != null) {
+                            usingStandalone = true
+                            player.setMediaSource(src); player.prepare()
+                            player.volume = 1f; player.playWhenReady = wasPlaying
+                            _state.update { it.copy(standaloneActive = true) }
+                            webServer.addLog("PLR", "catalog copy on-device OK for ${cur.title}")
+                        } else {
+                            webServer.addLog("PLR", "catalog copy on-device failed for ${cur.title}")
+                            retryStandaloneOrProxy(cur, pos, wasPlaying, song)
+                        }
+                    }
+                    return
+                }
+            }
             // A standalone failure must not advance — it'd fail identically on the next
             // song and rip through the whole queue. Retry this one through the proxy.
             if (usingStandalone && !crossfadeInProgress && standaloneFailedSongId != song) {
@@ -703,6 +749,34 @@ class PlayerViewModel @Inject constructor(
                 advanceQueue()
             }
         }
+    }
+
+    /** Last-resort fallback for a song that failed on-device (both its own and, for
+     *  library ids, its catalog copy): route it through the PC proxy. No-op if there's
+     *  no current queue item. */
+    private fun retryStandaloneOrProxy(cur: Song, pos: Long, wasPlaying: Boolean, songTitle: String) {
+        standaloneFailedSongId = songTitle
+        usingStandalone = false
+        standaloneFailures++
+        _state.update { it.copy(standaloneActive = false) }
+        if (!serverPrefs.serverReachable) {
+            webServer.addLog("PLR", "on-device failed for $songTitle and no server — skipping")
+            toast("Can't play \"$songTitle\" on-device, and no server to fall back to")
+            advanceQueue()
+            return
+        }
+        webServer.addLog("PLR", "on-device exhausted for $songTitle — retrying via proxy (#$standaloneFailures)")
+        if (standaloneFailures >= 3 && standalonePrefs.isEnabled()) {
+            standalonePrefs.setEnabled(false)
+            webServer.addLog("PLR", "standalone disabled after $standaloneFailures failures")
+            toast("On-device playback isn't working here — switched back to the server")
+        } else {
+            toast("On-device playback failed — using the server")
+        }
+        player.setMediaItem(buildMediaItem(cur, repo.streamUrl(cur.id)))
+        player.prepare()
+        if (pos > 3_000) player.seekTo(pos)
+        player.volume = 1f; player.playWhenReady = wasPlaying
     }
 
     private fun buildMediaSession(exo: ExoPlayer): androidx.media3.session.MediaSession =
@@ -1185,6 +1259,7 @@ class PlayerViewModel @Inject constructor(
         }
         beatAnalyzer.resetBeat(); mainProc?.resetBeat()
         crossfadeSkipSongId = null
+        catalogRetriedSongId = null   // fresh selection → allow a new catalog on-device retry
         // Cancel any in-progress crossfade
         fadeJob?.cancel()
         crossfadeInProgress = false
@@ -1371,6 +1446,17 @@ class PlayerViewModel @Inject constructor(
             // stream as a live-style HLS feed. Fall back to the live path so radio shows actually play.
             else playLiveStation(stationId, stationArt)
         }
+    }
+
+    /** "Create Station" from a song — Apple exposes a per-song radio whose id is `ra.{catalogId}`
+     *  (verified: song 6799279367 → station ra.6799279367). Library ids resolve to catalog first. */
+    fun createSongStation(song: com.applemusicktv.data.model.Song) = viewModelScope.launch {
+        val catId = if (song.id.startsWith("i."))
+            appleClient.resolveCatalogFor(song.id, mutPrefs.getMUT())
+        else song.id.filter { it.isDigit() }.ifEmpty { song.id }
+        if (catId.isNullOrEmpty()) { toast("Can't start a station for \"${song.title}\""); return@launch }
+        toast("Starting \"${song.title}\" station")
+        playStation("ra.$catId")
     }
 
     /** Genre station — shuffled top songs for the genre, played standalone. */
@@ -1594,45 +1680,72 @@ class PlayerViewModel @Inject constructor(
     }
 
     private val decryptInFlight = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<java.io.File?>>()
+    /** Serializes standalone decrypts — one whole-file download at a time. Running several at once
+     *  (fast-skip + prefetch) split the WAN N ways: a single decrypt is ~3-4s, four concurrent
+     *  measured 14-29s each, and the foreground song you landed on was the slowest of them. */
+    private val decryptMutex = kotlinx.coroutines.sync.Mutex()
+    /** The download OkHttp Call of the current BACKGROUND (prefetch) decrypt, so a foreground
+     *  request can abort it instead of queueing behind a 13 MB prefetch. */
+    @Volatile private var activeBgDecryptCall: okhttp3.Call? = null
+    @Volatile private var activeBgDecryptSongId: String? = null
+
+    /** Abort the in-flight prefetch download unless it's for `keepSongId` (the song we now want). */
+    private fun preemptBgDecrypt(keepSongId: String?) {
+        if (activeBgDecryptSongId != null && activeBgDecryptSongId != keepSongId) activeBgDecryptCall?.cancel()
+    }
 
     /** Derive key → fetch whole fMP4 → decrypt in-app → clear file on disk. Reuses an
      *  already-decrypted file (that's what lets prefetch warm crossfade/skip targets),
-     *  and dedupes concurrent requests for the same song (fast-skip fires many). */
-    private suspend fun decryptToFile(song: Song): java.io.File? {
+     *  and dedupes concurrent requests for the same song (fast-skip fires many).
+     *  `foreground` = the song being played right now; it preempts any in-flight prefetch download
+     *  and takes the decrypt slot next, so it never waits behind a background warm. */
+    private suspend fun decryptToFile(song: Song, foreground: Boolean = true): java.io.File? {
         val out = java.io.File(context.cacheDir, "clear_${song.id.replace(Regex("[^A-Za-z0-9._-]"), "_")}.mp4")
         if (out.exists() && out.length() > 0) return out
         val existing = decryptInFlight[song.id]
-        if (existing != null) return existing.await()
+        if (existing != null) {
+            if (foreground) preemptBgDecrypt(keepSongId = song.id)   // promote; but never abort THIS song
+            return existing.await()
+        }
+        // Foreground preempts whatever prefetch download is in flight so it gets the slot immediately.
+        if (foreground) preemptBgDecrypt(keepSongId = song.id)
         val job = viewModelScope.async(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val bearer = appleClient.getBearer()
-                val mut = mutPrefs.getMUT()
-                if (bearer.isEmpty() || mut.isEmpty()) return@async null
-                val wb = appleClient.getWebPlayback(song.id, bearer, mut)
-                val keyUri = wb.keyUri ?: return@async null
-                val t0 = System.currentTimeMillis()
-                val keyHex = deriveContentKey(wb.adamId, keyUri, bearer, mut) ?: run {
-                    Log.e("AMCENC", "no key"); return@async null
-                }
-                // Apple delivers ONE fMP4 file, segmented only by #EXT-X-BYTERANGE.
-                val base = wb.hlsUrl.substring(0, wb.hlsUrl.lastIndexOf('/') + 1)
-                fun abs(u: String) = if (u.startsWith("http")) u else base + u
-                val fileUri = (Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(wb.hlsText)?.groupValues?.get(1)
-                    ?: wb.hlsText.lineSequence().map { it.trim() }
-                        .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
-                    ?: return@async null)
-                    .substringBefore('?').let(::abs)
-                val encrypted = cdmHttp.newCall(
-                    okhttp3.Request.Builder().url(fileUri)
-                        .addHeader("Authorization", "Bearer $bearer")
-                        .addHeader("Cookie", "media-user-token=$mut").build()
-                ).execute().body!!.bytes()
-                val dec = com.applemusicktv.media.widevine.CencDecryptor(keyHex)
-                val tmp = java.io.File(context.cacheDir, "${out.name}.tmp")
-                tmp.writeBytes(dec.decryptWhole(encrypted))
-                tmp.renameTo(out)   // atomic — a half-written file is never played
-                webServer.addLog("AMCENC", "song=${song.id} in=${encrypted.size} out=${out.length()} ${System.currentTimeMillis() - t0}ms")
-                out
+                // Serialize: only one whole-file download runs at a time (no bandwidth splitting).
+                decryptMutex.lock()
+                try {
+                    val bearer = appleClient.getBearer()
+                    val mut = mutPrefs.getMUT()
+                    if (bearer.isEmpty() || mut.isEmpty()) return@async null
+                    val wb = appleClient.getWebPlayback(song.id, bearer, mut)
+                    val keyUri = wb.keyUri ?: return@async null
+                    val t0 = System.currentTimeMillis()
+                    val keyHex = deriveContentKey(wb.adamId, keyUri, bearer, mut) ?: run {
+                        Log.e("AMCENC", "no key"); return@async null
+                    }
+                    // Apple delivers ONE fMP4 file, segmented only by #EXT-X-BYTERANGE.
+                    val base = wb.hlsUrl.substring(0, wb.hlsUrl.lastIndexOf('/') + 1)
+                    fun abs(u: String) = if (u.startsWith("http")) u else base + u
+                    val fileUri = (Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(wb.hlsText)?.groupValues?.get(1)
+                        ?: wb.hlsText.lineSequence().map { it.trim() }
+                            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+                        ?: return@async null)
+                        .substringBefore('?').let(::abs)
+                    val call = cdmHttp.newCall(
+                        okhttp3.Request.Builder().url(fileUri)
+                            .addHeader("Authorization", "Bearer $bearer")
+                            .addHeader("Cookie", "media-user-token=$mut").build()
+                    )
+                    if (!foreground) { activeBgDecryptCall = call; activeBgDecryptSongId = song.id }   // a foreground play can abort this
+                    val encrypted = try { call.execute().body!!.bytes() }
+                        finally { if (!foreground && activeBgDecryptSongId == song.id) { activeBgDecryptCall = null; activeBgDecryptSongId = null } }
+                    val dec = com.applemusicktv.media.widevine.CencDecryptor(keyHex)
+                    val tmp = java.io.File(context.cacheDir, "${out.name}.tmp")
+                    tmp.writeBytes(dec.decryptWhole(encrypted))
+                    tmp.renameTo(out)   // atomic — a half-written file is never played
+                    webServer.addLog("AMCENC", "song=${song.id} in=${encrypted.size} out=${out.length()} ${System.currentTimeMillis() - t0}ms ${if (foreground) "fg" else "bg"}")
+                    out
+                } finally { decryptMutex.unlock() }
             } catch (e: Exception) {
                 Log.e("AMCENC", "decrypt failed for ${song.id}: ${e.message}", e); null
             } finally {
@@ -1729,7 +1842,7 @@ class PlayerViewModel @Inject constructor(
         // absent) proxy. decryptToFile writes clear_<id>.mp4, which the next play or
         // crossfade then reuses instantly.
         if (useStandalone() && song.id !in proxyOnlySongIds) {
-            viewModelScope.launch { runCatching { decryptToFile(song) } }
+            viewModelScope.launch { runCatching { decryptToFile(song, foreground = false) } }
             return
         }
         val url = repo.prefetchUrl(song.id)
@@ -1883,11 +1996,20 @@ class PlayerViewModel @Inject constructor(
             // Auto-save position every 10s while playing so restore lands at the right spot
             if (playing && now - lastAutoSaveMs > 10_000L) { lastAutoSaveMs = now; saveState() }
             val timerEnd = _state.value.sleepTimerEndsAt
-            if (timerEnd != null && System.currentTimeMillis() >= timerEnd) {
-                val pos = player.currentPosition
-                webServer.addLog("SLEEP", "timer fired at pos=${pos}ms song=${_state.value.currentSong?.title}")
-                player.pause()
-                _state.update { it.copy(sleepTimerEndsAt = null, isPlaying = false) }
+            if (timerEnd != null) {
+                val remaining = timerEnd - System.currentTimeMillis()
+                // Ease the volume down over the final 5s instead of a hard cut.
+                if (remaining in 1..SLEEP_FADE_MS && playing) {
+                    sleepFadeActive = true
+                    player.volume = (remaining.toFloat() / SLEEP_FADE_MS).coerceIn(0f, 1f)
+                }
+                if (remaining <= 0L) {
+                    webServer.addLog("SLEEP", "timer fired at pos=${player.currentPosition}ms song=${_state.value.currentSong?.title}")
+                    player.pause(); player.volume = 1f; sleepFadeActive = false
+                    _state.update { it.copy(sleepTimerEndsAt = null, isPlaying = false) }
+                }
+            } else if (sleepFadeActive) {
+                player.volume = 1f; sleepFadeActive = false   // timer cancelled mid-fade → restore
             }
 
             // HTTP prefetch N+2 at 2/3 through current song

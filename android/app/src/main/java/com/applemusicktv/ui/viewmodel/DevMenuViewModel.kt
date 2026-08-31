@@ -61,7 +61,7 @@ class DevMenuViewModel @Inject constructor(
 
     init { refresh() }
 
-    fun refresh() = viewModelScope.launch {
+    fun refresh(onDone: () -> Unit = {}) = viewModelScope.launch {
         _state.update { it.copy(webServerUrl = webServer.serverUrl()) }
         log("INFO", "Refreshing status...")
         runCatching { repo.getAuthStatus() }.onSuccess { s ->
@@ -76,12 +76,14 @@ class DevMenuViewModel @Inject constructor(
             _state.update { s -> s.copy(serverOk = false, standaloneMode = true, hasMUT = mutPrefs.hasMUT()) }
             log(if (mutPrefs.hasMUT()) "OK" else "WARN", "Server unreachable — standalone; MUT ${if (mutPrefs.hasMUT()) "active" else "not set"}")
         }
+        onDone()   // reload Home/Library AFTER status (incl. reachability) is settled
     }
 
-    fun recheckServer(playerVm: PlayerViewModel) = viewModelScope.launch {
+    fun recheckServer(playerVm: PlayerViewModel, onDone: () -> Unit = {}) = viewModelScope.launch {
         log("INFO", "Re-checking server...")
-        playerVm.recheckServer().join()
+        playerVm.recheckServer().join()   // flips serverReachable FIRST
         refresh()
+        onDone()                          // …then reload Home/Library on the fresh path (was a race)
     }
 
     fun setPcServerIp(ip: String) {

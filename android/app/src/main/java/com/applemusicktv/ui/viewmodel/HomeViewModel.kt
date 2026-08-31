@@ -42,6 +42,12 @@ class HomeViewModel @Inject constructor(
     // and without this a cold start in one of those windows dropped Home to 3 chart rows.
     private val FALLBACK_MAX = 4
 
+    // Personalization loaded ⇔ /me/recommendations succeeded. Its signature shelves carry the
+    // "picks" hero (Top Picks for You) or the "gradient" row (Playlists Made for You); the charts
+    // fallback and the mood/category rooms have neither. This — not section count — is the test.
+    private fun List<HomeSection>.isPersonalized() =
+        any { it.style == "picks" || it.style == "gradient" }
+
     init {
         // Read + parse the cached feed OFF the main thread — the JSON is large (all shelves × albums)
         // and doing it in init on the UI thread froze startup (hundreds of ms / multi-second stalls).
@@ -68,17 +74,22 @@ class HomeViewModel @Inject constructor(
                         HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style)
                     }
                     if (sections.isNotEmpty()) {
-                        // A rich (personalized) feed replaces the cache. A thin fallback does NOT clobber
-                        // a richer cached feed — keep showing the good one until recs recover.
-                        val useCache = sections.size <= FALLBACK_MAX && cached.size > sections.size
-                        val show = if (useCache) cached else sections
+                        // Personalization is present ONLY when /me/recommendations succeeded — its hero
+                        // ("Top Picks for You", style "picks") is the marker. A feed WITHOUT it must never
+                        // overwrite a cached feed WITH it, no matter how many mood/category/chart rows it
+                        // has (those can exceed the old size threshold and were wiping the good cache).
+                        val fresh = sections.isPersonalized()
+                        val haveCached = cached.isPersonalized()
+                        val show = if (!fresh && haveCached) cached else sections
                         _state.value = HomeUiState(isLoading = false, sections = show)
-                        if (sections.size > FALLBACK_MAX) {
+                        if (fresh) {   // only cache a genuinely personalized feed
                             launch(kotlinx.coroutines.Dispatchers.Default) {
                                 runCatching { prefs.edit().putString("sections", adapter.toJson(sections)).apply() }
                             }
                         }
-                        return@launch
+                        // A non-personalized fetch isn't the final word — recs may recover on a later
+                        // attempt in this same load. Only stop early once we actually have personalization.
+                        if (fresh || !haveCached) return@launch
                     }
                 }.onFailure { lastErr = it.message }
                 if (attempt < 3) kotlinx.coroutines.delay(1500)

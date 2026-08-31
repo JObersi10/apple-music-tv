@@ -1,6 +1,81 @@
 # Handoff — Apple Music TV
 
-Last updated: 2026-08-19
+Last updated: 2026-08-30
+
+## Session 2026-08-30 — dead-song fallback, Listen Now resilience, scroll perf (v1.2)
+
+Playback:
+- **Dead library songs now play.** Uploaded/matched "internet songs" (`i.` rows) whose
+  in-library release is withdrawn fail on-device DRM (`No value for license`) and have **no
+  catalog relationship**. On a standalone failure `PlayerViewModel.onPlayerError` resolves a
+  catalog id — the linked `catalog` relationship first, else a **title+artist catalog search**
+  (`AppleDirectClient.searchCatalogSongId`, artist+title match only, never a blind top hit) — and
+  rebuilds the on-device source from that catalog copy, exactly like playing from Apple Music.
+  Proxy is now the *last* resort (`retryStandaloneOrProxy`), not the first. Verified: "It's Me,
+  It's Verity" → catalog `6799279367` decrypts + plays on-device, no proxy.
+
+Listen Now:
+- **Personalization no longer vanishes.** `HomeViewModel` cache guard is now personalization-aware
+  (`isPersonalized()` = presence of the `picks`/`gradient` shelves), not section-count based. A
+  charts/moods/categories feed can't overwrite or get cached over a personalized feed. Fixes Home
+  collapsing during Apple's intermittent `/me/recommendations` 500 streaks.
+- **Dev → Re-check Server / Refresh** now reload Home+Library **after** reachability settles
+  (`recheckServer(onDone=)` / `refresh(onDone=)`), fixing a race where the reload ran on the stale
+  path and Listen Now didn't update.
+
+Perf / UX:
+- **Menu scroll lag** — `InAppWebServer.addLog` mirrored every log line to the proxy over HTTP;
+  when the proxy is unreachable (standalone-primary) each blocked an IO thread ~1s and starved
+  Coil image decode. Now skipped unless `serverReachable`.
+- **Motion-card scroll jank** — `MotionArtwork` now waits **1 s after focus settles** before
+  building the ExoPlayer. Arrowing through "Playlists Made for You" was building+releasing a
+  decoder per card passed (the `ExoPlayerImpl Init…Release` churn). Scroll past fast → never starts.
+- **Now Playing grey background** — palette load now uses a software RGB_565 bitmap, reuses Coil's
+  cache, and retries once; a covers-with-art-but-grey-backdrop case (DIGIDI DIGIDI, real blue/purple)
+  was the palette's separate fetch returning a non-readable/null bitmap. Missing/failed artwork now
+  gets a **stable seeded colour** from the song id instead of flat grey (true B&W covers still grey).
+- **Skeleton** — first row is the big Top Picks lockup (210 dp) so the swap to real Home doesn't jump.
+
+Removed:
+- **Radio shows** dropped from Browse (shelf `stations` items + "NEW RADIO SHOW" spotlight cards),
+  both `browse.ts` and standalone `DirectBrowseSource` — they don't play yet.
+
+Version bumped to **1.2** (`versionCode 3`); Dev-menu build line reads `BuildConfig.VERSION_NAME`.
+
+**Radio filter is isLive-aware**: Browse hides only NON-live stations (radio shows/episodes);
+Apple Music Radio LIVE stations (`attributes.isLive === true`) stay and play. A first pass filtered
+ALL `type==="stations"` and wrongly removed the live radio shelf. Applied in `browse.ts` (shelf +
+spotlight) and standalone `DirectBrowseSource`.
+
+Built this turn: **sleep-timer 5s fade-out** (`SLEEP_FADE_MS`, volume ramp in `pollProgress`;
+`sleepFadeActive` restores volume on cancel) and **Create Station** long-press item (playlist +
+album context menus → `createSongStation` → `playStation("ra.{catalogId}")`; Apple exposes a
+per-song station `ra.{catalogId}`, verified via `songs/{id}?include=station`).
+
+**Backlog — queue editing (design agreed, not built).** Queue is `_state.queue` + `queueIndex`;
+ExoPlayer holds one item, so edits are pure list mutation. Remove: drop from list, decrement index
+if below current (removing the current = advance). Reorder: move in list, fix index. UI: long-press
+a queue row → move-mode (D-pad Up/Down moves, OK drops), only over `userQueue`, tail stays fixed.
+No decoder juggling — low risk.
+
+**Backlog — lyrics translation (Apple-style, not built).** Show a dim translated line under each
+original. First probe whether Apple's `songs/{id}/lyrics` (or `/syllable-lyrics`) accepts a target
+language param → render second TTML line. If not, on-device ML Kit translation (no external API,
+fits the no-external-calls rule). Decide after the probe.
+
+**Next up (bug, not done): uneven vertical focus in Listen Now / Browse.** Scrolling DOWN
+through shelves, a newly-hovered row/item isn't centered the way the others are — it lands
+"half a bit" off, not consistently centered like the rest. Likely a LazyColumn
+bring-into-view / scroll-alignment issue (focused shelf not settling to a consistent viewport
+position). Investigate `HomeScreen`/`BrowseScreen` LazyColumn + item focus/`bringIntoView`.
+
+**Next up (idea, not done): queue ↔ lyrics switching UX.** The Menu-button toggle between the
+queue panel and lyrics feels clunky; user wants a better interaction. No design chosen yet — worth
+exploring (swipe/tabs/peek, or a segmented control) next session.
+
+---
+
+## Session 2026-08-19 — Now Playing customization, perf/footprint, updater grant fix (v1.1 release prep)
 
 ## Session 2026-08-19 — Now Playing customization, perf/footprint, updater grant fix (v1.1 release prep)
 

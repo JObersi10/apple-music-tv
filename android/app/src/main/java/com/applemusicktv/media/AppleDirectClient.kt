@@ -141,6 +141,57 @@ class AppleDirectClient @Inject constructor() {
             }
         }
 
+    /** Public catalog-id resolver for a library song (i.xxx). Uses stored bearer/MUT.
+     *  Returns null for non-library ids or when no catalog release is linked. */
+    suspend fun resolveCatalogFor(libraryId: String, mut: String): String? {
+        if (!libraryId.startsWith("i.")) return null
+        val bearer = getBearer()
+        if (bearer.isEmpty() || mut.isEmpty()) return null
+        return resolveCatalogId(libraryId, bearer, mut)
+    }
+
+    /** Last-resort catalog resolution for a library row with NO catalog relationship
+     *  (uploaded/matched "internet songs"): search the catalog by title + artist and
+     *  return the top song whose artist matches, else the top song. Heuristic — used
+     *  only after the relationship link is absent. */
+    suspend fun searchCatalogSongId(title: String, artist: String, mut: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val bearer = getBearer()
+                if (bearer.isEmpty()) return@withContext null
+                val term = java.net.URLEncoder.encode("$title $artist".trim(), "UTF-8")
+                val url = "https://amp-api-edge.music.apple.com/v1/catalog/us/search" +
+                    "?term=$term&types=songs&limit=10&l=en-US"
+                val resp = http.newCall(Request.Builder().url(url)
+                    .addHeader("Authorization", "Bearer $bearer")
+                    .addHeader("Music-User-Token", mut)
+                    .addHeader("Origin", "https://music.apple.com").build()).execute()
+                val body = resp.body!!.string()
+                val songs = JSONObject(body).optJSONObject("results")
+                    ?.optJSONObject("songs")?.optJSONArray("data") ?: return@withContext null
+                if (songs.length() == 0) return@withContext null
+                val wantArtist = artist.trim().lowercase()
+                val wantTitle = title.trim().lowercase()
+                var titleMatch: String? = null
+                for (i in 0 until songs.length()) {
+                    val s = songs.getJSONObject(i)
+                    val a = s.optJSONObject("attributes") ?: continue
+                    val sa = a.optString("artistName").lowercase()
+                    val st = a.optString("name").lowercase()
+                    val artistOk = wantArtist.isEmpty() ||
+                        sa.contains(wantArtist) || wantArtist.contains(sa)
+                    val titleOk = st == wantTitle || st.contains(wantTitle) || wantTitle.contains(st)
+                    if (artistOk && titleOk) return@withContext s.getString("id")
+                    if (titleOk && titleMatch == null) titleMatch = s.getString("id")
+                }
+                // No artist+title match: only accept a pure title match, never a blind top hit
+                // (that risks playing a wrong song). Null → caller falls through.
+                titleMatch
+            } catch (e: Exception) {
+                Log.w("AppleDirectClient", "searchCatalogSongId failed: ${e.message}"); null
+            }
+        }
+
     suspend fun getWebPlayback(songId: String, bearer: String, mut: String): WebPlaybackResult =
         withContext(Dispatchers.IO) {
             // Apple's webPlayback wants a library song under "universalLibraryId"
