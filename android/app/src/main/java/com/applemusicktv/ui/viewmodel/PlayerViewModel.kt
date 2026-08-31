@@ -1680,45 +1680,72 @@ class PlayerViewModel @Inject constructor(
     }
 
     private val decryptInFlight = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<java.io.File?>>()
+    /** Serializes standalone decrypts — one whole-file download at a time. Running several at once
+     *  (fast-skip + prefetch) split the WAN N ways: a single decrypt is ~3-4s, four concurrent
+     *  measured 14-29s each, and the foreground song you landed on was the slowest of them. */
+    private val decryptMutex = kotlinx.coroutines.sync.Mutex()
+    /** The download OkHttp Call of the current BACKGROUND (prefetch) decrypt, so a foreground
+     *  request can abort it instead of queueing behind a 13 MB prefetch. */
+    @Volatile private var activeBgDecryptCall: okhttp3.Call? = null
+    @Volatile private var activeBgDecryptSongId: String? = null
+
+    /** Abort the in-flight prefetch download unless it's for `keepSongId` (the song we now want). */
+    private fun preemptBgDecrypt(keepSongId: String?) {
+        if (activeBgDecryptSongId != null && activeBgDecryptSongId != keepSongId) activeBgDecryptCall?.cancel()
+    }
 
     /** Derive key → fetch whole fMP4 → decrypt in-app → clear file on disk. Reuses an
      *  already-decrypted file (that's what lets prefetch warm crossfade/skip targets),
-     *  and dedupes concurrent requests for the same song (fast-skip fires many). */
-    private suspend fun decryptToFile(song: Song): java.io.File? {
+     *  and dedupes concurrent requests for the same song (fast-skip fires many).
+     *  `foreground` = the song being played right now; it preempts any in-flight prefetch download
+     *  and takes the decrypt slot next, so it never waits behind a background warm. */
+    private suspend fun decryptToFile(song: Song, foreground: Boolean = true): java.io.File? {
         val out = java.io.File(context.cacheDir, "clear_${song.id.replace(Regex("[^A-Za-z0-9._-]"), "_")}.mp4")
         if (out.exists() && out.length() > 0) return out
         val existing = decryptInFlight[song.id]
-        if (existing != null) return existing.await()
+        if (existing != null) {
+            if (foreground) preemptBgDecrypt(keepSongId = song.id)   // promote; but never abort THIS song
+            return existing.await()
+        }
+        // Foreground preempts whatever prefetch download is in flight so it gets the slot immediately.
+        if (foreground) preemptBgDecrypt(keepSongId = song.id)
         val job = viewModelScope.async(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                val bearer = appleClient.getBearer()
-                val mut = mutPrefs.getMUT()
-                if (bearer.isEmpty() || mut.isEmpty()) return@async null
-                val wb = appleClient.getWebPlayback(song.id, bearer, mut)
-                val keyUri = wb.keyUri ?: return@async null
-                val t0 = System.currentTimeMillis()
-                val keyHex = deriveContentKey(wb.adamId, keyUri, bearer, mut) ?: run {
-                    Log.e("AMCENC", "no key"); return@async null
-                }
-                // Apple delivers ONE fMP4 file, segmented only by #EXT-X-BYTERANGE.
-                val base = wb.hlsUrl.substring(0, wb.hlsUrl.lastIndexOf('/') + 1)
-                fun abs(u: String) = if (u.startsWith("http")) u else base + u
-                val fileUri = (Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(wb.hlsText)?.groupValues?.get(1)
-                    ?: wb.hlsText.lineSequence().map { it.trim() }
-                        .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
-                    ?: return@async null)
-                    .substringBefore('?').let(::abs)
-                val encrypted = cdmHttp.newCall(
-                    okhttp3.Request.Builder().url(fileUri)
-                        .addHeader("Authorization", "Bearer $bearer")
-                        .addHeader("Cookie", "media-user-token=$mut").build()
-                ).execute().body!!.bytes()
-                val dec = com.applemusicktv.media.widevine.CencDecryptor(keyHex)
-                val tmp = java.io.File(context.cacheDir, "${out.name}.tmp")
-                tmp.writeBytes(dec.decryptWhole(encrypted))
-                tmp.renameTo(out)   // atomic — a half-written file is never played
-                webServer.addLog("AMCENC", "song=${song.id} in=${encrypted.size} out=${out.length()} ${System.currentTimeMillis() - t0}ms")
-                out
+                // Serialize: only one whole-file download runs at a time (no bandwidth splitting).
+                decryptMutex.lock()
+                try {
+                    val bearer = appleClient.getBearer()
+                    val mut = mutPrefs.getMUT()
+                    if (bearer.isEmpty() || mut.isEmpty()) return@async null
+                    val wb = appleClient.getWebPlayback(song.id, bearer, mut)
+                    val keyUri = wb.keyUri ?: return@async null
+                    val t0 = System.currentTimeMillis()
+                    val keyHex = deriveContentKey(wb.adamId, keyUri, bearer, mut) ?: run {
+                        Log.e("AMCENC", "no key"); return@async null
+                    }
+                    // Apple delivers ONE fMP4 file, segmented only by #EXT-X-BYTERANGE.
+                    val base = wb.hlsUrl.substring(0, wb.hlsUrl.lastIndexOf('/') + 1)
+                    fun abs(u: String) = if (u.startsWith("http")) u else base + u
+                    val fileUri = (Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(wb.hlsText)?.groupValues?.get(1)
+                        ?: wb.hlsText.lineSequence().map { it.trim() }
+                            .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+                        ?: return@async null)
+                        .substringBefore('?').let(::abs)
+                    val call = cdmHttp.newCall(
+                        okhttp3.Request.Builder().url(fileUri)
+                            .addHeader("Authorization", "Bearer $bearer")
+                            .addHeader("Cookie", "media-user-token=$mut").build()
+                    )
+                    if (!foreground) { activeBgDecryptCall = call; activeBgDecryptSongId = song.id }   // a foreground play can abort this
+                    val encrypted = try { call.execute().body!!.bytes() }
+                        finally { if (!foreground && activeBgDecryptSongId == song.id) { activeBgDecryptCall = null; activeBgDecryptSongId = null } }
+                    val dec = com.applemusicktv.media.widevine.CencDecryptor(keyHex)
+                    val tmp = java.io.File(context.cacheDir, "${out.name}.tmp")
+                    tmp.writeBytes(dec.decryptWhole(encrypted))
+                    tmp.renameTo(out)   // atomic — a half-written file is never played
+                    webServer.addLog("AMCENC", "song=${song.id} in=${encrypted.size} out=${out.length()} ${System.currentTimeMillis() - t0}ms ${if (foreground) "fg" else "bg"}")
+                    out
+                } finally { decryptMutex.unlock() }
             } catch (e: Exception) {
                 Log.e("AMCENC", "decrypt failed for ${song.id}: ${e.message}", e); null
             } finally {
@@ -1815,7 +1842,7 @@ class PlayerViewModel @Inject constructor(
         // absent) proxy. decryptToFile writes clear_<id>.mp4, which the next play or
         // crossfade then reuses instantly.
         if (useStandalone() && song.id !in proxyOnlySongIds) {
-            viewModelScope.launch { runCatching { decryptToFile(song) } }
+            viewModelScope.launch { runCatching { decryptToFile(song, foreground = false) } }
             return
         }
         val url = repo.prefetchUrl(song.id)
