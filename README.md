@@ -1,253 +1,103 @@
+<div align="center">
+
 # Apple Music TV
 
-A native **Android TV / Fire TV** Apple Music client. It runs **fully standalone**
-— catalog, library, lyrics, artwork **and audio decryption all happen on-device**,
-no computer required. An optional **PC proxy server** is still supported as an
-alternate audio path (useful for debugging or offloading decryption).
+**A native Apple Music client for Android TV & Fire TV.**
+Browse, search, your full library, word-synced lyrics, music videos, live radio — on the big screen.
+Runs **fully standalone on-device**. No computer required.
 
-> **Personal / educational project.** You need your own Apple Music subscription
-> and Music-User-Token. Streams are decrypted locally for playback only.
+[![Download APK](https://img.shields.io/badge/Download-APK-FA233B?style=for-the-badge&logo=android&logoColor=white)](https://github.com/JObersi10/apple-music-tv/releases/download/dev/app-debug.apk)
+[![Releases](https://img.shields.io/badge/All-Releases-333?style=for-the-badge&logo=github&logoColor=white)](https://github.com/JObersi10/apple-music-tv/releases)
 
-## Modes
+![status](https://img.shields.io/badge/status-active-brightgreen) ![platform](https://img.shields.io/badge/platform-Fire%20TV%20%7C%20Android%20TV-blue) ![license](https://img.shields.io/badge/use-personal%20%2F%20educational-lightgrey)
 
-| Mode | What runs | When to use |
-|------|-----------|-------------|
-| **Standalone** (default) | A pure-Kotlin software **Widevine CDM** + CENC decryptor on the Fire TV decrypts each song in-app. No PC. | Normal use — nothing else to run. |
-| **Proxy** (optional) | The PC server fetches + decrypts audio and serves seekable MP4 over your LAN. | Debugging, or devices where in-app decrypt struggles. |
+</div>
 
-Toggle in **⚙ Settings → Playback → Standalone**, or point the app at a PC in
-**Settings → Open Dev Menu → PC Server**.
+> **Personal / educational project.** You bring your own Apple Music subscription and Music-User-Token. Streams are decrypted locally for playback only. Not affiliated with Apple.
 
 ---
 
-## Architecture
+## What it does
 
-| Part | Stack |
-|------|-------|
-| **Android app** | Jetpack Compose for TV, Media3 ExoPlayer, Hilt, Retrofit + Moshi, Coil |
-| **On-device decrypt** (standalone) | Pure-Kotlin software **Widevine L3 CDM** + `cenc` AES-CTR fMP4 decryptor, feeding clear AAC straight to ExoPlayer |
-| **Proxy server** (optional) | Bun + Hono, wrapping `amp-api-edge.music.apple.com` + `play.itunes.apple.com` |
-| **Proxy decryption** | `gamdl` + `pywidevine` (Widevine license) + `mp4decrypt` + `ffmpeg` remux |
+A proper 10-foot Apple Music experience built with Jetpack Compose for TV — the same content you get on the web player, laid out for a remote:
 
-**Standalone:** the app talks directly to `amp-api-edge.music.apple.com`, obtains a
-Widevine license, derives the content key on-device, decrypts the CENC audio, and
-plays it — no PC involved. **Proxy (optional):** the server does the fetch/decrypt/
-remux instead and serves a seekable MP4 over HTTP Range.
+- **Listen Now, Browse, Library, Search** with Apple's real editorial shelves.
+- **Full-screen Now Playing** with a live album-colour background and **word-by-word synced lyrics**.
+- **Music videos, live radio, and stations** — all playable.
+- **On-device playback** — a pure-Kotlin Widevine CDM decrypts each song right on the TV. No PC, no sidecar server.
+
+---
+
+## Screenshots
+
+<!-- TODO: drop 4–6 real Fire TV screenshots into docs/screenshots/ and update the paths below.
+     Suggested set: Listen Now, Browse, Now Playing (lyrics), Now Playing (dynamic background),
+     Library, Music Video. A short demo GIF (browse → lyrics → Now Playing) placed right here,
+     above the table, helps enormously — especially for AFTVnews-style coverage. -->
+
+| Listen Now | Now Playing — Lyrics | Dynamic Background |
+|---|---|---|
+| _add `docs/screenshots/listen-now.png`_ | _add `docs/screenshots/lyrics.png`_ | _add `docs/screenshots/now-playing.png`_ |
+
+| Library | Browse | Music Video |
+|---|---|---|
+| _add `docs/screenshots/library.png`_ | _add `docs/screenshots/browse.png`_ | _add `docs/screenshots/music-video.png`_ |
 
 ---
 
 ## Features
 
-- Listen Now, Browse, Library (playlists / albums / artists / songs), Search
-- Full-screen **Now Playing** with an animated color-pool background from the cover
-- **Word-by-word synced lyrics** (Apple TTML, with `lrclib.net` fallback)
-- Animated (motion) album artwork where Apple provides it
-- Artist pages: top songs, latest release, albums, featured, similar artists
-- Long-press context menu (Play Next / Add to Queue / Go to Artist / Go to Album)
-- Word-synced lyrics with **prefetch** (next song's lyrics warm before it starts), a
-  soft karaoke wipe, and edge-faded scrolling
-- **Full-Screen Lyrics** mode (··· menu) — enlarged words, corner transport controls
-  that fade on idle, lands on the current line, auto-returns to the play button
-- **Ambient screensaver** — after an idle timeout (set in Settings, off…2h) the screen
-  cross-dissolves to a dimmed drifting background + a small now-playing chip
-- **Background play** — audio keeps playing when you leave the app (toggle in Settings);
-  when paused, the screen is released so Fire TV's own screensaver/sleep can take over
-- **Picture-in-Picture** (··· menu) — shrinks to a corner card with darkened album art +
-  title (may not be supported on all Fire TV hardware)
-- **"Next: …" toast** ~15 s before the track switches
-- Search also returns **playlists** (Apple editorial ranked first)
-- **24-hour cache expiry** for lyrics and artwork, plus a hard **100 MB disk cap** on the
-  artwork cache (LRU-evicted) so it can't grow unbounded on large drives
-- **In-app updater** — checks GitHub Releases on launch, shows a red dot on the ⚙ tab and a
-  Settings → Software card to download + install the new APK. A **Beta updates** toggle opts
-  into prerelease builds
-- **Crash log + bug report** — a global crash handler records the last crash on-device; the
-  phone web server (port 8080) serves a one-file bug report (app version, device, last crash,
-  recent app + network logs) via **Download Bug Report**
-- **Artist Stations** — a generated, shuffle mix from an artist + similar artists
-- **Internet Radio** tab — geo-detected local stations (radio-browser.info), add any
-  country by name (with spell-correction), plus "now playing" song ID from ICY stream
-  metadata (pulls Apple artwork + lyrics for the current track)
-- **Now Playing background** — three looks: **Dynamic** (drifting album-colour pools,
-  each orb pinned to a distinct palette colour for an oil-painting spread), **Projector**
-  (three beat-reactive band orbs — bass / vocal / treble), and plain **Black**. The beat
-  pulse is critically damped so each hit lands once and decays cleanly
-- **Now Playing customization** (Settings → dev tools) — **Intensity** (Calm…Crazy,
-  remembered *per background mode*), **Orb speed** (Projector), **Lyrics size**
-  (Small/Normal/Large), **Rounded vs square artwork**, **Motion artwork** toggle,
-  **Reduce motion** (holds the orbs still), and **Low Power Mode** (fewer/simpler orbs
-  for weaker hardware)
-- **Volume leveling** (experimental, off by default) — RMS loudness leveling in the audio
-  chain
-- **⚙ Settings** screen — Crossfade, Standalone toggle, Screensaver timeout, Background
-  play, Lyrics offset, Beat latency, live network log, and Reset App (replaces the old
-  dev menu; dev tools tucked inside)
-- **Apple Music Radio** — Apple Music 1 / Hits / Country **live** stations play (Widevine
-  live HLS), with the current-track title/artist, a LIVE badge, and synced lyrics for the
-  track on air. Radio *shows* (non-live episodes) are hidden until playback is wired.
-- **Radio stations** — a station card plays its rolling next-tracks queue.
-- **Music videos & interviews** — play full-screen, grouped ("Music Videos", "Behind the
-  Songs"), and surface on artist pages.
-- **Dead library songs** — a library track whose in-library release was withdrawn falls back
-  to the catalog copy on-device automatically, so it still plays.
-- **Library** — modern left-sidebar categories (Playlists / Albums / Artists / Songs), a sort
-  popup **remembered per playlist**, pinned playlists, on-device caching
-- **Per-tab navigation memory** — each tab returns to the page you left it on
-- Remote/controller media keys via a Media3 `MediaSession`
+**Playback**
+- Fully standalone on-device decryption (no computer needed).
+- Live Apple Music Radio (Apple Music 1 / Hits / Country), stations, and per-song **Create Station**.
+- Gapless playback, crossfade (1–15 s), and a **sleep timer** that fades out over 5 s.
+- Dead / withdrawn library tracks fall back to their catalog copy automatically.
+
+**Now Playing**
+- Word-by-word synced lyrics (Apple TTML, `lrclib.net` fallback) with a full-screen lyrics mode.
+- Three background looks — **Dynamic** (album-colour pools), **Projector** (beat-reactive orbs), **Black** — plus a beat pulse and motion (animated) artwork.
+- Ambient **screensaver**, background play, scrub bar, and sleep timer.
+
+**Browsing & Library**
+- Real editorial Home (Top Picks, Featured, Find Your Mood, genre/mood/decade tiles).
+- Music videos & interviews, grouped and on artist pages.
+- Library with left-sidebar categories, per-playlist sort memory, and pinned playlists.
+- Per-tab navigation memory — each tab returns to where you left it.
+
+**Quality of life**
+- In-app updater (checks GitHub Releases; optional beta channel).
+- Low Power Mode, adjustable lyrics size, rounded/square artwork, reduce motion.
+- Volume leveling (experimental), on-device caching, remote/controller media keys.
 
 ---
 
-## Prerequisites
+## Installation
 
-**Server — OPTIONAL** (standalone mode needs none of this; only set it up if you
-want the proxy audio path):
+1. **Download the APK** — [latest build](https://github.com/JObersi10/apple-music-tv/releases/download/dev/app-debug.apk) (or pick one from [Releases](https://github.com/JObersi10/apple-music-tv/releases)).
+2. **Sideload it** onto your Fire TV / Android TV:
+   ```bash
+   adb connect <TV_IP>
+   adb install -r app-debug.apk
+   ```
+   (Or use a sideload app like Downloader with the release URL.)
+3. **Add your Music-User-Token** — open `http://<TV_IP>:8080` on your phone and paste it in. The app runs a tiny setup page there. [How to find your token →](docs/TECHNICAL.md#getting-your-music-user-token)
 
-**Server (macOS/Linux):**
-- [Bun](https://bun.sh)
-- Python 3 with [`gamdl`](https://github.com/glomatico/gamdl) + `pywidevine`
-  installed (a valid `.wvd` Widevine device is required by gamdl)
-- `mp4decrypt` (Bento4) and `ffmpeg` on your `PATH`
-
-**Android:**
-- Android Studio / Android SDK (compileSdk 35), JDK 17
-- An Android TV or Fire TV device with ADB enabled
+That's it — standalone mode needs no server. To use the optional PC proxy path instead, see the [technical guide](docs/TECHNICAL.md#optional-pc-proxy-server).
 
 ---
 
-## Setup
+## Technical details
 
-### 1. Server — one-shot setup
+Architecture, the optional PC proxy server, the on-device Widevine/CENC pipeline, auth flow, CI, and build notes live in **[docs/TECHNICAL.md](docs/TECHNICAL.md)**.
 
-The setup script installs everything (Bun, Python + gamdl + pywidevine, ffmpeg,
-Bento4 mp4decrypt) into normal locations and writes `server/.env` for you.
-gamdl ships its own embedded Widevine device, so no `.wvd` file is needed.
+Deeper dives: [Apple Music API notes](docs/apple-music-api.md) · [MUT flow](docs/mut-flow.md) · [Projector mode](docs/PROJECTOR_MODE_NOTES.md).
 
-**macOS:**
-```bash
-cd server
-./setup-mac.sh
-bun run src/index.ts      # http://0.0.0.0:3000
-```
+## Contributing & security
 
-**Windows (PowerShell):**
-```powershell
-cd server
-powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1
-bun run src/index.ts
-```
-
-<details>
-<summary>Manual setup / what the script does</summary>
-
-Install `bun`, `ffmpeg`, `mp4decrypt` (Bento4), and Python; create a venv and
-`pip install gamdl pywidevine httpx`; then copy `.env.example` to `.env` and set
-the paths. `.env` (gitignored) holds machine-specific values:
-
-```
-GAMDL_SITE=              # empty when PYTHON_BIN is a venv that already has gamdl
-PYTHON_BIN=/path/to/.venv/bin/python
-MP4DECRYPT_BIN=mp4decrypt
-FFMPEG_BIN=ffmpeg
-```
-</details>
-
-### 2. Android
-
-Add your machine's LAN IP to `android/local.properties` (gitignored):
-
-```
-proxyBaseUrl=http://192.168.1.50:3000/
-```
-
-Build & install:
-
-```bash
-cd android
-./gradlew assembleDebug
-adb connect <FIRE_TV_IP>
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-### 3. Set your Music-User-Token
-
-The Fire TV runs a small web server on port **8080**. Open
-`http://<FIRE_TV_IP>:8080` on your phone and paste your Music-User-Token. It's
-stored on-device and synced to the proxy server (`server/auth-state.json`).
-
-**How to find your Music-User-Token:**
-1. Open `music.apple.com` in a browser
-2. DevTools → Network tab
-3. Click anything that loads music content
-4. Find any request to `amp-api-edge.music.apple.com`
-5. Copy the `Music-User-Token` request header value
-
-**Bearer token** is scraped automatically from `music.apple.com`'s JS bundle on
-server startup — you don't need to find or set it manually.
-
-### Auth state storage
-
-Both tokens are persisted in `server/auth-state.json` (gitignored):
-
-```json
-{
-  "mut": "...",
-  "bearerToken": "eyJ...",
-  "mutSetAt": 1234567890000
-}
-```
-
-This file is **never committed** (listed in `.gitignore`). If you need to reset:
-delete `auth-state.json` and restart the server — bearer is re-scraped, MUT must
-be re-entered via the phone web server.
-
----
-
-## Building the APK via GitHub Actions
-
-The **Android APK** workflow ([`.github/workflows/android.yml`](.github/workflows/android.yml))
-runs on every push to `main`, every PR to `main`, and on manual dispatch. Each run:
-
-1. Sets up JDK 17 + the Android SDK.
-2. Writes a default `local.properties` (`proxyBaseUrl=http://10.0.2.2:3000/`) so the
-   build compiles without your local config.
-3. Runs unit tests (`./gradlew :app:test`).
-4. Builds the debug APK (`./gradlew assembleDebug`).
-5. Uploads it as the **`app-debug`** artifact on the run.
-6. On pushes to `main`, publishes/updates the rolling **`dev`** pre-release with the APK.
-
-**Getting the APK:**
-- Latest `main` build — repo **Releases → "Latest build"** → `app-debug.apk`
-  (no login required), or
-- A specific run — that run's **Actions → Artifacts → `app-debug`**.
-
-Sideload it: `adb install -r app-debug.apk`.
-
-### Releasing (and the in-app updater)
-
-The app polls **`releases/latest`** on launch. For it to detect a new version, bump both
-`versionCode` and `versionName` in `android/app/build.gradle.kts` **and** tag the GitHub
-release with a higher number than the running build (e.g. current build is `1.1`, so tag the
-next release `v1.2`). The updater compares numerically after stripping a leading `v`, so
-`v1.2` > `1.1`; an equal version is not offered. Mark a release **prerelease** to reach only
-users who've enabled **Beta updates** in Settings → Software.
-
-### Committing / pushing
-
-`main` is the working branch; a push there triggers the workflow and refreshes the `dev`
-release. Native Widevine libs live in `android/app/src/main/jniLibs/` and the FFmpeg
-Media3 decoder in `android/app/libs/` — both are committed (the build needs them). Secrets
-(`auth-state.json`, `*.keystore`) are git-ignored and must never be committed.
-
----
-
-## Security notes
-
-- `server/auth-state.json`, `server/.env`, and `android/local.properties` are
-  **gitignored** — they hold your token/paths and must never be committed.
-- The proxy binds to `0.0.0.0`; run it only on a trusted LAN.
-- Your MUT grants full access to your Apple Music library and account — treat it
-  like a password. Never share it or commit it.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to build and where things live.
+- [SECURITY.md](SECURITY.md) — token handling and how to report issues.
+- [ROADMAP.md](ROADMAP.md) — what's planned next.
 
 ## License
 
-For personal and educational use. Not affiliated with Apple.
+For personal and educational use. Not affiliated with, or endorsed by, Apple.

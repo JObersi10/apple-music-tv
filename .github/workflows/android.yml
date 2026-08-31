@@ -52,6 +52,15 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+      # Delete the previous dev release + tag first, so the re-created one gets a fresh
+      # creation date and sorts to the TOP of the Releases list (GitHub orders by created_at;
+      # an updated-in-place release keeps its old date and sinks below newer tags).
+      - name: Remove old dev release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: gh release delete dev --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       # Publish a rolling "dev" release on every push to main.
       # Anyone with the repo URL can download the APK — no login required.
       - name: Publish dev release
