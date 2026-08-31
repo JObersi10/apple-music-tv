@@ -1,6 +1,50 @@
 # Handoff — Apple Music TV
 
-Last updated: 2026-08-19
+Last updated: 2026-08-30
+
+## Session 2026-08-30 — dead-song fallback, Listen Now resilience, scroll perf (v1.2)
+
+Playback:
+- **Dead library songs now play.** Uploaded/matched "internet songs" (`i.` rows) whose
+  in-library release is withdrawn fail on-device DRM (`No value for license`) and have **no
+  catalog relationship**. On a standalone failure `PlayerViewModel.onPlayerError` resolves a
+  catalog id — the linked `catalog` relationship first, else a **title+artist catalog search**
+  (`AppleDirectClient.searchCatalogSongId`, artist+title match only, never a blind top hit) — and
+  rebuilds the on-device source from that catalog copy, exactly like playing from Apple Music.
+  Proxy is now the *last* resort (`retryStandaloneOrProxy`), not the first. Verified: "It's Me,
+  It's Verity" → catalog `6799279367` decrypts + plays on-device, no proxy.
+
+Listen Now:
+- **Personalization no longer vanishes.** `HomeViewModel` cache guard is now personalization-aware
+  (`isPersonalized()` = presence of the `picks`/`gradient` shelves), not section-count based. A
+  charts/moods/categories feed can't overwrite or get cached over a personalized feed. Fixes Home
+  collapsing during Apple's intermittent `/me/recommendations` 500 streaks.
+- **Dev → Re-check Server / Refresh** now reload Home+Library **after** reachability settles
+  (`recheckServer(onDone=)` / `refresh(onDone=)`), fixing a race where the reload ran on the stale
+  path and Listen Now didn't update.
+
+Perf / UX:
+- **Menu scroll lag** — `InAppWebServer.addLog` mirrored every log line to the proxy over HTTP;
+  when the proxy is unreachable (standalone-primary) each blocked an IO thread ~1s and starved
+  Coil image decode. Now skipped unless `serverReachable`.
+- **Motion-card scroll jank** — `MotionArtwork` now waits **1 s after focus settles** before
+  building the ExoPlayer. Arrowing through "Playlists Made for You" was building+releasing a
+  decoder per card passed (the `ExoPlayerImpl Init…Release` churn). Scroll past fast → never starts.
+- **Now Playing grey background** — palette load now uses a software RGB_565 bitmap, reuses Coil's
+  cache, and retries once; a covers-with-art-but-grey-backdrop case (DIGIDI DIGIDI, real blue/purple)
+  was the palette's separate fetch returning a non-readable/null bitmap. Missing/failed artwork now
+  gets a **stable seeded colour** from the song id instead of flat grey (true B&W covers still grey).
+- **Skeleton** — first row is the big Top Picks lockup (210 dp) so the swap to real Home doesn't jump.
+
+Removed:
+- **Radio shows** dropped from Browse (shelf `stations` items + "NEW RADIO SHOW" spotlight cards),
+  both `browse.ts` and standalone `DirectBrowseSource` — they don't play yet.
+
+Version bumped to **1.2** (`versionCode 3`); Dev-menu build line reads `BuildConfig.VERSION_NAME`.
+
+---
+
+## Session 2026-08-19 — Now Playing customization, perf/footprint, updater grant fix (v1.1 release prep)
 
 ## Session 2026-08-19 — Now Playing customization, perf/footprint, updater grant fix (v1.1 release prep)
 

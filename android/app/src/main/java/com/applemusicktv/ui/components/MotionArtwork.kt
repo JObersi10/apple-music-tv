@@ -31,8 +31,18 @@ fun MotionArtwork(url: String, play: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var ready by remember(url) { mutableStateOf(false) }
 
-    val exo = remember(url, play) {
-        if (!play) null else {
+    // Wait ~1s after focus settles before spinning up the video decoder. Arrowing THROUGH a row
+    // (Playlists Made for You) focuses each card for a moment; without this every card you pass
+    // built and released an ExoPlayer, and that churn was the scroll jank. Scroll past fast → the
+    // decoder never starts.
+    var playDebounced by remember(url) { mutableStateOf(false) }
+    LaunchedEffect(url, play) {
+        if (play) { kotlinx.coroutines.delay(1000); playDebounced = true }
+        else playDebounced = false
+    }
+
+    val exo = remember(url, playDebounced) {
+        if (!playDebounced) null else {
         // Cap the adaptive ladder — motion-art masters offer up to ~6 Mbps 1080p HEVC, far more than a
         // small card needs, and it choked the decoder. A low rung looks identical at card size.
         val selector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
@@ -59,7 +69,7 @@ fun MotionArtwork(url: String, play: Boolean, modifier: Modifier = Modifier) {
         onDispose { exo?.removeListener(l) }
     }
 
-    val alpha by animateFloatAsState(if (ready && play) 1f else 0f, tween(320), label = "motionArt")
+    val alpha by animateFloatAsState(if (ready && playDebounced) 1f else 0f, tween(320), label = "motionArt")
     if (exo == null) return
 
     androidx.compose.ui.viewinterop.AndroidView(

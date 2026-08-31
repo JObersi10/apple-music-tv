@@ -980,13 +980,18 @@ private fun rememberArtworkPalette(artworkUrl: String?, seed: String = ""): List
             // memory-starved Fire TV. 256² is ~256 KB and gives an identical palette. Reuse Coil's
             // shared loader instead of spinning up a new ImageLoader per song.
             val loader = context.applicationContext.let { coil.Coil.imageLoader(it) }
-            // Don't let the palette's small ARGB bitmap sit in Coil's memory cache — it's used once,
-            // right here, then thrown away. (The displayed artwork is a separate, cached request.)
-            val request = ImageRequest.Builder(context).data(artworkUrl).size(256).allowHardware(false)
-                .memoryCachePolicy(coil.request.CachePolicy.DISABLED).build()
-            val result = loader.execute(request)
-            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
-                ?: run { colors = seeded; return@LaunchedEffect }   // load failed → seeded colour, not grey
+            // Software (RGB_565) bitmap so Palette can always read the pixels — a hardware bitmap
+            // (or a null drawable from the previously-disabled cache path) made execute() return
+            // nothing for some covers (DIGIDI DIGIDI: real blue/purple art, grey backdrop). Let it
+            // reuse Coil's cache too, and retry once, so a single transient miss doesn't fall to grey.
+            fun paletteRequest() = ImageRequest.Builder(context).data(artworkUrl).size(256)
+                .allowHardware(false).bitmapConfig(android.graphics.Bitmap.Config.RGB_565).build()
+            var bitmap = (loader.execute(paletteRequest()).drawable as? BitmapDrawable)?.bitmap
+            if (bitmap == null) {
+                kotlinx.coroutines.delay(250)
+                bitmap = (loader.execute(paletteRequest()).drawable as? BitmapDrawable)?.bitmap
+            }
+            if (bitmap == null) { colors = seeded; return@LaunchedEffect }   // still nothing → seeded, not grey
             // Finer quantization (32 vs 16) surfaces smaller accent regions — a teal logo, a red
             // jacket — that the 6 named roles miss entirely.
             val p = Palette.from(bitmap).maximumColorCount(32).generate()
