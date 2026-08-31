@@ -9,6 +9,22 @@ Rough direction, not a promise. Roughly ordered by impact.
 - **Queue editing** — reorder and remove from Up Next with the D-pad (list-mutation only, no decoder juggling).
 - **Lyrics translation** — Apple-style translated line under each original; probe Apple's endpoint first, else on-device ML Kit translation.
 - **Autoplay / infinite mix** — station-style continuation when the queue ends.
+- **Automatic MUT capture (sign-in, no copy-paste)** — kill the manual "copy the token from
+  devtools" step. Two routes, in order of realism:
+  - **Phone companion sign-in (preferred).** The existing `:8080` phone page gains a "Sign in to
+    Apple Music" button that opens `music.apple.com` in the phone's own browser/WebView. Once the
+    user logs in there (2FA is native and painless on a phone, unlike a TV remote), the session's
+    **`media-user-token`** lives in the site's cookies / `localStorage` — read it and POST it to the
+    TV automatically. Same endpoint the manual paste already hits; we're just filling the box for them.
+    The current QR/8080 pairing is the skeleton — this replaces the paste with an extract.
+  - **On-TV WebView sign-in.** An in-app `WebView` pointed at `music.apple.com`; after auth, pull the
+    same `media-user-token`. Cleanest UX (never leave the couch) but riskier: typing an Apple ID +
+    2FA on a D-pad is rough, and Apple may block embedded/WebView logins or throw a captcha.
+  - **Feasibility / caveats.** There is no official token API — both routes read the token the web
+    player itself stores after a real login, so this is scraping our own authenticated session, not
+    Apple's servers. Watch for: 2FA, captchas, and login-flow HTML changes (same fragility as the
+    bearer scrape). Bearer + storefront detection already exist server-side, so only the MUT hand-off
+    is new. Start with the phone route; treat the on-TV WebView as a stretch.
 
 ## UI Overhaul — match the real Apple Music app
 
