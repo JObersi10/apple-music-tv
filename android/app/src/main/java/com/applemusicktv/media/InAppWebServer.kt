@@ -38,26 +38,47 @@ class InAppWebServer @Inject constructor(
     private var job: Job? = null
     private var eventJob: Job? = null
     private var appScope: CoroutineScope? = null
+    private var serverSocket: ServerSocket? = null
+    private var eventSocket: ServerSocket? = null
     val port = 8080
     val eventPort = 8081
+
+    private val wsPrefs = context.getSharedPreferences("webserver_prefs", Context.MODE_PRIVATE)
+    /** User toggle (Dev → Web Server). Default ON. */
+    val isEnabled: Boolean get() = wsPrefs.getBoolean("web_enabled", true)
+    val running: Boolean get() = job?.isActive == true
+
+    /** Called once at app start: remember the scope and start only if enabled. */
+    fun boot(scope: CoroutineScope) {
+        appScope = scope
+        if (isEnabled) start(scope)
+    }
+
+    /** Toggle from Settings — starts or stops the phone web server and persists the choice. */
+    fun setEnabled(on: Boolean) {
+        wsPrefs.edit().putBoolean("web_enabled", on).apply()
+        if (on) appScope?.let { start(it) } else stop()
+    }
 
     fun start(scope: CoroutineScope) {
         if (job?.isActive == true) return
         appScope = scope
+        // Stream network-request lines live too, so :8081 and the web page show ALL logs, not just app logs.
+        NetworkLog.listener = { line -> broadcastLive(line) }
         job = scope.launch(Dispatchers.IO) {
-            val server = ServerSocket(port)
+            val server = try { ServerSocket(port).also { serverSocket = it } } catch (_: Exception) { return@launch }
             while (isActive) {
-                try { val s = server.accept(); launch { handle(s) } } catch (_: Exception) {}
+                try { val s = server.accept(); launch { handle(s) } } catch (_: Exception) { if (!isActive) break }
             }
-            server.close()
+            try { server.close() } catch (_: Exception) {}
         }
         eventJob = scope.launch(Dispatchers.IO) {
-            val server = try { ServerSocket(eventPort) } catch (e: Exception) {
+            val server = try { ServerSocket(eventPort).also { eventSocket = it } } catch (e: Exception) {
                 addLog("WARN", "Event port $eventPort in use — kill previous instance and restart")
                 return@launch
             }
             while (isActive) {
-                try { val s = server.accept(); launch { handleEvent(s) } } catch (_: Exception) {}
+                try { val s = server.accept(); launch { handleEvent(s) } } catch (_: Exception) { if (!isActive) break }
             }
             try { server.close() } catch (_: Exception) {}
         }
@@ -66,7 +87,13 @@ class InAppWebServer @Inject constructor(
         addLog("OK", "Event stream: curl http://$ip:$eventPort")
     }
 
-    fun stop() { job?.cancel(); eventJob?.cancel() }
+    // Close the sockets too — cancelling the job alone leaves accept() blocked and the port bound.
+    fun stop() {
+        job?.cancel(); eventJob?.cancel()
+        runCatching { serverSocket?.close() }; serverSocket = null
+        runCatching { eventSocket?.close() }; eventSocket = null
+        addLog("OK", "Web server stopped")
+    }
 
     fun addLog(level: String, msg: String) {
         val t = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
@@ -75,17 +102,7 @@ class InAppWebServer @Inject constructor(
             if (logs.size >= 300) logs.removeFirst()
             logs.addLast(line)
         }
-        val sseData = "data: ${line.replace("\n", " ")}\n\n".toByteArray()
-        val dead = mutableListOf<java.io.OutputStream>()
-        for (out in sseClients) { try { out.write(sseData); out.flush() } catch (_: Exception) { dead.add(out) } }
-        sseClients.removeAll(dead)
-        // Push to event stream clients on IO thread (network I/O must not run on main thread)
-        val eventLine = "${line.replace("\n", " ")}\n".toByteArray()
-        appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val dead = mutableListOf<java.io.OutputStream>()
-            for (out in eventClients) { try { out.write(eventLine); out.flush() } catch (_: Exception) { dead.add(out) } }
-            eventClients.removeAll(dead)
-        }
+        broadcastLive(line)
         appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val body = """{"level":"$level","msg":${org.json.JSONObject.quote(msg)}}"""
@@ -100,6 +117,20 @@ class InAppWebServer @Inject constructor(
                 conn.responseCode
                 conn.disconnect()
             } catch (_: Exception) {}
+        }
+    }
+
+    /** Push one line to every live listener — SSE (web page) and the raw :8081 event stream. */
+    private fun broadcastLive(line: String) {
+        val sseData = "data: ${line.replace("\n", " ")}\n\n".toByteArray()
+        val deadSse = mutableListOf<java.io.OutputStream>()
+        for (out in sseClients) { try { out.write(sseData); out.flush() } catch (_: Exception) { deadSse.add(out) } }
+        sseClients.removeAll(deadSse)
+        val eventLine = "${line.replace("\n", " ")}\n".toByteArray()
+        appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val dead = mutableListOf<java.io.OutputStream>()
+            for (out in eventClients) { try { out.write(eventLine); out.flush() } catch (_: Exception) { dead.add(out) } }
+            eventClients.removeAll(dead)
         }
     }
 
@@ -147,6 +178,8 @@ class InAppWebServer @Inject constructor(
                 method == "POST" && path == "/set-crossfade"       -> { applyCrossfade(parseField(body, "crossfade")); redirect(out, "/") }
             method == "POST" && path == "/set-standalone"      -> { applyStandalone(parseField(body, "standalone")); redirect(out, "/") }
             method == "POST" && path == "/set-server-ip"       -> { applyServerIp(parseField(body, "serverip")); redirect(out, "/") }
+                method == "POST" && path == "/set-volume-leveling" -> { applyVolumeLeveling(parseField(body, "vol")); redirect(out, "/") }
+                method == "POST" && path == "/set-background-play" -> { applyBackgroundPlay(parseField(body, "bg")); redirect(out, "/") }
                 else -> send(out, 404, "text/plain", "Not found")
             }
             out.flush(); socket.close()
@@ -159,6 +192,22 @@ class InAppWebServer @Inject constructor(
         beatAnalyzer.latencyMs = ms
         beatAnalyzer.resetBeat()
         addLog("OK", "Beat latency set to ${ms}ms — buffer reset")
+    }
+
+    /** Player settings live in the "player_state" prefs the ViewModel owns. */
+    private fun playerPrefs() = context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
+
+    private fun applyVolumeLeveling(raw: String) {
+        val on = raw.trim() == "1"
+        GainProcessor.enabled = on   // takes effect on the audio thread immediately
+        playerPrefs().edit().putBoolean("volume_leveling", on).apply()
+        addLog("OK", "Volume leveling ${if (on) "ON" else "OFF"}")
+    }
+
+    private fun applyBackgroundPlay(raw: String) {
+        val on = raw.trim() == "1"
+        playerPrefs().edit().putBoolean("background_play", on).apply()
+        addLog("OK", "Background play ${if (on) "ON" else "OFF"} — applies on next launch")
     }
 
     private fun applyServerIp(raw: String) {
@@ -278,6 +327,9 @@ class InAppWebServer @Inject constructor(
         val currentBeatLatency = beatAnalyzer.latencyMs
         val standaloneOn = standalonePrefs.isEnabled()
         val serverIp = serverPrefs.getPcServerIp()
+        val pp = context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
+        val volLevelOn = pp.getBoolean("volume_leveling", false)
+        val bgPlayOn = pp.getBoolean("background_play", true)
         val currentCrossfade = crossfadePrefs.getDuration()
         val crossfadeSec = "%.1f".format(currentCrossfade / 1000f)
         val logRows = getLogs().reversed().take(80).joinToString("") { log ->
@@ -411,6 +463,26 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 <button class="btn ${if (standaloneOn) "" else "btn-p"}" type=submit style=margin-top:8px>${if (standaloneOn) "Turn OFF" else "Turn ON"}</button>
 </form>
 <div style="font-size:10px;color:#555;margin-top:8px">Talks to Apple directly for browse, library, search, artwork, lyrics AND playback — the PC is not needed at all. Songs start in ~1s instead of 15-20s. Trade-off: some tracks have segment gaps the PC remux repairs, so audio can chop. Applies from the next song.</div>
+</div>
+
+<div class=card>
+<h2>Volume Leveling</h2>
+<div class=row><div class=label>Status</div><div class=sub2 style="color:${if (volLevelOn) "#6bcb77" else "#aaa"}">${if (volLevelOn) "ON — evening out loudness" else "OFF — each track at its own level"}</div></div>
+<form method=POST action=/set-volume-leveling>
+<input type=hidden name=vol value="${if (volLevelOn) "0" else "1"}">
+<button class="btn ${if (volLevelOn) "" else "btn-p"}" type=submit style=margin-top:8px>${if (volLevelOn) "Turn OFF" else "Turn ON"}</button>
+</form>
+<div style="font-size:10px;color:#555;margin-top:8px">Slow automatic gain so quiet masters come up and loud ones come down. Takes effect immediately. Watch it work in the App Logs (VOL lines).</div>
+</div>
+
+<div class=card>
+<h2>Background Play</h2>
+<div class=row><div class=label>Status</div><div class=sub2 style="color:${if (bgPlayOn) "#6bcb77" else "#aaa"}">${if (bgPlayOn) "ON — keeps playing in background" else "OFF — pauses when you leave"}</div></div>
+<form method=POST action=/set-background-play>
+<input type=hidden name=bg value="${if (bgPlayOn) "0" else "1"}">
+<button class="btn ${if (bgPlayOn) "" else "btn-p"}" type=submit style=margin-top:8px>${if (bgPlayOn) "Turn OFF" else "Turn ON"}</button>
+</form>
+<div style="font-size:10px;color:#555;margin-top:8px">Applies on the next app launch.</div>
 </div>
 
 <div class=card>

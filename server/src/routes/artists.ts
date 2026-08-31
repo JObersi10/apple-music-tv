@@ -36,10 +36,10 @@ artistRoutes.get("/:id/full", async (c) => {
   }
 
   try {
-    const views = "top-songs,latest-release,full-albums,featured-albums,similar-artists"
+    const views = "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos"
     const url = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/artists/${id}` +
       `?views=${views}&extend=editorialNotes` +
-      `&limit[artists:top-songs]=20&limit[artists:full-albums]=30`
+      `&limit[artists:top-songs]=20&limit[artists:full-albums]=30&limit[artists:top-music-videos]=20`
     const res = await axios.get(url, { headers })
     const artist = res.data?.data?.[0]
     if (!artist) return c.json({ error: "Artist not found" }, 404)
@@ -47,6 +47,7 @@ artistRoutes.get("/:id/full", async (c) => {
     const v = artist.views ?? {}
 
     const topSongs = (v["top-songs"]?.data ?? []).map(normaliseSong)
+    const musicVideos = (v["top-music-videos"]?.data ?? []).map(normaliseSong)
     const latest   = (v["latest-release"]?.data ?? []).map(normaliseAlbum)
     const full     = (v["full-albums"]?.data ?? []).map(normaliseAlbum)
     const featured = (v["featured-albums"]?.data ?? []).map(normaliseAlbum)
@@ -63,6 +64,7 @@ artistRoutes.get("/:id/full", async (c) => {
       genreNames: attr.genreNames ?? [],
       editorialNotes: attr.editorialNotes?.standard ?? attr.editorialNotes?.short ?? null,
       topSongs,
+      musicVideos,
       latestRelease: latest[0] ?? null,
       albums: full,
       featuredAlbums: featured,

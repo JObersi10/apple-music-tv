@@ -95,7 +95,12 @@ class LibraryViewModel @Inject constructor(
     fun setSort(field: SortField) {
         val cur = _state.value.sort
         val newDir = if (cur.field == field && cur.dir == SortDir.ASC) SortDir.DESC else SortDir.ASC
-        val newSort = SortState(field, newDir)
+        setSort(field, newDir)
+    }
+
+    /** Explicit field + direction — used by the sort popup, which picks both. */
+    fun setSort(field: SortField, dir: SortDir) {
+        val newSort = SortState(field, dir)
         _state.value = _state.value.copy(sort = newSort)
         cachePrefs.edit {
             putInt("sort_field", newSort.field.ordinal)

@@ -9,6 +9,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -16,31 +19,48 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
+import kotlin.math.pow
 import com.applemusicktv.ui.navigation.TopNavTab
+import com.applemusicktv.ui.components.Glyph
+import com.applemusicktv.ui.components.Icon
 
+/** Beat-reactive 3-bar equalizer beside the Now Playing tab. A gentle per-bar wobble keeps it alive
+ *  between beats; the live [BeatAnalyzer] energy punches all three up on each beat (Apple-style). */
 @Composable
-private fun EqualizerDot() {
+private fun EqBars(beatAnalyzer: com.applemusicktv.media.BeatAnalyzer?) {
+    val energy by (beatAnalyzer?.energy?.collectAsState() ?: remember { mutableStateOf(0f) })
+    // Sensitivity: bass-onset energy peaks low, so lift small values (gamma < 1) and add gain
+    // before clamping — a quiet beat should still visibly punch the bars.
+    val sens = (energy.coerceIn(0f, 1f).pow(0.55f) * 1.6f).coerceIn(0f, 1f)
+    // Snappy attack, graceful fall.
+    val punch by animateFloatAsState(sens, tween(55, easing = LinearEasing), label = "eqPunch")
     val inf = rememberInfiniteTransition(label = "eq")
-    val h1 by inf.animateFloat(0.3f, 1f, infiniteRepeatable(tween(400, easing = LinearEasing), RepeatMode.Reverse), label = "h1")
-    val h2 by inf.animateFloat(1f, 0.3f, infiniteRepeatable(tween(300, easing = LinearEasing), RepeatMode.Reverse), label = "h2")
-    val h3 by inf.animateFloat(0.5f, 1f, infiniteRepeatable(tween(500, easing = LinearEasing), RepeatMode.Reverse), label = "h3")
+    val w1 by inf.animateFloat(0.30f, 0.70f, infiniteRepeatable(tween(430, easing = LinearEasing), RepeatMode.Reverse), label = "w1")
+    val w2 by inf.animateFloat(0.65f, 0.28f, infiniteRepeatable(tween(310, easing = LinearEasing), RepeatMode.Reverse), label = "w2")
+    val w3 by inf.animateFloat(0.38f, 0.72f, infiniteRepeatable(tween(520, easing = LinearEasing), RepeatMode.Reverse), label = "w3")
     Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(12.dp)) {
-        listOf(h1, h2, h3).forEach { frac ->
+        listOf(w1, w2, w3).forEach { wob ->
+            val frac = (wob * 0.28f + punch * 0.9f).coerceIn(0.18f, 1f)
             Box(Modifier.width(2.dp).fillMaxHeight(frac).clip(RoundedCornerShape(1.dp)).background(Color(0xFFFA233B)))
         }
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun TopNavBar(
     selected: TopNavTab,
     onSelect: (TopNavTab) -> Unit,
     isPlaying: Boolean = false,
     updateAvailable: Boolean = false,
+    beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null,
     modifier: Modifier = Modifier,
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    // When the Now Playing screen is up, ANY upward entry into the nav bar (from the
+    // ··· button, transport row, lyrics, etc.) must land on the Now Playing tab, not
+    // whichever tab sits nearest the pressed control.
+    val npTabFocus = remember { FocusRequester() }
     val alpha by animateFloatAsState(
         targetValue = if (selected == TopNavTab.NowPlaying && !isFocused) 0f else 1f,
         animationSpec = tween(500),
@@ -50,6 +70,9 @@ fun TopNavBar(
     Box(
         modifier = modifier
             .onFocusChanged { isFocused = it.hasFocus }
+            .focusProperties {
+                enter = { if (selected == TopNavTab.NowPlaying) npTabFocus else FocusRequester.Default }
+            }
             .graphicsLayer { this.alpha = alpha }
             .fillMaxWidth()
             .background(Color(0xFF0A0A0A))
@@ -58,10 +81,15 @@ fun TopNavBar(
     ) {
         Surface(
             shape  = RoundedCornerShape(50),
-            colors = SurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E)),
+            // Translucent material rather than a flat bar — reads as a floating pill.
+            colors = SurfaceDefaults.colors(containerColor = Color(0xE61C1C1E)),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color(0x14FFFFFF), 0.5f to Color.Transparent))
+                    .padding(horizontal = 6.dp, vertical = 5.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
@@ -74,6 +102,7 @@ fun TopNavBar(
 
                     Surface(
                         onClick = { onSelect(tab) },
+                        modifier = if (tab == TopNavTab.NowPlaying) Modifier.focusRequester(npTabFocus) else Modifier,
                         shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                         colors  = ClickableSurfaceDefaults.colors(
                             containerColor        = bgColor,
@@ -85,17 +114,23 @@ fun TopNavBar(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            Text(
-                                text       = tab.label,
-                                fontSize   = 13.sp,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                color      = textColor,
-                            )
-                            if (tab == TopNavTab.NowPlaying && isPlaying && !isSelected) {
-                                EqualizerDot()
+                            if (tab == TopNavTab.Dev) {
+                                // Settings tab is a gear (with a badge when an update is available).
+                                Icon(
+                                    if (updateAvailable) Glyph.GEAR_BADGE else Glyph.GEAR,
+                                    size = 18.dp, color = textColor,
+                                )
+                            } else {
+                                Text(
+                                    text       = tab.label,
+                                    fontSize   = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                    letterSpacing = if (isSelected) (-0.1).sp else 0.sp,
+                                    color      = textColor,
+                                )
                             }
-                            if (tab == TopNavTab.Dev && updateAvailable) {
-                                Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(Color(0xFFFA233B)))
+                            if (tab == TopNavTab.NowPlaying && isPlaying && !isSelected) {
+                                EqBars(beatAnalyzer)
                             }
                         }
                     }

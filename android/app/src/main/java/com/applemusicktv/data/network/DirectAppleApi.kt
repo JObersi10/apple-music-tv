@@ -128,6 +128,7 @@ data class AppleSearchResponse(val results: AppleSearchResults = AppleSearchResu
 
 fun AppleItem<AppleSongAttrs>.toSongDto() = SongDto(
     id             = id,
+    type           = type.ifEmpty { "songs" },
     title          = attributes?.name ?: "",
     artistName     = attributes?.artistName ?: "",
     albumName      = attributes?.albumName ?: "",
@@ -184,6 +185,18 @@ fun AppleItem<ApplePlaylistAttrs>.toPlaylistDto() = PlaylistDto(
     description    = attributes?.description?.short,
 )
 
+// ── Live-radio playback assets ────────────────────────────────────────────
+@JsonClass(generateAdapter = true)
+data class PlayAssetsResp(val results: PlayResults? = null)
+@JsonClass(generateAdapter = true)
+data class PlayResults(val assets: List<PlayAsset> = emptyList())
+@JsonClass(generateAdapter = true)
+data class PlayAsset(
+    val url: String? = null,
+    val keyServerUrl: String? = null,
+    val widevineKeyCertificateUrl: String? = null,
+)
+
 // ── Retrofit interface (base URL: https://amp-api-edge.music.apple.com/) ─
 
 interface DirectAppleApi {
@@ -214,6 +227,18 @@ interface DirectAppleApi {
         @Query("limit") limit: Int = 100,
         @Query("include") include: String = "catalog",
     ): AppleList<AppleItem<ApplePlaylistAttrs>>
+
+    // ── Library writes ──────────────────────────────────────────────────
+    // Add a catalog item to the library. Empty body; ids[<type>]=<id> query. Returns 202.
+    @POST("v1/me/library")
+    suspend fun addToLibrary(@QueryMap ids: Map<String, String>): retrofit2.Response<Unit>
+
+    // Append tracks to an editable library playlist.
+    @POST("v1/me/library/playlists/{id}/tracks")
+    suspend fun addTracksToPlaylist(
+        @Path("id") id: String,
+        @Body body: AddTracksBody,
+    ): retrofit2.Response<Unit>
 
     @GET("v1/me/library/playlists/{id}/tracks")
     suspend fun playlistTracks(
@@ -317,7 +342,7 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("views") views: String =
-            "top-songs,latest-release,full-albums,featured-albums,similar-artists",
+            "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos",
         @Query("extend") extend: String = "editorialArtwork,artistBio",
     ): Map<String, Any>
 
@@ -336,6 +361,14 @@ interface DirectAppleApi {
         @Query("extend") extend: String = "editorialVideo",
     ): Map<String, Any>
 
+    /** Apple radio rolling queue — POST returns a small batch of catalog songs each call.
+     *  (Verified via the web player: GET / /next / /queue all 405; only POST next-tracks works.) */
+    @POST("v1/me/stations/next-tracks/{id}")
+    suspend fun stationNextTracks(
+        @Path("id") id: String,
+        @Body body: Map<String, String> = emptyMap(),
+    ): AppleList<AppleItem<AppleSongAttrs>>
+
     /** Raw station resource — used to probe what a personalized ra.* mix exposes. */
     @GET("v1/catalog/{sf}/stations/{id}")
     suspend fun catalogStation(
@@ -343,6 +376,14 @@ interface DirectAppleApi {
         @Path("id") id: String,
         @Query("include") include: String = "tracks,contents,radio-show",
     ): Map<String, Any>
+
+    /** Live-radio playback assets. Absolute @Url — lives on amp-api.music.apple.com, not the
+     *  amp-api-edge base. The auth interceptor still adds bearer + Music-User-Token (both required). */
+    @GET
+    suspend fun playAssets(
+        @Url url: String,
+        @QueryMap params: Map<String, String>,
+    ): PlayAssetsResp
 
     /** Editorial playlists carry their own motion artwork, same shape as albums. */
     @GET("v1/catalog/{sf}/playlists/{id}")
@@ -375,6 +416,20 @@ interface DirectAppleApi {
         @Query("limit") limit: Int = 8,
     ): Map<String, Any>
 
+    /** The real music.apple.com Browse/New page — a single editorial GROUPING (name="music") whose
+     *  default tab holds every shelf in Apple's order. With the MUT header it comes personalized. */
+    @GET("v1/editorial/{sf}/groupings")
+    suspend fun editorialGrouping(
+        @Path("sf") storefront: String,
+        @Query("name") name: String = "music",
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+        @Query("include") include: String = "tabs",
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("art[url]") artUrl: String = "f",
+        @Query("limit[contents]") limitContents: Int = 24,
+    ): Map<String, Any>
+
     /** Raw search — the typed one only maps songs/albums/artists. */
     @GET("v1/catalog/{sf}/search")
     suspend fun searchRaw(
@@ -393,9 +448,122 @@ interface DirectAppleApi {
     @GET("v1/catalog/{sf}/genres")
     suspend fun catalogGenres(
         @Path("sf") storefront: String,
-        @Query("limit") limit: Int = 40,
+        @Query("limit") limit: Int = 200,
     ): AppleList<AppleItem<AppleGenreAttrs>>
+
+    // ── Editorial categories: curators + multirooms (standalone parity) ───────
+    @GET("v1/catalog/{sf}/search")
+    suspend fun edSearch(
+        @Path("sf") storefront: String,
+        @Query("term") term: String,
+        @Query("types") types: String,
+        @Query("with") with: String = "serverBubbles,topResults",
+        @Query("limit") limit: Int = 6,
+        @Query("platform") platform: String = "web",
+        @Query("l") l: String = "en-US",
+    ): EdSearchResponse
+
+    @GET("v1/catalog/{sf}/{kind}/{id}")
+    suspend fun edCurator(
+        @Path("sf") storefront: String,
+        @Path("kind") kind: String,
+        @Path("id") id: String,
+        @Query("include") include: String = "grouping,playlists",
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("limit[curators:playlists]") plLimit: Int = 10,
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+    ): EdDataResponse
+
+    @GET("v1/editorial/{sf}/groupings/{id}")
+    suspend fun edGrouping(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("include") include: String = "tabs",
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+    ): EdDataResponse
+
+    @GET("v1/editorial/{sf}/rooms/{id}")
+    suspend fun edRoom(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("include") include: String = "contents",
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("limit[contents]") contentsLimit: Int = 200,
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+    ): EdDataResponse
+
+    @GET("v1/editorial/{sf}/multirooms/{id}")
+    suspend fun edMultiRoom(
+        @Path("sf") storefront: String,
+        @Path("id") id: String,
+        @Query("extend") extend: String = "editorialArtwork",
+        @Query("include[albums]") incAlbums: String = "artists",
+        @Query("l") l: String = "en-US",
+        @Query("platform") platform: String = "web",
+    ): EdDataResponse
 }
 
 @JsonClass(generateAdapter = true)
 data class AppleGenreAttrs(val name: String = "")
+
+// ── Editorial discovery DTOs (curators + multirooms) ─────────────────────────
+@JsonClass(generateAdapter = true)
+data class EdArtwork(val url: String? = null, val bgColor: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class EdLink(val feature: String? = null, val url: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class EdNotes(val name: String? = null, val tagline: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class EdEditorialArtwork(
+    val subscriptionCover: EdArtwork? = null,
+    val brandLogo: EdArtwork? = null,
+    val superHeroWide: EdArtwork? = null,
+    val subscriptionHero: EdArtwork? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class EdAttrs(
+    val name: String? = null,
+    val title: String? = null,
+    val artistName: String? = null,
+    val curatorName: String? = null,
+    val artwork: EdArtwork? = null,
+    val url: String? = null,
+    val link: EdLink? = null,
+    val editorialNotes: EdNotes? = null,
+    val editorialArtwork: EdEditorialArtwork? = null,
+    val editorialElementKind: String? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class EdRels(
+    val children: EdListRel? = null,
+    val contents: EdListRel? = null,
+    val tabs: EdListRel? = null,
+    val grouping: EdListRel? = null,
+    val playlists: EdListRel? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class EdItem(
+    val id: String = "",
+    val type: String = "",
+    val attributes: EdAttrs? = null,
+    val relationships: EdRels? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class EdListRel(val data: List<EdItem> = emptyList())
+
+@JsonClass(generateAdapter = true)
+data class EdSearchResponse(val results: Map<String, EdListRel> = emptyMap())
+
+@JsonClass(generateAdapter = true)
+data class EdDataResponse(val data: List<EdItem> = emptyList())

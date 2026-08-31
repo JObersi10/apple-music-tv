@@ -18,6 +18,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.applemusicktv.ui.AppShell
+import com.applemusicktv.ui.viewmodel.MusicVideoViewModel
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import dagger.hilt.android.AndroidEntryPoint
@@ -30,6 +31,7 @@ class MainActivity : ComponentActivity() {
 
     private val navVm: NavigationViewModel by viewModels()
     private val playerVm: PlayerViewModel by viewModels()
+    private val mvVm: MusicVideoViewModel by viewModels()
 
     private val pipActionName = "com.applemusicktv.PIP_TOGGLE"
     private var pipReceiver: BroadcastReceiver? = null
@@ -76,7 +78,10 @@ class MainActivity : ComponentActivity() {
     /** Home / recents while on Now Playing → drop into PiP. Anywhere else, just keep playing. */
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (navVm.isOnNowPlaying && !isInPictureInPictureMode) enterPip()
+        // Only drop into PiP when something is actually PLAYING — a paused song/video should just
+        // background quietly, not pop a frozen PiP tile.
+        val playing = playerVm.state.value.isPlaying || mvVm.state.value.playing
+        if ((navVm.isOnNowPlaying || navVm.isOnMusicVideo) && playing && !isInPictureInPictureMode) enterPip()
     }
 
     override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
@@ -116,6 +121,25 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // While a video is active, media keys drive the VIDEO — never the (paused) audio
+        // player. D-pad keys still fall through so the fullscreen video screen (or the UI
+        // behind an in-app PiP) can handle them.
+        if (navVm.isOnMusicVideo) {
+            if (event.action == KeyEvent.ACTION_DOWN) when (event.keyCode) {
+                KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { mvVm.next(); return true }
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> { mvVm.prev(); return true }
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE ->
+                    { mvVm.togglePlayPause(); return true }
+                // A video can be the current track while you browse other tabs (it keeps playing).
+                // Only toggle the in-video queue when actually ON the video screen; elsewhere Menu
+                // brings the video fullscreen (Now Playing), same as for audio.
+                KeyEvent.KEYCODE_MENU -> {
+                    if (navVm.isOnNowPlaying) mvVm.toggleQueue() else navVm.navigateToNowPlaying()
+                    return true
+                }
+            }
+            return super.dispatchKeyEvent(event)
+        }
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_MENU -> {

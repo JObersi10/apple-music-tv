@@ -61,7 +61,13 @@ class DirectLyricsSource @Inject constructor(
         val isLibrary = songId.startsWith("i.")
         val sf = storefront.ifEmpty { "us" }
 
-        val ttmlLines = tryAppleTtml(songId, sf, isLibrary, headers)
+        // Apple's lyrics relationships live ONLY on the CATALOG song. A library id (i.*) 400s
+        // ("No relationship found matching 'syllable-lyrics'") on both the library endpoint and
+        // the catalog endpoint (the i.* id isn't a catalog id), so word-sync silently died and we
+        // always fell to lrclib. Resolve i.* → catalog id first, exactly like the proxy does.
+        val catalogId = if (isLibrary) resolveCatalogId(songId) else songId
+
+        val ttmlLines = if (catalogId.isNotEmpty()) tryAppleTtml(catalogId, sf, isLibrary = false, headers) else emptyList()
         if (ttmlLines.isNotEmpty()) return@withContext ttmlLines.also { store(songId, it) }
 
         // 2. lrclib fallback
@@ -71,6 +77,24 @@ class DirectLyricsSource @Inject constructor(
         }
 
         emptyList()
+    }
+
+    /** Library song (i.*) → its catalog song id via the catalog relationship. "" if none. */
+    private fun resolveCatalogId(libraryId: String): String {
+        return try {
+            val url = "https://amp-api-edge.music.apple.com/v1/me/library/songs/$libraryId?include=catalog"
+            val resp = httpClient.newCall(Request.Builder().url(url).build()).execute()
+            val body = resp.body?.string() ?: return ""
+            val id = JSONObject(body).optJSONArray("data")
+                ?.optJSONObject(0)?.optJSONObject("relationships")
+                ?.optJSONObject("catalog")?.optJSONArray("data")
+                ?.optJSONObject(0)?.optString("id") ?: ""
+            Log.i("DirectLyrics", "resolveCatalogId $libraryId → '$id' (http=${resp.code})")
+            id
+        } catch (e: Exception) {
+            Log.i("DirectLyrics", "resolveCatalogId $libraryId failed: ${e.message}")
+            ""
+        }
     }
 
     private fun tryAppleTtml(

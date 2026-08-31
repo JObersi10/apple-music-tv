@@ -136,43 +136,44 @@ function decodeStationId(id: string): string {
 albumRoutes.get("/station/:id/tracks", async (c) => {
   const rawId = c.req.param("id")
   const id = decodeStationId(rawId)
-  const sf = getStorefront() || "us"
   const headers = ampHeaders()
   console.log(`[station] id=${rawId} → resolved=${id}`)
 
-  // 1. Fetch station metadata to get stationHash, then use it to get queue
+  // Apple radio streams a ROLLING queue: POST /v1/me/stations/next-tracks/{id} returns a small
+  // batch (usually 1–3 catalog songs) each call. We POST several times to build a playable queue
+  // (deduping), exactly what the web player does as you listen. (Verified: this is the ONLY working
+  // endpoint — /stations/next, /stations/queue, GET next-tracks all 405. Must be POST with {} body.)
+  const songs: any[] = []
+  const seen = new Set<string>()
   try {
-    const metaRes = await axios.get(
-      `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/stations`,
-      { headers, params: { ids: id } }
-    )
-    const attrs = metaRes.data?.data?.[0]?.attributes ?? {}
-    console.log(`[station] full attrs:`, JSON.stringify(attrs))
-    const stationHash = attrs.playParams?.stationHash
-    console.log(`[station] stationHash=${stationHash}`)
-    if (stationHash) {
-      const queueRes = await axios.post(
-        `https://amp-api-edge.music.apple.com/v1/me/stations/queue`,
-        { stationHash },
-        { headers }
+    for (let i = 0; i < 12 && songs.length < 20; i++) {
+      const res = await axios.post(
+        `https://amp-api.music.apple.com/v1/me/stations/next-tracks/${id}`,
+        {},
+        { headers: { ...headers, "Content-Type": "application/json" } },
       )
-      console.log(`[station] queue response:`, JSON.stringify(queueRes.data).substring(0, 300))
-      const songs = (queueRes.data?.data ?? []).filter((t: any) => t.type === "songs")
-      if (songs.length > 0) return c.json({ songs: songs.map(normaliseSong) })
+      const batch = (res.data?.data ?? []).filter((t: any) => t.type === "songs")
+      let added = 0
+      for (const t of batch) {
+        if (seen.has(t.id)) continue
+        seen.add(t.id); songs.push(normaliseSong(t)); added++
+      }
+      if (batch.length === 0 && added === 0) break
     }
+    console.log(`[station] next-tracks gathered ${songs.length}`)
+    if (songs.length > 0) return c.json({ songs })
   } catch (e: any) {
-    console.warn(`[station] stationHash attempt failed:`, e.message)
+    console.warn(`[station] next-tracks failed:`, e?.response?.status, e.message)
   }
 
-  // 2. Personal recently-played tracks as fallback
+  // Fallback: personal recently-played tracks, so a station tile is never dead.
   try {
     const res = await axios.get(
       `https://amp-api-edge.music.apple.com/v1/me/recent/played/tracks`,
       { headers, params: { limit: 25, types: "songs" } }
     )
-    const songs = (res.data?.data ?? []).filter((t: any) => t.type === "songs")
-    console.log(`[station] recent tracks count=${songs.length}`)
-    if (songs.length > 0) return c.json({ songs: songs.map(normaliseSong) })
+    const recent = (res.data?.data ?? []).filter((t: any) => t.type === "songs")
+    if (recent.length > 0) return c.json({ songs: recent.map(normaliseSong) })
   } catch (e: any) {
     console.warn(`[station] recent-played failed:`, e.message)
   }
@@ -180,9 +181,53 @@ albumRoutes.get("/station/:id/tracks", async (c) => {
   return c.json({ songs: [] })
 })
 
-// Apple Music Radio live streams (isLive:true, hasDrm:true) are not accessible
-// via any public API — webPlayback rejects them (failureType 3077), radioPlayback
-// 404s, and radio.apple.com doesn't resolve. Kept as a stub; returns null.
+// Apple Music Radio LIVE streams (isLive:true). The web player resolves them via
+// GET /v1/play/assets?kind=radioStation — returns a live CMAF HLS m3u8 plus a Widevine
+// key server + service-cert URL. (webPlayback/radioPlayback 404 for these; play/assets
+// is the one that works.) The client plays the HLS with a Widevine session pointed at
+// keyServerUrl. stationHash is NOT required.
+albumRoutes.get("/station/:id/stream", async (c) => {
+  const id = decodeStationId(c.req.param("id"))
+  try {
+    const res = await axios.get("https://amp-api.music.apple.com/v1/play/assets", {
+      headers: ampHeaders(),
+      params: { format: "stream", hasDrm: true, id, kind: "radioStation", mediaType: 0, keyFormat: "web" },
+    })
+    const asset = res.data?.results?.assets?.[0]
+    if (!asset?.url) return c.json({ liveStreamUrl: null })
+
+    // The web player's license body sends `uri` = the Widevine EXT-X-KEY URI from the media
+    // playlist (a data:…base64,<pssh> string). Resolve it here so the client doesn't have to
+    // parse HLS: master → first media playlist → the EXT-X-KEY whose KEYFORMAT is the Widevine
+    // UUID (edef8ba9-79d6-4ace-a3c8-27dcd51d21ed).
+    let wvKeyUri: string | null = null
+    try {
+      const master = await axios.get(asset.url, { responseType: "text" })
+      const mediaUrl = String(master.data).split("\n").find((l) => l.startsWith("http"))
+      if (mediaUrl) {
+        const media = await axios.get(mediaUrl.trim(), { responseType: "text" })
+        const line = String(media.data).split("\n").find(
+          (l) => l.startsWith("#EXT-X-KEY") && l.includes("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed"),
+        )
+        const m = line?.match(/URI="([^"]*)"/)
+        if (m) wvKeyUri = m[1]
+      }
+    } catch (e: any) {
+      console.warn(`[station] wv key uri resolve failed:`, e?.message)
+    }
+
+    return c.json({
+      liveStreamUrl: asset.url,
+      drmKeyUri:     asset.keyServerUrl ?? null,           // Widevine license server (linear.tv.apple.com)
+      certUrl:       asset.widevineKeyCertificateUrl ?? null,
+      wvKeyUri,                                            // EXT-X-KEY URI → license body `uri`
+      adamId:        id.replace(/^ra\./, ""),
+    })
+  } catch (e: any) {
+    console.warn(`[station] live stream failed:`, e?.response?.status, e.message)
+    return c.json({ liveStreamUrl: null })
+  }
+})
 
 albumRoutes.get("/:id/related", async (c) => {
   const id  = c.req.param("id")

@@ -13,6 +13,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -45,7 +47,16 @@ fun DevMenuScreen(
     var pcIpDraft by remember(state.pcServerIp) { mutableStateOf(state.pcServerIp) }
     var showDev by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+    // PC IP is a press-to-edit button, not a live field: a focused BasicTextField pops the
+    // Fire TV IME by itself the moment D-pad focus lands on it.
+    var pcIpEditing by remember { mutableStateOf(false) }
+    val pcIpFocus = remember { FocusRequester() }
     val ctx = LocalContext.current
+    val rootView = androidx.compose.ui.platform.LocalView.current
+    fun hideIme() = runCatching {
+        ctx.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+            ?.hideSoftInputFromWindow(rootView.windowToken, 0)
+    }
 
     // Live network activity — polled from the shared NetworkLog buffer.
     var netLogs by remember { mutableStateOf(emptyList<String>()) }
@@ -64,7 +75,7 @@ fun DevMenuScreen(
             // ── SOFTWARE ──────────────────────────────────────────────────
             SectionLabel("Software")
             UpdatesSection(initialUpdate)
-            BugReportRow(state.webServerUrl)
+            PhoneServerRow(state.webServerUrl, playerVm)
 
             // ── PLAYBACK ──────────────────────────────────────────────────
             SectionLabel("Playback")
@@ -83,6 +94,11 @@ fun DevMenuScreen(
                 label = "Volume leveling", on = pstate.volumeLeveling,
                 sub = if (pstate.volumeLeveling) "Even out loudness across tracks" else "Play each track at its own level",
                 onToggle = { playerVm.toggleVolumeLeveling() },
+            )
+            Toggle(
+                label = "Background play", on = pstate.backgroundPlayEnabled,
+                sub = if (pstate.backgroundPlayEnabled) "Keep playing when you leave the app" else "Pause when the app goes to the background",
+                onToggle = { playerVm.toggleBackgroundPlay() },
             )
 
             // ── NOW PLAYING ───────────────────────────────────────────────
@@ -139,7 +155,8 @@ fun DevMenuScreen(
             )
             Toggle(
                 label = "Low Power Mode", on = pstate.lowPowerMode,
-                sub = if (pstate.lowPowerMode) "Simpler visuals, less work for the device" else "Full-quality visuals",
+                sub = if (pstate.lowPowerMode) "Simpler visuals + frees the video decoder off Now Playing (tiny blip on return)"
+                      else "Full visuals + keeps video ready across tabs (seamless return)",
                 onToggle = { playerVm.toggleLowPowerMode() },
             )
             Stepper(
@@ -155,19 +172,56 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
 
-            // ── LYRICS ────────────────────────────────────────────────────
-            SectionLabel("Lyrics")
+            SectionLabel("Remote")
+            var remote by remember { mutableStateOf(playerVm.remoteOverride()) }
+            val remoteOrder = listOf(
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_AUTO,
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_FIRE,
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_GOOGLE,
+            )
+            fun remoteLabel(v: String) = when (v) {
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_FIRE -> "Fire TV"
+                com.applemusicktv.data.OnboardingPreferences.REMOTE_GOOGLE -> "Google TV"
+                else -> "Automatic"
+            }
+            fun stepRemote(dir: Int) {
+                val i = (remoteOrder.indexOf(remote).coerceAtLeast(0) + dir + remoteOrder.size) % remoteOrder.size
+                remote = remoteOrder[i]; playerVm.setRemoteOverride(remote)
+            }
             Stepper(
-                label = "Lyrics offset", value = "${state.lyricsOffsetMs}ms",
-                sub = "Negative = earlier, positive = later",
-                onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 100) },
-                onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 100) },
+                label = "Remote type",
+                value = remoteLabel(remote),
+                sub = "Google TV shows on-screen media + queue controls; Fire TV uses the Menu key",
+                onDec = { stepRemote(-1) },
+                onInc = { stepRemote(1) },
+            )
+
+            // ── A/V SYNC ──────────────────────────────────────────────────
+            // One delay drives both the beat visuals and the lyric clock. A ~200 ms display baseline is
+            // built in (so this normally reads 0); Automatic adds a Bluetooth estimate on top when a BT
+            // output is live. "Extra" is your own nudge on top of all that.
+            SectionLabel("A/V Sync")
+            Text(
+                "Output: ${pstate.avOutputLabel}",
+                fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium,
+            )
+            Text(
+                if (pstate.avSyncAuto && pstate.avOnBluetooth) "Bluetooth delay applied: +350 ms (estimated)"
+                else "Standard timing",
+                fontSize = 10.sp, color = Color(0xFF999999), modifier = Modifier.padding(bottom = 4.dp),
+            )
+            Toggle(
+                label = "Automatic",
+                on = pstate.avSyncAuto,
+                sub = if (pstate.avSyncAuto) "Adds a Bluetooth estimate on top automatically"
+                      else "Manual — only your extra below is added to the baseline",
+                onToggle = { playerVm.setAvSyncAuto(!pstate.avSyncAuto) },
             )
             Stepper(
-                label = "Beat latency", value = "${state.beatLatencyMs}ms",
-                sub = "Delay for beat-synced visuals (0–500)",
-                onDec = { vm.setBeatLatency(state.beatLatencyMs - 10) },
-                onInc = { vm.setBeatLatency(state.beatLatencyMs + 10) },
+                label = "Extra offset", value = "${state.lyricsOffsetMs}ms",
+                sub = "Applies to lyrics, beat AND music-video lip-sync. Negative = earlier, positive = later",
+                onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 50) },
+                onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 50) },
             )
 
             Spacer(Modifier.height(6.dp))
@@ -184,6 +238,11 @@ fun DevMenuScreen(
                     ActionBtn("Refresh", Color(0xFF2A2A2A), small = true) { vm.refresh(); onDataRefresh() }
                     ActionBtn("Replay Setup", Color(0xFF2A2A1A), small = true) { playerVm.resetOnboarding() }
                     ActionBtn("Clear Token", Color(0xFF3A1A1A), small = true) { vm.clearMUT() }
+                    // Hard quit: stop playback + kill the process so the next launch is a true cold start.
+                    ActionBtn("Force Quit", Color(0xFF3A1A1A), small = true) {
+                        playerVm.stopPlayback()
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                    }
                 }
 
                 SectionLabel("Connection")
@@ -203,22 +262,43 @@ fun DevMenuScreen(
                 ) {
                     Text("PC SERVER", fontSize = 9.sp, color = Color(0xFF888888), fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.weight(1f).background(Color(0xFF0D0D0D), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
-                        ) {
-                            BasicTextField(
-                                value = pcIpDraft, onValueChange = { pcIpDraft = it }, singleLine = true,
-                                textStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
-                                cursorBrush = SolidColor(Color(0xFFFA233B)),
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft) }),
-                                decorationBox = { inner ->
-                                    if (pcIpDraft.isEmpty()) Text("192.168.x.x", fontSize = 13.sp, color = Color(0xFF444444), fontFamily = FontFamily.Monospace)
-                                    inner()
-                                },
-                            )
+                        if (pcIpEditing) {
+                            // Editing: OK opened this, so the field may hold focus + IME. Done/Back closes.
+                            LaunchedEffect(Unit) { runCatching { pcIpFocus.requestFocus() } }
+                            androidx.activity.compose.BackHandler(enabled = true) { pcIpEditing = false; hideIme() }
+                            Box(
+                                Modifier.weight(1f).background(Color(0xFF0D0D0D), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+                            ) {
+                                BasicTextField(
+                                    value = pcIpDraft, onValueChange = { pcIpDraft = it }, singleLine = true,
+                                    textStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
+                                    cursorBrush = SolidColor(Color(0xFFFA233B)),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }),
+                                    modifier = Modifier.fillMaxWidth().focusRequester(pcIpFocus),
+                                    decorationBox = { inner ->
+                                        if (pcIpDraft.isEmpty()) Text("192.168.x.x", fontSize = 13.sp, color = Color(0xFF444444), fontFamily = FontFamily.Monospace)
+                                        inner()
+                                    },
+                                )
+                            }
+                            ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }
+                        } else {
+                            // Idle: a plain button. Focus can land here with no IME. OK opens the editor.
+                            Surface(
+                                onClick = { pcIpEditing = true },
+                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF0D0D0D), focusedContainerColor = Color(0xFF1E1E1E)),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    pcIpDraft.ifEmpty { "192.168.x.x — press to edit" },
+                                    fontSize = 13.sp, color = if (pcIpDraft.isEmpty()) Color(0xFF666666) else Color.White,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                                )
+                            }
                         }
-                        ActionBtn("Set", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft) }
                         if (pcIpDraft.isNotEmpty()) ActionBtn("Clear", Color(0xFF3A1A1A), small = true) { pcIpDraft = ""; vm.setPcServerIp("") }
                     }
                     if (state.pcServerIp.isNotEmpty())
@@ -248,6 +328,9 @@ fun DevMenuScreen(
                     }
                 }
 
+                SectionLabel("Bug Report")
+                BugReportRow(state.webServerUrl)
+
                 SectionLabel("Danger Zone")
                 ActionBtn("Reset App", Color(0xFF4A1414)) { confirmReset = true }
                 Text("Wipes token, pins & settings, then restarts.", fontSize = 10.sp, color = Color(0xFF775555))
@@ -272,6 +355,41 @@ fun DevMenuScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PhoneServerRow(webServerUrl: String, playerVm: PlayerViewModel) {
+    var enabled by remember { mutableStateOf(playerVm.webServerEnabled()) }
+    Column(
+        Modifier.fillMaxWidth().background(Color(0xFF161618), RoundedCornerShape(10.dp)).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Phone web server", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                Text(if (enabled) "On — reachable on your network" else "Off", fontSize = 10.sp, color = Color(0xFF777777))
+            }
+            // Toggle to turn the :8080 page on/off (it's on by default).
+            Surface(
+                onClick = { enabled = !enabled; playerVm.setWebServerEnabled(enabled) },
+                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = if (enabled) Color(0xFF34C759) else Color(0xFF3A3A3C),
+                    focusedContainerColor = if (enabled) Color(0xFF4AD866) else Color(0xFF5A5A5C),
+                ),
+            ) {
+                Text(if (enabled) "On" else "Off", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            }
+        }
+        if (enabled && webServerUrl.isNotEmpty()) {
+            Text("Open on your phone to set the token and change settings:", fontSize = 10.sp, color = Color(0xFF777777))
+            Text(webServerUrl, fontSize = 15.sp, color = Color(0xFF6BCB77),
+                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+        } else if (enabled) {
+            Text("Connect to Wi-Fi to expose the phone page.", fontSize = 10.sp, color = Color(0xFF777777))
         }
     }
 }
@@ -373,7 +491,7 @@ private fun UpdatesSection(initialUpdate: UpdateInfo? = null) {
             Column(Modifier.weight(1f)) {
                 Text("App version", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.Medium)
                 Text(
-                    status ?: "v${BuildConfig.VERSION_NAME}",
+                    status ?: "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE} · ${BuildConfig.GIT_SHA})",
                     fontSize = 10.sp, color = Color(0xFF777777), modifier = Modifier.padding(top = 2.dp),
                 )
             }
@@ -436,9 +554,10 @@ internal fun orbSpeedLabel(f: Float): String = when {
 }
 
 internal fun lyricsScaleLabel(f: Float): String = when {
-    f < 0.95f -> "Small"
-    f < 1.1f  -> "Normal"
-    else      -> "Large"
+    f < 1.1f  -> "Small"
+    f < 1.4f  -> "Normal"
+    f < 1.8f  -> "Large"
+    else      -> "Huge"
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

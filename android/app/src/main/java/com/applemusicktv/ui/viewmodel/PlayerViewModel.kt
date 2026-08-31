@@ -91,6 +91,18 @@ enum class NowPlayingBackground(val label: String) {
     }
 }
 
+// Apple Music live radio stations (isLive=true). Fixed set — these stream a live Widevine HLS
+// feed via /v1/play/assets, unlike personal/genre stations which return a next-tracks song queue.
+private val LIVE_STATION_IDS = setOf(
+    "ra.978194965",   // Apple Music 1
+    "ra.1498155548",  // Apple Music Hits
+    "ra.1498157166",  // Apple Music Country
+    "ra.1740613864",  // Apple Música Uno
+    "ra.1740614260",  // Apple Music Chill
+    "ra.1740613859",  // Apple Music Club
+    "ra.1534941676",  // Apple Music TV (video)
+)
+
 data class PlayerState(
     val currentSong:      Song?           = null,
     val song:             Song?           = null,
@@ -101,7 +113,16 @@ data class PlayerState(
     val lyrics:           List<LyricLine> = emptyList(),
     val isFullStream:     Boolean         = false,
     val motionUrl:        String?         = null,
+    /** A/V-sync EXTRA the user dials on top of everything. 0 normally; the only value shown in the UI. */
     val lyricsOffsetMs:   Long            = 0L,
+    /** Automatic A/V sync: add the Bluetooth delta when a BT output is live. */
+    val avSyncAuto:       Boolean         = true,
+    /** A BT output is currently active. */
+    val avOnBluetooth:    Boolean         = false,
+    /** Total delay applied to the LYRIC clock: hidden 200 ms baseline (+ BT delta) + extra. */
+    val avLyricsMs:       Long            = LYRICS_BASELINE_MS,
+    /** Human label for the current audio output. */
+    val avOutputLabel:    String          = "HDMI / TV",
     val isShuffled:       Boolean         = false,
     val originalQueue:    List<Song>      = emptyList(),
     val repeatMode:       RepeatMode      = RepeatMode.Off,
@@ -141,11 +162,23 @@ data class PlayerState(
     val isLoading:        Boolean         = false,
     /** True while the current track is playing via on-device Widevine. */
     val standaloneActive: Boolean         = false,
+    /** Live radio: continuous DRM stream. Drives the LIVE badge, hides Up Next, disables skip. */
+    val isLiveRadio: Boolean              = false,
+    /** Station cover, shown on the Now Playing art when a live station is paused. */
+    val radioStationArt: String?          = null,
     /** Keep audio playing when the app goes to the background / home is pressed. */
     val backgroundPlayEnabled: Boolean    = true,
     /** True while the activity is in Picture-in-Picture (renders the minimal PiP view). */
     val isInPip:          Boolean         = false,
 )
+
+/** Hidden LYRICS baseline: the Fire TV shows the lyric line ~200 ms before you hear the word even over
+ *  HDMI, so the lyric clock is always shifted by this. Internal — never surfaced in the UI, so the
+ *  menu's "extra" reads 0 normally. The BEAT does NOT get this baseline (it's already aligned on HDMI). */
+private const val LYRICS_BASELINE_MS = 200L
+/** Added to BOTH the beat and the lyrics when a Bluetooth output is live (Automatic mode). Bluetooth
+ *  delays the actual sound by roughly this much; an estimate, since Android exposes no exact figure. */
+private const val BT_DELTA_MS = 350L
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
@@ -166,11 +199,28 @@ class PlayerViewModel @Inject constructor(
     private fun hasMUT() = mutPrefs.hasMUT()
     private fun isStandalone() = !serverPrefs.hasPcServer()
 
+    /** Resolve a card's animated-artwork loop lazily (on focus). Null = stay static.
+     *  Honors the "Motion artwork" setting so cards don't spin up video decoders when it's off. */
+    suspend fun cardMotion(album: Album): String? =
+        if (!_state.value.motionArtworkEnabled) null else repo.cardMotion(album.id, album.type)
+
+
     private val prefs: SharedPreferences =
         context.getSharedPreferences("player_state", Context.MODE_PRIVATE)
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state
+
+    // Integrated queue: the queue may hold music videos. When the current item is a video,
+    // the audio engine idles and this emits the video so the UI hands it to the video player.
+    // Null means the current item is a normal song (any active video should be dismissed).
+    // autoOpen=true only when the user EXPLICITLY picked the video (tapped it in a list) — that
+    // jumps to Now Playing. Auto-advance / skip keep it false so the video plays without yanking
+    // the user off whatever page they're browsing; they just see it when they visit Now Playing.
+    data class VideoRequest(val song: Song, val autoOpen: Boolean, val startPaused: Boolean = false)
+    private val _videoRequest = MutableStateFlow<VideoRequest?>(null)
+    val videoRequest: StateFlow<VideoRequest?> = _videoRequest
+    fun clearVideoRequest() { _videoRequest.value = null }
 
     /**
      * One-off user-facing messages. extraBufferCapacity so an emit from the polling
@@ -335,6 +385,80 @@ class PlayerViewModel @Inject constructor(
             .build().also { it.repeatMode = Player.REPEAT_MODE_OFF }
     }
 
+    /**
+     * MediaCodec-only player for LIVE radio. Radio decodes Widevine-**secure** (L1) AAC inside
+     * ExoPlayer; the bundled FFmpeg software renderer can't read secure buffers (it throws
+     * `FfmpegAudioRenderer error … NO_UNSUPPORTED_DRM`). So this player uses
+     * EXTENSION_RENDERER_MODE_OFF — MediaCodec handles the secure path. The main [player] keeps
+     * PREFER because standalone songs need FFmpeg for HE-AAC; radio is always plain AAC-LC.
+     */
+    @OptIn(UnstableApi::class)
+    private fun buildRadioExoPlayer(): ExoPlayer {
+        val httpFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(60_000).setReadTimeoutMs(60_000)
+            .setAllowCrossProtocolRedirects(true)
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15_000, 60_000, 2_500, 5_000)
+            .setPrioritizeTimeOverSizeThresholds(true).build()
+        return ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)))
+            .setLoadControl(loadControl)
+            .setRenderersFactory(
+                BeatAwareRenderersFactory(context, beatAnalyzer.newProcessor().also { p ->
+                    mainProc = p; beatAnalyzer.activate(p)
+                }, com.applemusicktv.media.GapConcealProcessor())
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+                    .setEnableDecoderFallback(true)
+            )
+            .setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), false)
+            .setHandleAudioBecomingNoisy(false)
+            .build().also { it.repeatMode = Player.REPEAT_MODE_OFF }
+    }
+
+    /** True while [player] is the MediaCodec-only radio instance. */
+    private var radioActive = false
+    /** Bounded re-prepare attempts after a live-radio decoder/network drop; reset when it recovers. */
+    private var radioRecoveries = 0
+    private var lastMemWarn = 0L
+    /** The station's own cover (Apple Music 1 logo, etc.) — shown when paused, since a paused
+     *  stream has no "current track". Kept across the metadata track-art swaps. */
+    private var radioStationArt: String? = null
+
+    /** Warn (throttled) when the device is under memory pressure — the Fire TV reclaims the media
+     *  codec when RAM runs low, which is what drops live radio. Thermal isn't readable without
+     *  privilege, but memory pressure tracks it closely here. */
+    private fun maybeWarnMemory() {
+        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mi)
+        val now = System.currentTimeMillis()
+        if ((mi.lowMemory || mi.availMem < mi.threshold * 2) && now - lastMemWarn > 60_000L) {
+            lastMemWarn = now
+            toast("High memory usage on this device — playback may stutter")
+        }
+    }
+
+    /** Swap the shared [player] for a fresh instance built by [factory], carrying over the listener
+     *  and MediaSession. Mirrors the crossfade snap swap. */
+    @OptIn(UnstableApi::class)
+    private fun swapPlayer(factory: () -> ExoPlayer) {
+        val oldP = player
+        try { oldP.removeListener(playerListener); oldP.stop(); oldP.release() } catch (_: Exception) {}
+        player = factory().also { it.addListener(playerListener) }
+        mediaSession?.release(); mediaSession = buildMediaSession(player)
+    }
+
+    /** Leaving radio → restore the FFmpeg-preferring player the rest of playback expects. */
+    @OptIn(UnstableApi::class)
+    private fun ensureMainPlayer() {
+        if (!radioActive) return
+        radioActive = false
+        radioRecoveries = 0
+        _state.update { it.copy(isLiveRadio = false) }
+        swapPlayer { buildExoPlayer() }
+    }
+
     @OptIn(UnstableApi::class)
     var player: ExoPlayer = buildExoPlayer()
         private set
@@ -344,6 +468,7 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             lyricsOffsetPrefs.offsetMs.collect { ms ->
                 _state.update { it.copy(lyricsOffsetMs = ms) }
+                updateOutputLatency()
             }
         }
         // Same for crossfade length. Takes effect at the next song boundary — an
@@ -356,13 +481,52 @@ class PlayerViewModel @Inject constructor(
     fun setLyricsOffset(ms: Long) {
         lyricsOffsetPrefs.setOffset(ms)
         _state.update { it.copy(lyricsOffsetMs = ms) }
+        updateOutputLatency()
+    }
+
+
+    fun setAvSyncAuto(auto: Boolean) {
+        prefs.edit().putBoolean("av_auto", auto).apply()
+        _state.update { it.copy(avSyncAuto = auto) }
+        updateOutputLatency()
+    }
+
+    /**
+     * Recompute the single output-latency figure that drives BOTH the beat visuals and the lyric clock:
+     * the embedded [AV_BASELINE_MS] baseline, plus [AV_BT_ESTIMATE_MS] when a Bluetooth output is live
+     * and Automatic mode is on, plus the user's [PlayerState.lyricsOffsetMs] extra. Called on init, on
+     * every audio-device change, and when either the mode or the extra is edited.
+     */
+    private fun updateOutputLatency() {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val btTypes = setOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER,
+        )
+        val btDev = runCatching {
+            am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.type in btTypes }
+        }.getOrNull()
+        val onBt = btDev != null
+        val extra = _state.value.lyricsOffsetMs
+        val auto = _state.value.avSyncAuto
+        val btDelta = if (onBt && auto) BT_DELTA_MS else 0L
+        // Beat has NO HDMI baseline (it's aligned already), it only gains the Bluetooth delta.
+        val beatMs = btDelta + extra
+        // Lyrics carry the hidden 200 ms display baseline on every output, plus the same BT delta.
+        val lyricsMs = LYRICS_BASELINE_MS + btDelta + extra
+        beatAnalyzer.latencyMs = beatMs
+        val label = if (onBt) "Bluetooth" + (btDev?.productName?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+                    else "HDMI / TV"
+        _state.update { it.copy(avOnBluetooth = onBt, avLyricsMs = lyricsMs, avOutputLabel = label) }
     }
 
     private val playerListener = object : Player.Listener {
+        override fun onMetadata(metadata: androidx.media3.common.Metadata) = onRadioMetadata(metadata)
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             val pos = player.currentPosition
             val song = _state.value.currentSong?.title ?: "?"
             webServer.addLog("EXO", "isPlaying=$isPlaying pos=${pos}ms song=$song cfade=$crossfadeInProgress")
+            if (isPlaying && radioActive) radioRecoveries = 0   // live radio recovered
             _state.update { it.copy(isPlaying = isPlaying) }
         }
         override fun onPlaybackStateChanged(state: Int) {
@@ -467,11 +631,30 @@ class PlayerViewModel @Inject constructor(
         }
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
             val pos = player.currentPosition
+            // Live radio: a single continuous stream, so advanceQueue() has nothing to skip to.
+            // Transient MediaCodec/network drops (esp. under thermal pressure) just kill it — so
+            // re-prepare the live source at the live edge. Bounded so a persistent failure doesn't spin.
+            if (radioActive) {
+                val sid = _state.value.currentSong?.id
+                maybeWarnMemory()   // a reclaimed codec under memory/thermal pressure is the usual cause
+                webServer.addLog("ERR", "live radio ${error.errorCodeName} — re-prepare $sid (#${radioRecoveries + 1})")
+                if (sid != null && sid.startsWith("ra.") && radioRecoveries < 6) {
+                    radioRecoveries++
+                    radioActive = false   // force a fresh MediaCodec player in playLiveStation
+                    viewModelScope.launch { kotlinx.coroutines.delay(800L * radioRecoveries); playLiveStation(sid) }
+                } else {
+                    toast("Live radio stopped — reopen the station to restart")
+                    _state.update { it.copy(isPlaying = false) }
+                }
+                return
+            }
+            // Preserve the user's play/pause intent across error recovery — a restored-paused track
+            // that fails standalone and retries via proxy must NOT auto-start playing.
+            val wasPlaying = player.playWhenReady
             val song = _state.value.currentSong?.title ?: "?"
             webServer.addLog("ERR", "${error.errorCodeName} pos=${pos}ms song=$song cfade=$crossfadeInProgress cause=${error.cause?.message}")
-            // Silence looks like a crash otherwise — say why we skipped.
-            toast(if (serverPrefs.serverReachable) "Couldn't play \"$song\" — skipping"
-                  else "Can't reach the server")
+            // NOTE: each branch below owns its own toast — the generic "skipping" one lives on the
+            // final give-up path so a single failure never fires two toasts (404 / proxy-retry did).
             val gone = error.errorCode ==
                 androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS &&
                 (error.cause?.message?.contains("404") == true)
@@ -504,7 +687,7 @@ class PlayerViewModel @Inject constructor(
                 val cur = s.queue.getOrNull(s.queueIndex)
                 if (cur != null) {
                     player.setMediaItem(buildMediaItem(cur, repo.streamUrl(cur.id)))
-                    player.prepare(); player.volume = 1f; player.play()
+                    player.prepare(); player.volume = 1f; player.playWhenReady = wasPlaying
                     return
                 }
             }
@@ -514,6 +697,9 @@ class PlayerViewModel @Inject constructor(
                 // cfExo is audible; keep UI showing playing so it doesn't flash paused
                 _state.update { it.copy(isPlaying = true) }
             } else {
+                // Final give-up: neither standalone retry nor a 404 owned this — say why we skipped.
+                toast(if (serverPrefs.serverReachable) "Couldn't play \"$song\" — skipping"
+                      else "Can't reach the server")
                 advanceQueue()
             }
         }
@@ -538,8 +724,27 @@ class PlayerViewModel @Inject constructor(
         // no track to restore (restoreState, which reads the rest, only runs when a song was saved).
         val initBg = NowPlayingBackground.fromName(prefs.getString("np_background", null))
         com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
+        // Volume-leveling per-track gain memory. The cache is a tiny prefs store (one float per track id),
+        // capped so it can't grow without bound. (The VOL live logger is wired in AppleMusicApp so it goes
+        // to the APP log, not the network log.)
+        run {
+            val gainCache = context.getSharedPreferences("gain_cache", Context.MODE_PRIVATE)
+            com.applemusicktv.media.GainProcessor.cacheGet = { key -> if (gainCache.contains(key)) gainCache.getFloat(key, 1f) else null }
+            com.applemusicktv.media.GainProcessor.cachePut = { key, g ->
+                if (gainCache.all.size > 500) gainCache.edit().clear().apply()
+                gainCache.edit().putFloat(key, g).apply()
+            }
+        }
+        // The 200 ms lyrics latency is now embedded (LYRICS_BASELINE_MS) and hidden, so the user-facing
+        // "extra" starts at 0. Force it to 0 once so nobody carries a pre-existing manual offset on top
+        // of the new baseline (which would double-count).
+        if (!prefs.getBoolean("av_migrated_v2", false)) {
+            lyricsOffsetPrefs.setOffset(0L)
+            prefs.edit().putBoolean("av_migrated_v2", true).apply()
+        }
         _state.update { it.copy(
             lyricsOffsetMs = lyricsOffsetPrefs.getOffset(),
+            avSyncAuto = prefs.getBoolean("av_auto", true),
             nowPlayingBackground = initBg,
             screensaverKeepBackground = prefs.getBoolean("screensaver_keep_bg", false),
             showNowPlayingInfo = prefs.getBoolean("np_info", true),
@@ -570,21 +775,16 @@ class PlayerViewModel @Inject constructor(
         // same probe flag the init-segment dump uses.
         if (PROBE_INIT_SEGMENT) player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
 
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        fun updateBtLatency() {
-            val btTypes = setOf(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER)
-            val onBt = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in btTypes }
-            beatAnalyzer.latencyMs = if (onBt) 200L else 0L
-        }
-        updateBtLatency()
+        updateOutputLatency()
         // AudioManager is a system service and outlives this ViewModel, so hold the
         // callback and unregister it in onCleared — otherwise every future BT connect
         // fires into a dead instance.
         audioDeviceCallback = object : AudioDeviceCallback() {
-            override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>) { updateBtLatency() }
-            override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>) { updateBtLatency() }
+            override fun onAudioDevicesAdded(added: Array<AudioDeviceInfo>) { updateOutputLatency() }
+            override fun onAudioDevicesRemoved(removed: Array<AudioDeviceInfo>) { updateOutputLatency() }
         }
-        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
+        (context.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+            .registerAudioDeviceCallback(audioDeviceCallback, null)
 
         viewModelScope.launch {
             repo.authErrorFlow.collect {
@@ -604,9 +804,22 @@ class PlayerViewModel @Inject constructor(
 
     /** Remote type chosen in setup — overrides hardware detection for the toggle button. */
     fun remoteOverride(): String = onboardingPrefs.remoteOverride
+    fun setRemoteOverride(choice: String) { onboardingPrefs.remoteOverride = choice }
+    fun webServerEnabled(): Boolean = webServer.isEnabled
+    fun setWebServerEnabled(on: Boolean) { webServer.setEnabled(on) }
 
-    /** Dev menu: replay setup on next launch. */
-    fun resetOnboarding() = onboardingPrefs.reset()
+    /** Flips true when the user asks to replay setup, so the shell can show it without a relaunch. */
+    private val _replayOnboarding = MutableStateFlow(false)
+    val replayOnboarding: StateFlow<Boolean> = _replayOnboarding
+
+    /** Dev menu: replay setup now (and on next launch until finished). */
+    fun resetOnboarding() {
+        onboardingPrefs.reset()
+        _replayOnboarding.value = true
+    }
+
+    /** Shell consumed the replay signal (setup is now on screen). */
+    fun consumeReplayOnboarding() { _replayOnboarding.value = false }
 
     /** Setup just finished — safe to bring back whatever was playing before. */
     fun onOnboardingFinished() {
@@ -667,6 +880,9 @@ class PlayerViewModel @Inject constructor(
         // the outgoing one, so a save here pairs one song's title with another song's
         // position — which is how a restore lands on the wrong track.
         if (crossfadeInProgress) return
+        // A deferred restore hasn't loaded the player yet (position would read 0) — keep the saved
+        // state untouched until the user actually plays it.
+        if (pendingRestore != null) return
         val adapter = moshi.adapter(Song::class.java)
         val listType = Types.newParameterizedType(List::class.java, Song::class.java)
         val listAdapter = moshi.adapter<List<Song>>(listType)
@@ -717,41 +933,48 @@ class PlayerViewModel @Inject constructor(
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
                 orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), progressMs = posMs) }
-            val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
-            val standalone = full && useStandalone()
-            webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title}${if (standalone) " [standalone]" else ""}")
-            usingStandalone = standalone
-            val src = if (standalone) buildStandaloneSource(song) else null
-            _state.update { it.copy(standaloneActive = src != null) }
-            if (src != null) player.setMediaSource(src, posMs)
-            else player.setMediaItem(buildMediaItem(song, uri), posMs)
-            player.prepare()
-
-            // Restore bypasses playQueueItem, which is where lyrics/motion normally
-            // load — so without this a restored track comes back with no lyrics.
+            // A restored music video must go to the video player, NOT the audio stream — otherwise
+            // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
+            if (song.isMusicVideo) {
+                webServer.addLog("PLR", "restoreState idx=$idx VIDEO ${song.title}")
+                player.pause()
+                _videoRequest.value = VideoRequest(song, autoOpen = false, startPaused = true)
+                return@launch
+            }
+            // DON'T load the track into the player on restore. Loading a media item + having a live
+            // MediaSession makes Android's media-resumption auto-RESUME playback on foreground — that
+            // was the "song autoplays on open". Stash it and load only on the user's first play press.
+            webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title} — deferred (paused)")
+            pendingRestore = RestoreInfo(song, posMs, full)
+            // Lyrics/motion are just display — safe (and nice) to warm now.
             if (full) loadLyrics(song.id)
             loadMotion(song.id)
-
-            // N+1 prefetch normally happens in playQueueItem, which restore
-            // bypasses — so without this the song after a restored one is always
-            // cold and the crossfade into it always falls back to a hard cut.
-            // Wait for the restored song to be READY first: its own decrypt is
-            // cold too, and racing two decrypts delays the audio we need *now*.
-            val nextSong = queue.getOrNull(idx + 1)
-            if (full && !standalone && nextSong != null) {
-                preloadedForSongId = null
-                val deadline = System.currentTimeMillis() + 60_000
-                while (player.playbackState != Player.STATE_READY &&
-                       System.currentTimeMillis() < deadline) {
-                    delay(500)
-                }
-                if (preloadedForSongId != nextSong.id) {
-                    preloadedForSongId = nextSong.id
-                    webServer.addLog("PRE", "prefetch N+1 after restore song=${nextSong.title}")
-                    prefetchSong(nextSong)
-                }
-            }
         } catch (_: Exception) {}
+    }
+
+    /** A restored track not yet loaded into the player — loaded on the first play press so nothing
+     *  (incl. Android media resumption) can auto-start it. */
+    private data class RestoreInfo(val song: Song, val posMs: Long, val full: Boolean)
+    private var pendingRestore: RestoreInfo? = null
+
+    private fun startPendingRestore() {
+        val r = pendingRestore ?: return
+        pendingRestore = null
+        hasPlayedSomething = true
+        val standalone = r.full && useStandalone()
+        usingStandalone = standalone
+        viewModelScope.launch {
+            val src = if (standalone) buildStandaloneSource(r.song) else null
+            _state.update { it.copy(standaloneActive = src != null) }
+            val uri = if (r.full) repo.streamUrl(r.song.id) else (r.song.previewUrl ?: repo.streamUrl(r.song.id))
+            if (src != null) player.setMediaSource(src, r.posMs) else player.setMediaItem(buildMediaItem(r.song, uri), r.posMs)
+            player.prepare(); player.play()
+            val nextSong = _state.value.queue.getOrNull(_state.value.queueIndex + 1)
+            if (r.full && !standalone && nextSong != null && preloadedForSongId != nextSong.id) {
+                preloadedForSongId = nextSong.id
+                prefetchSong(nextSong)
+            }
+        }
     }
 
     fun playFromQueue(idx: Int) = playQueueItem(idx)
@@ -881,7 +1104,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun stepLyricsScale(dir: Int) {
-        val steps = floatArrayOf(0.8f, 1.0f, 1.35f)
+        val steps = floatArrayOf(1.0f, 1.25f, 1.6f, 2.0f)
         val cur = steps.indexOfFirst { kotlin.math.abs(it - _state.value.lyricsScale) < 0.05f }.let { if (it < 0) 1 else it }
         val next = steps[(cur + dir).coerceIn(0, steps.lastIndex)]
         _state.update { it.copy(lyricsScale = next) }
@@ -951,7 +1174,10 @@ class PlayerViewModel @Inject constructor(
     // window while the standalone source is still building.
     @Volatile private var awaitingSongStart: String? = null
 
-    private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false) {
+    private fun playQueueItem(idx: Int, skipFadeIn: Boolean = false, userOpened: Boolean = false) {
+        ensureMainPlayer()      // leaving live radio → restore the FFmpeg-preferring player
+        if (_state.value.isLiveRadio) _state.update { it.copy(isLiveRadio = false) }
+        pendingRestore = null   // any real queue action supersedes a deferred restore
         val q = _state.value.queue
         if (q.isEmpty() || idx !in q.indices) {
             webServer.addLog("PLR", "playQueueItem idx=$idx out of bounds (size=${q.size}) — stopping")
@@ -969,11 +1195,24 @@ class PlayerViewModel @Inject constructor(
             if (idx + 1 < q.size) playQueueItem(idx + 1, skipFadeIn) 
             return
         }
+        // Music video in the queue → hand it to the video player; the audio engine idles.
+        if (song.isMusicVideo) {
+            webServer.addLog("PLR", "playQueueItem idx=$idx VIDEO ${song.title}")
+            player.pause()
+            awaitingSongStart = null
+            _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = emptyList(), motionUrl = null, progressMs = 0L) }
+            saveState()
+            _videoRequest.value = VideoRequest(song, autoOpen = userOpened)
+            return
+        }
+        _videoRequest.value = null   // audio item → dismiss any active video
+
         val full = _state.value.isFullStream
         val standalone = full && useStandalone() && song.id !in proxyOnlySongIds
         val uri = if (full) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}${if (standalone) " [standalone]" else ""}")
         awaitingSongStart = song.id
+        com.applemusicktv.media.GainProcessor.currentTrackKey = song.id   // per-track volume-leveling memory
         _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = lyricsCache[song.id] ?: emptyList(), motionUrl = null, progressMs = 0L) }
         saveState()
         player.repeatMode = Player.REPEAT_MODE_OFF
@@ -1074,6 +1313,10 @@ class PlayerViewModel @Inject constructor(
         if (song.artistId == null || song.albumId == null) enrichSongIds(song.id)
     }
 
+    /** Play a shelf of video DTOs (music-videos / interviews) in the video player. */
+    fun playVideos(dtos: List<com.applemusicktv.data.network.SongDto>, startIndex: Int = 0) =
+        playAlbum(dtos.map(repo::songFromDto), startIndex)
+
     fun playAlbum(songs: List<Song>, startIndex: Int = 0, useFullStream: Boolean = hasMUT(), shuffle: Boolean = false) {
         if (songs.isEmpty()) return
         val stack = Thread.currentThread().stackTrace
@@ -1089,7 +1332,8 @@ class PlayerViewModel @Inject constructor(
         } else songs
         val queueIdx = if (shuffle) 0 else idx
         _state.update { it.copy(queue = queue, isFullStream = useFullStream, isShuffled = shuffle, originalQueue = if (shuffle) songs else emptyList()) }
-        playQueueItem(queueIdx)
+        // User explicitly started this list → a video here should open fullscreen Now Playing.
+        playQueueItem(queueIdx, userOpened = true)
     }
 
     fun shufflePlayPlaylist(playlistId: String) = viewModelScope.launch {
@@ -1100,9 +1344,33 @@ class PlayerViewModel @Inject constructor(
     /** Temp: dump a personalized ra.* station's payload to logcat (tag StationProbe). */
     fun probeStation(id: String) = viewModelScope.launch { repo.probeStation(id) }
 
-    fun playStation(stationId: String) = viewModelScope.launch {
-        val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
-        if (songs.isNotEmpty()) playAlbum(songs)
+    // ── Library writes ──────────────────────────────────────────────────
+    fun addToLibrary(song: com.applemusicktv.data.model.Song) = viewModelScope.launch {
+        repo.addToLibrary(song)
+            .onSuccess { toast("Added \"${song.title}\" to Library") }
+            .onFailure { toast("Couldn't add to Library") }
+    }
+
+    /** Editable library playlists for the "Add to Playlist" picker. */
+    suspend fun editablePlaylists() = repo.getLibraryPlaylists(limit = 100).getOrDefault(emptyList())
+
+    fun addToPlaylist(playlistId: String, playlistName: String, song: com.applemusicktv.data.model.Song) = viewModelScope.launch {
+        repo.addToPlaylist(playlistId, song)
+            .onSuccess { toast("Added to \"$playlistName\"") }
+            .onFailure { toast("Couldn't add to playlist") }
+    }
+
+    fun playStation(stationId: String, stationArt: String? = null) {
+        // Apple's LIVE radio stations (fixed set) stream a live Widevine HLS feed via /play/assets,
+        // not a next-tracks song queue — route them to the live path.
+        if (stationId in LIVE_STATION_IDS) { playLiveStation(stationId, stationArt); return }
+        viewModelScope.launch {
+            val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
+            if (songs.isNotEmpty()) playAlbum(songs)
+            // Radio-SHOW episodes are `stations` too, but they have no next-tracks song queue — they
+            // stream as a live-style HLS feed. Fall back to the live path so radio shows actually play.
+            else playLiveStation(stationId, stationArt)
+        }
     }
 
     /** Genre station — shuffled top songs for the genre, played standalone. */
@@ -1123,39 +1391,94 @@ class PlayerViewModel @Inject constructor(
             albumName = "", durationMs = 0L, artworkUrl = null, artworkBgColor = null,
             previewUrl = null, hasLyrics = false,
         )
-        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null) }
+        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null, isLiveRadio = true, userQueue = emptyList()) }
         player.setMediaItem(buildMediaItem(fakeSong, streamUrl))
         player.prepare()
         player.volume = 1f
         player.play()
     }
 
+    /** In-band timed metadata from the live radio stream. Apple ships the current track as ID3
+     *  frames inside each CMAF segment: TIT2 title, TPE1 artist, TALB album, and WXXX artwork URLs
+     *  (390px + 1400px). Fires every segment, so only push a state update when the track changes. */
     @OptIn(UnstableApi::class)
-    fun playLiveStation(stationId: String) = viewModelScope.launch {
+    private fun onRadioMetadata(metadata: androidx.media3.common.Metadata) {
+        if (!radioActive) return
+        var title: String? = null
+        var artist: String? = null
+        var album: String? = null
+        var art: String? = null
+        var adamId: String? = null
+        for (i in 0 until metadata.length()) {
+            when (val e = metadata.get(i)) {
+                is androidx.media3.extractor.metadata.id3.TextInformationFrame -> {
+                    val v = e.values.firstOrNull()
+                    when (e.id) {
+                        "TIT2", "TT2" -> title = v
+                        "TPE1", "TP1" -> artist = v
+                        "TALB", "TAL" -> album = v
+                    }
+                }
+                is androidx.media3.extractor.metadata.id3.UrlLinkFrame ->
+                    if (e.id == "WXXX") { if (art == null || e.url.contains("1400")) art = e.url }
+                is androidx.media3.extractor.metadata.id3.PrivFrame ->
+                    if (e.owner == "com.apple.radio.adamid")
+                        adamId = String(e.privateData, Charsets.US_ASCII).filter { it.isDigit() }.ifEmpty { null }
+            }
+        }
+        if (title == null && artist == null) return   // a jingle/ping has no track frames
+        val cur = _state.value.currentSong
+        if (cur != null && cur.title == title && cur.artistName == artist) return  // unchanged
+        _state.update {
+            val c = it.currentSong ?: return@update it
+            val s = c.copy(
+                id = adamId ?: c.id,
+                title = title ?: c.title,
+                artistName = artist ?: c.artistName,
+                albumName = album ?: c.albumName,
+                artworkUrl = art ?: c.artworkUrl,
+            )
+            it.copy(currentSong = s, song = s, queue = listOf(s), motionUrl = null)
+        }
+    }
+
+    fun playLiveStation(stationId: String, stationArt: String? = null) = viewModelScope.launch {
         val info = repo.getStationStream(stationId).getOrNull() ?: return@launch
         val url = info.liveStreamUrl ?: return@launch
         Log.d("PlayerVM", "playLiveStation id=$stationId url=${url.take(80)} keyUri=${info.drmKeyUri?.take(40)}")
         usingStandalone = false
         lastErrorKey = null
+        val art = stationArt ?: radioStationArt
+        radioStationArt = art
         val fakeSong = com.applemusicktv.data.model.Song(
             id = stationId, title = "Apple Music Radio", artistName = "Apple Music",
-            albumName = "", durationMs = 0L, artworkUrl = null, artworkBgColor = null,
+            albumName = "", durationMs = 0L, artworkUrl = art, artworkBgColor = null,
             previewUrl = null, hasLyrics = false,
         )
-        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null) }
+        _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null, isLiveRadio = true, userQueue = emptyList(), radioStationArt = art) }
 
+        // Live radio uses a STANDARD Widevine proxy (raw challenge → raw license) at Apple's
+        // linear.tv key server — NOT the song `acquireWebPlaybackLicense` JSON wrapper. So the
+        // built-in HttpMediaDrmCallback is the right callback; we only add the auth headers.
         val keyUri = info.drmKeyUri
-        val adamId = info.adamId ?: stationId.replace(Regex("^ra\\."), "")
         if (keyUri != null) {
             try {
+                // Secure Widevine AAC needs the MediaCodec-only player (FFmpeg can't decode it).
+                if (!radioActive) { swapPlayer { buildRadioExoPlayer() }; radioActive = true }
                 val bearer = appleClient.getBearer()
                 val mut = mutPrefs.getMUT()
-                val drmCallback = AppleMusicDrmCallback(adamId, keyUri, bearer, mut)
+                val drmCallback = com.applemusicktv.media.LiveRadioDrmCallback(
+                    keyUri = keyUri, bearer = bearer, mut = mut,
+                    adamId = info.adamId ?: stationId.removePrefix("ra."),
+                    wvKeyUri = info.wvKeyUri ?: "",
+                )
                 val drmManager = DefaultDrmSessionManager.Builder()
                     .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                     .setMultiSession(false)
                     .build(drmCallback)
-                val mediaSource = DefaultMediaSourceFactory(context)
+                val mediaSource = androidx.media3.exoplayer.hls.HlsMediaSource.Factory(
+                    androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                )
                     .setDrmSessionManagerProvider { drmManager }
                     .createMediaSource(buildMediaItem(fakeSong, url))
                 player.setMediaSource(mediaSource)
@@ -1322,7 +1645,11 @@ class PlayerViewModel @Inject constructor(
 
     fun pause() { player.pause() }
     fun togglePlayPause() {
-        if (player.isPlaying) {
+        // First play after a restore actually LOADS the stashed track (deferred so nothing auto-starts).
+        if (pendingRestore != null) { startPendingRestore(); return }
+        // Gate on playWhenReady, NOT isPlaying: while a cold track is still buffering isPlaying is
+        // false even though the user intends to play, so pressing pause used to (wrongly) start it.
+        if (player.playWhenReady) {
             player.pause()
             // The 10s auto-save only ticks while playing, so without this a pause
             // followed by the process being killed restores a stale position.
@@ -1331,6 +1658,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun next() {
+        if (radioActive) return   // live radio is a single continuous stream — no skipping
         val s = _state.value
         webServer.addLog("NAV", "next() pos=${player.currentPosition}ms idx=${s.queueIndex} userQueue=${s.userQueue.size}")
         fadeJob?.cancel(); crossfadeInProgress = false; player.volume = 1f; player.repeatMode = Player.REPEAT_MODE_OFF
@@ -1352,6 +1680,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
     fun prev() {
+        if (radioActive) return   // live radio — no skipping back
         val s = _state.value
         val pos = player.currentPosition
         webServer.addLog("NAV", "prev() pos=${pos}ms idx=${s.queueIndex}")
@@ -1382,8 +1711,16 @@ class PlayerViewModel @Inject constructor(
     fun seekForward() { webServer.addLog("PLR", "seekForward pos=${player.currentPosition}"); player.seekTo((player.currentPosition + 15_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }
     fun seekBack()    { webServer.addLog("PLR", "seekBack pos=${player.currentPosition}"); player.seekTo((player.currentPosition - 15_000L).coerceAtLeast(0L)) }
 
+    /** Public warm-up for the next AUDIO song — used by AppShell while a VIDEO is playing (the
+     *  audio engine's own N+1 prefetch is idle then, so a video→song advance would be cold). */
+    fun prefetchAudio(song: Song) { if (!song.isMusicVideo) prefetchSong(song) }
+
     private fun prefetchSong(song: Song) {
         if (!_state.value.isFullStream) return
+        // Music videos are decrypted+played by the video player, not the audio stream route —
+        // prefetching one via /api/stream just 404s ("No playable asset"). The video player has
+        // its own prefetch (MusicVideoViewModel.prefetch), triggered from AppShell.
+        if (song.isMusicVideo) return
         // Warm lyrics for the upcoming song so they render the instant it starts.
         viewModelScope.launch {
             runCatching { repo.prefetchLyrics(song.id, song.title, song.artistName, song.durationMs / 1000) }
@@ -1432,34 +1769,43 @@ class PlayerViewModel @Inject constructor(
         playQueueItem(insertIdx, skipFadeIn = true)
     }
 
+    // One shared in-flight fetch per song id: a song is often prefetched (as the next track) and then
+    // asked for again via loadLyrics when it becomes current. Without this, both fire a full network
+    // fetch for the same id at once (seen as two concurrent getLyrics in logcat). Both paths now await
+    // the same Deferred.
+    private val lyricsInFlight = mutableMapOf<String, kotlinx.coroutines.Deferred<List<LyricLine>>>()
+
+    private fun fetchLyricsShared(id: String, title: String, artist: String, durationSec: Long): kotlinx.coroutines.Deferred<List<LyricLine>> {
+        lyricsCache[id]?.let { return kotlinx.coroutines.CompletableDeferred(it) }
+        lyricsInFlight[id]?.let { return it }
+        val d = viewModelScope.async {
+            val lines = repo.getLyrics(id, title, artist, durationSec).getOrDefault(emptyList())
+            if (lines.isNotEmpty()) lyricsCache[id] = lines
+            lyricsInFlight.remove(id)
+            lines
+        }
+        lyricsInFlight[id] = d
+        return d
+    }
+
     private fun loadLyrics(songId: String) {
         lyricsJob?.cancel()
         lyricsCache[songId]?.let { cached ->
             if (_state.value.currentSong?.id == songId) _state.update { it.copy(lyrics = cached) }
             return
         }
-        val song = _state.value.currentSong
+        val song = _state.value.currentSong?.takeIf { it.id == songId }
         lyricsJob = viewModelScope.launch {
-            repo.getLyrics(
-                songId,
-                title      = song?.title ?: "",
-                artist     = song?.artistName ?: "",
-                durationSec = (song?.durationMs ?: 0L) / 1000,
-            ).onSuccess { lines ->
-                lyricsCache[songId] = lines
-                if (_state.value.currentSong?.id == songId)
-                    _state.update { it.copy(lyrics = lines) }
-            }
+            val lines = fetchLyricsShared(songId, song?.title ?: "", song?.artistName ?: "", (song?.durationMs ?: 0L) / 1000).await()
+            if (lines.isNotEmpty() && _state.value.currentSong?.id == songId)
+                _state.update { it.copy(lyrics = lines) }
         }
     }
 
     /** Warm the lyrics cache for an upcoming song so a track change shows them with no blank flash. */
     private fun prefetchLyrics(song: Song) {
-        if (lyricsCache.containsKey(song.id)) return
-        viewModelScope.launch {
-            repo.getLyrics(song.id, song.title, song.artistName, song.durationMs / 1000)
-                .onSuccess { lyricsCache[song.id] = it }
-        }
+        if (lyricsCache.containsKey(song.id) || lyricsInFlight.containsKey(song.id)) return
+        fetchLyricsShared(song.id, song.title, song.artistName, song.durationMs / 1000)
     }
 
     private fun loadMotion(songId: String) {

@@ -6,6 +6,7 @@ import retrofit2.http.*
 @JsonClass(generateAdapter = true)
 data class SongDto(
     val id:             String,
+    val type:           String       = "songs",
     val title:          String,
     val artistName:     String,
     val artistId:       String? = null,
@@ -36,6 +37,13 @@ data class AlbumDto(
     val copyright:      String?      = null,
     val editorialNotes: String?      = null,
     val isMasteredForItunes: Boolean = false,
+    /** Square motion-artwork HLS loop (Apple `editorialVideo.motionSquareVideo1x1`). Only populated
+     *  for shelves we deliberately animate — today just "Playlists Made for You". */
+    val motionUrl:      String?      = null,
+    /** Editorial tagline for spotlight cards ("New Release", "New Music Daily"). */
+    val tagline:        String?      = null,
+    /** Pre-filled landscape editorial image URL (superHeroWide/subscriptionHero/storeFlowcase). */
+    val wideArtworkUrl: String?      = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -62,6 +70,7 @@ data class ArtistFullDto(
     val genreNames:     List<String>          = emptyList(),
     val editorialNotes: String?               = null,
     val topSongs:       List<SongDto>         = emptyList(),
+    val musicVideos:    List<SongDto>         = emptyList(),
     val latestRelease:  AlbumDto?             = null,
     val albums:         List<AlbumDto>        = emptyList(),
     val featuredAlbums: List<AlbumDto>        = emptyList(),
@@ -85,11 +94,21 @@ data class PlaylistDto(
 }
 
 @JsonClass(generateAdapter = true)
+data class CuratorDto(
+    val id:         String,
+    val name:       String,
+    val kind:       String  = "curator",   // "multiroom" | "curator" | "apple-curator"
+    val isApple:    Boolean = false,
+    val artworkUrl: String? = null,
+)
+
+@JsonClass(generateAdapter = true)
 data class SearchResponse(
     val songs:     List<SongDto>     = emptyList(),
     val albums:    List<AlbumDto>    = emptyList(),
     val artists:   List<ArtistDto>   = emptyList(),
     val playlists: List<PlaylistDto> = emptyList(),
+    val curators:  List<CuratorDto>  = emptyList(),
 )
 
 @JsonClass(generateAdapter = true)
@@ -104,7 +123,9 @@ data class SongsResponse(val songs: List<SongDto> = emptyList())
 @JsonClass(generateAdapter = true)
 data class StationStreamResponse(
     val liveStreamUrl: String? = null,
-    val drmKeyUri:     String? = null,
+    val drmKeyUri:     String? = null,   // Widevine key server (linear.tv.apple.com)
+    val certUrl:       String? = null,   // Widevine service certificate URL
+    val wvKeyUri:      String? = null,   // Widevine EXT-X-KEY URI → license body `uri`
     val adamId:        String? = null,
     val isLive:        Boolean = true,
 )
@@ -154,10 +175,34 @@ data class GenreDto(val id: String, val name: String)
 data class GenresResponse(val genres: List<GenreDto> = emptyList())
 
 @JsonClass(generateAdapter = true)
-data class HomeSection(val title: String, val albums: List<AlbumDto> = emptyList())
+data class HomeSection(
+    val title: String,
+    val albums: List<AlbumDto> = emptyList(),
+    val videos: List<SongDto> = emptyList(),
+    /** Apple editorial ROOM id for this shelf (the editorial-element's own id). When present the row
+     *  ends with a "More" card that opens the full room — e.g. Daily Top 100 → all 100 country lists. */
+    val roomId: String? = null,
+    /** Presentation hint: "spotlight" (big landscape cards) | "gradient" (big gradient cards) | null. */
+    val style: String? = null,
+)
 
 @JsonClass(generateAdapter = true)
 data class HomeResponse(val sections: List<HomeSection> = emptyList())
+
+@JsonClass(generateAdapter = true)
+data class CategorySectionDto(val title: String, val items: List<CuratorDto> = emptyList())
+
+@JsonClass(generateAdapter = true)
+data class CategoriesResponse(val sections: List<CategorySectionDto> = emptyList())
+
+@JsonClass(generateAdapter = true)
+data class MultiRoomDto(
+    val id: String = "",
+    val title: String = "",
+    val description: String? = null,
+    val artworkUrl: String? = null,
+    val sections: List<HomeSection> = emptyList(),
+)
 
 @JsonClass(generateAdapter = true)
 data class AuthStatus(
@@ -172,7 +217,7 @@ interface ProxyApi {
     suspend fun search(
         @Query("term")  term:  String,
         @Query("limit") limit: Int    = 20,
-        @Query("types") types: String = "songs,albums,artists",
+        @Query("types") types: String = "songs,albums,artists,playlists,curators",
     ): SearchResponse
 
     @GET("api/albums/{id}")
@@ -212,6 +257,24 @@ interface ProxyApi {
     @GET("api/browse")
     suspend fun getBrowse(): HomeResponse
 
+    @GET("api/browse/curator/{id}")
+    suspend fun getCurator(
+        @Path("id") id: String,
+        @Query("apple") apple: Int = 0,
+    ): MultiRoomDto
+
+    @GET("api/browse/room/{id}")
+    suspend fun getRoom(@Path("id") id: String): MultiRoomDto
+
+    @GET("api/browse/multiroom/{id}")
+    suspend fun getMultiRoom(@Path("id") id: String): MultiRoomDto
+
+    @GET("api/browse/grouping/{id}")
+    suspend fun getGrouping(@Path("id") id: String): MultiRoomDto
+
+    @GET("api/browse/categories")
+    suspend fun getCategories(): CategoriesResponse
+
     @GET("api/browse/genres")
     suspend fun getGenres(): GenresResponse
 
@@ -228,6 +291,10 @@ interface ProxyApi {
     // ── Motion artwork ────────────────────────────────────────────────────
     @GET("api/motion/{id}")
     suspend fun getMotion(@Path("id") id: String): MotionResponse
+
+    /** Animated artwork for any card (album/playlist/song), resolved on focus — proxy-path parity. */
+    @GET("api/motion/card/{type}/{id}")
+    suspend fun getCardMotion(@Path("type") type: String, @Path("id") id: String): MotionResponse
 
 
     // (stream URL is built client-side from PROXY_BASE_URL)
@@ -247,6 +314,12 @@ interface ProxyApi {
 
     @GET("api/library/playlists/{id}/tracks")
     suspend fun getPlaylistTracks(@Path("id") id: String): LibrarySongsResponse
+
+    @POST("api/library/add")
+    suspend fun addToLibrary(@Body body: Map<String, String>): Map<String, Any>
+
+    @POST("api/library/playlists/{id}/tracks/add")
+    suspend fun addTrackToPlaylist(@Path("id") id: String, @Body body: Map<String, String>): Map<String, Any>
 
     // ── Auth ──────────────────────────────────────────────────────────────
     @GET("auth/status")

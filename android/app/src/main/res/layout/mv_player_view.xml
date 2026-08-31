@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PlayerView forced to a TextureView surface. A SurfaceView is a separate window that
+     Compose draws over (its opaque black background hid the video, and it only appeared
+     after a relayout). A TextureView renders in the normal view layer, composes correctly,
+     and still lets PlayerView draw subtitles. -->
+<androidx.media3.ui.PlayerView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    app:use_controller="false"
+    app:surface_type="texture_view"
+    app:resize_mode="fit"
+    app:shutter_background_color="@android:color/black" />

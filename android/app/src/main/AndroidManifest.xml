@@ -46,13 +46,11 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <service
-            android:name=".media.AppleMusicPlaybackService"
-            android:exported="true"
-            android:foregroundServiceType="mediaPlayback">
-            <intent-filter>
-                <action android:name="androidx.media3.session.MediaSessionService" />
-            </intent-filter>
-        </service>
+        <!-- Removed AppleMusicPlaybackService: it was a redundant MediaSessionService with a dummy
+             idle ExoPlayer. Real playback + its MediaSession live in PlayerViewModel; media buttons
+             route through that session and MainActivity.dispatchKeyEvent. The system could start this
+             service foreground (media controls / Bluetooth) while its dummy player was idle, so Media3
+             never called startForeground() within 5s → RemoteServiceException killed the whole app
+             (crash seen especially around video playback, where the audio player is paused). -->
     </application>
 </manifest>

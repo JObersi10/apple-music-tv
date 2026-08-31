@@ -10,6 +10,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
@@ -18,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
@@ -43,6 +46,10 @@ fun AppShell(modifier: Modifier = Modifier) {
     var selectedTab   by remember { mutableStateOf(TopNavTab.ListenNow) }
     val playerVm: PlayerViewModel  = hiltViewModel()
     val navVm: NavigationViewModel = hiltViewModel()
+    // Hoisted so the video survives navigation: fullscreen on Now Playing, in-app PiP elsewhere.
+    val mvVm: com.applemusicktv.ui.viewmodel.MusicVideoViewModel = hiltViewModel()
+    val navBarFocus = remember { FocusRequester() }
+    val videoFocus = remember { FocusRequester() }
     // Hoist LibraryViewModel so library loads on startup, not when tab is first opened
     val libraryVm: LibraryViewModel = hiltViewModel()
     // Hoisted so a server re-check from the Dev menu can refetch both screens —
@@ -62,6 +69,12 @@ fun AppShell(modifier: Modifier = Modifier) {
     // server and token are configured, so there is no nav bar and nothing to browse.
     val onboardingVm: com.applemusicktv.ui.viewmodel.OnboardingViewModel = hiltViewModel()
     var showOnboarding by remember { mutableStateOf(!playerVm.onboardingCompleted()) }
+    // "Replay Setup" in Settings resets the pref and fires this — bring setup up right away
+    // instead of only on the next launch.
+    val replay by playerVm.replayOnboarding.collectAsState()
+    LaunchedEffect(replay) {
+        if (replay) { showOnboarding = true; playerVm.consumeReplayOnboarding() }
+    }
     if (showOnboarding) {
         OnboardingScreen(
             vm = onboardingVm,
@@ -88,13 +101,82 @@ fun AppShell(modifier: Modifier = Modifier) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
     val isOnNowPlaying = currentRoute == Screen.NowPlaying.route
+    val videoActive by mvVm.active.collectAsState()
+    val mvState by mvVm.state.collectAsState()
+    // Integrated queue: PlayerViewModel owns one queue of songs AND videos. When the current
+    // item is a video it emits it here; we hand it to the video player and jump to Now Playing.
+    // The video's prev/next/auto-advance drive the same queue back through PlayerViewModel.
+    val videoReq by playerVm.videoRequest.collectAsState()
+    LaunchedEffect(Unit) {
+        mvVm.onRequestNext = { playerVm.next() }
+        mvVm.onRequestPrev = { playerVm.prev() }
+    }
+    LaunchedEffect(videoReq?.song?.id) {
+        val v = videoReq
+        if (v != null) {
+            mvVm.show(v.song.id, v.song.title, v.song.artistName, startPaused = v.startPaused)
+            // Only an explicit pick jumps to Now Playing. Auto-advance / skip keep the user
+            // on whatever page they're on — the video keeps playing and shows when they visit.
+            if (v.autoOpen) {
+                selectedTab = TopNavTab.NowPlaying
+                navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
+            }
+        } else {
+            mvVm.close()
+        }
+    }
+    // Video plays fullscreen ON the Now Playing tab; anywhere else it's an in-app PiP window.
+    val videoFullscreen = videoActive && isOnNowPlaying
 
+    // Keep the nav-bar highlight in sync with the ACTUAL route — otherwise popping back from
+    // a pushed screen (e.g. artist opened from the video player) left the white pill stuck on
+    // Now Playing. Detail routes leave the pill on whatever top tab we came from.
+    LaunchedEffect(currentRoute) {
+        when (currentRoute) {
+            Screen.Home.route      -> selectedTab = TopNavTab.ListenNow
+            Screen.Browse.route    -> selectedTab = TopNavTab.Browse
+            Screen.Library.route   -> selectedTab = TopNavTab.Library
+            Screen.Search.route    -> selectedTab = TopNavTab.Search
+            Screen.NowPlaying.route -> selectedTab = TopNavTab.NowPlaying
+            Screen.DevMenu.route   -> selectedTab = TopNavTab.Dev
+            else -> {}
+        }
+    }
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
+    // Leaving Now Playing keeps the video's AUDIO playing (like a song) but disables the video
+    // track — that frees the secure decoder and its SurfaceFlinger overlay so nothing bleeds onto
+    // Library/Browse. Returning re-enables video and the recomposed PlayerView reattaches the
+    // surface, so the picture comes back at position without ever stopping the audio.
+    //
+    // NOTE: attachVideo()/detachVideo() are driven ONLY from the video-surface AndroidView `update`
+    // lambda below, where the codec-release and surface-teardown steps are ordered deterministically
+    // against the visibility flip. Driving them from here as well raced that ordering (the bleed).
+    // This effect is intentionally left as just a marker of the navigation transition.
+    // Whenever a video is active, media keys must drive it (not the paused audio player) —
+    // MainActivity reads this. Pause audio the moment a video starts.
+    LaunchedEffect(videoActive) {
+        navVm.isOnMusicVideo = videoActive
+        if (videoActive) playerVm.pause()
+    }
 
     // Keep the screen awake ONLY while music is actually playing. When paused, drop the
     // flag so Fire TV's own screensaver / sleep can take over (our ambient screensaver only
     // ever runs while playing).
     val playerState by playerVm.state.collectAsState()
+    // A regular song starting up takes over — the video player closes immediately so the
+    // song's Now Playing (dynamic/projector) shows instead of a video stuck on top.
+    LaunchedEffect(playerState.isPlaying) {
+        if (playerState.isPlaying && videoActive) mvVm.close()
+    }
+    // Prefetch the next queue item's video metadata whenever it's a video — whether the current
+    // track is a song or a video — so a song→video or video→video advance is fast. This runs in
+    // parallel with PlayerViewModel's audio N+1 prefetch (which skips video items), so the two
+    // prefetch paths cover the whole mixed queue together.
+    LaunchedEffect(playerState.queueIndex, playerState.queue, videoActive) {
+        val next = playerState.queue.getOrNull(playerState.queueIndex + 1) ?: return@LaunchedEffect
+        if (next.isMusicVideo) mvVm.prefetch(next.id)
+        else if (videoActive) playerVm.prefetchAudio(next)   // video playing → warm the next song
+    }
     val keepScreenOn = playerState.isPlaying
     val activity = LocalContext.current as? Activity
     DisposableEffect(keepScreenOn) {
@@ -118,9 +200,12 @@ fun AppShell(modifier: Modifier = Modifier) {
             // Menu), pop back to that instance so it keeps its state instead of
             // pushing a second copy on top and growing the back stack.
             if (!navController.popBackStack(Screen.NowPlaying.route, inclusive = false)) {
+                // Save the tab we're leaving (with its playlist/artist/etc.) so returning to it
+                // restores that page — same per-tab-back-stack behaviour as the nav bar.
                 navController.navigate(Screen.NowPlaying.route) {
-                    popUpTo(Screen.Home.route) { saveState = true }
-                    launchSingleTop = true; restoreState = true
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
                 }
             }
             navVm.consumeNowPlayingNavigation()
@@ -143,7 +228,7 @@ fun AppShell(modifier: Modifier = Modifier) {
     // offers to exit. Detail screens keep the normal pop behaviour.
     val topLevelTabs = setOf(
         Screen.Browse.route, Screen.Library.route, Screen.Search.route,
-        Screen.NowPlaying.route, Screen.Radio.route, Screen.DevMenu.route,
+        Screen.Radio.route, Screen.DevMenu.route,
     )
     BackHandler(enabled = !showExitDialog && currentRoute in topLevelTabs) {
         selectedTab = TopNavTab.ListenNow
@@ -152,7 +237,31 @@ fun AppShell(modifier: Modifier = Modifier) {
             launchSingleTop = true
         }
     }
+    // Now Playing (for a SONG) pops back to wherever you opened it from — same as the video player —
+    // instead of collapsing to Listen Now. The video path runs its own Back in MusicVideoScreen, so
+    // this only handles the audio case. Nothing below → fall back to Listen Now.
+    BackHandler(enabled = !showExitDialog && currentRoute == Screen.NowPlaying.route && !videoActive) {
+        if (!navController.popBackStack()) {
+            selectedTab = TopNavTab.ListenNow
+            navController.navigate(Screen.Home.route) { popUpTo(Screen.Home.route) { inclusive = true }; launchSingleTop = true }
+        }
+    }
 
+    // Animated artwork on EVERY shelf: cards resolve their motion loop lazily on focus. One shared
+    // cache (positive + negative) so refocusing a card never refetches. Only the focused card ever
+    // holds a decoder — Fire TV has no memory to spare.
+    val motionCache = remember { mutableMapOf<String, String?>() }
+    val cardMotionResolver: suspend (com.applemusicktv.data.model.Album) -> String? = remember {
+        { album ->
+            // cardMotion() returns null when the user's "Motion artwork" setting is off, so animated
+            // card art follows that toggle too (no card video decoders spin up when it's off).
+            if (motionCache.containsKey(album.id)) motionCache[album.id]
+            else playerVm.cardMotion(album).also { motionCache[album.id] = it }
+        }
+    }
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.applemusicktv.ui.components.LocalCardMotion provides cardMotionResolver,
+    ) {
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         NavHost(
             navController    = navController,
@@ -169,6 +278,8 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onPlaylistClick = { id, name, artworkUrl ->
                         navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
                     },
+                    // "Find Your Mood" cards are already prefixed (ac-/c-/mr-) for CategoryScreen.
+                    onCategoryClick = { navController.navigate(Screen.Category.route(it)) },
                 )
             }
             composable(Screen.Browse.route) {
@@ -176,6 +287,34 @@ fun AppShell(modifier: Modifier = Modifier) {
                     playerVm       = playerVm,
                     onAlbumClick   = { navController.navigate(Screen.AlbumDetail.route(it)) },
                     onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                    onGenreClick   = { id, name -> navController.navigate(Screen.Genre.route(id, name)) },
+                    onCuratorClick = { navController.navigate(Screen.Category.route(it)) },
+                    // "More" at the end of a shelf → that shelf's full editorial room page.
+                    onSeeAll       = { navController.navigate(Screen.Category.route("room-$it")) },
+                )
+            }
+            composable(
+                route     = Screen.Genre.route,
+                arguments = listOf(
+                    navArgument("genreId")   { type = NavType.StringType },
+                    navArgument("genreName") { type = NavType.StringType },
+                ),
+            ) { back ->
+                val gid  = URLDecoder.decode(back.arguments?.getString("genreId")   ?: "", "UTF-8")
+                val gnm  = URLDecoder.decode(back.arguments?.getString("genreName") ?: "", "UTF-8")
+                GenreScreen(
+                    genreId = gid, genreName = gnm, playerVm = playerVm,
+                    onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                )
+            }
+            composable(Screen.Category.route) {
+                CategoryScreen(
+                    onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                    onCuratorClick  = { navController.navigate(Screen.Category.route(it)) },
+                    onArtistClick   = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                    playerVm        = playerVm,
                 )
             }
             composable(Screen.Library.route) {
@@ -197,15 +336,30 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onPlaylistClick = { id, name, artworkUrl ->
                         navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
                     },
+                    onCuratorClick = { id, kind ->
+                        val prefix = when (kind) {
+                            "multiroom"     -> "mr-"
+                            "apple-curator" -> "ac-"
+                            "room"          -> "room-"
+                            "grouping"      -> "grouping-"
+                            else            -> "c-"
+                        }
+                        navController.navigate(Screen.Category.route(prefix + id))
+                    },
                 )
             }
             composable(Screen.NowPlaying.route) {
-                NowPlayingScreen(
-                    playerVm = playerVm,
-                    navVm = navVm,
-                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
-                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                )
+                // When a video is active it fills this tab via the AppShell overlay. Don't
+                // compose the audio screen behind it — its focusable controls would steal the
+                // D-pad (moving the song UI instead of the video).
+                if (!videoActive) {
+                    NowPlayingScreen(
+                        playerVm = playerVm,
+                        navVm = navVm,
+                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                        onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    )
+                }
             }
             composable(Screen.Radio.route) {
                 RadioScreen(playerVm = playerVm)
@@ -254,6 +408,11 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onBack        = { navController.popBackStack() },
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onMusicVideoClick = { s ->
+                        mvVm.show(s.id, s.title, s.artistName)
+                        selectedTab = TopNavTab.NowPlaying
+                        navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
+                    },
                 )
             }
         }
@@ -271,7 +430,9 @@ fun AppShell(modifier: Modifier = Modifier) {
                         onClick = { playerVm.dismissMutExpired() },
                         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(50)),
                         colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = androidx.compose.ui.graphics.Color(0x33FFFFFF), focusedContainerColor = androidx.compose.ui.graphics.Color(0x55FFFFFF)),
-                    ) { androidx.compose.material3.Text("✕", color = androidx.compose.ui.graphics.Color.White, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) }
+                    ) { androidx.compose.foundation.layout.Box(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                        com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.CLOSE, size = 13.dp, color = androidx.compose.ui.graphics.Color.White)
+                    } }
                 }
             }
         }
@@ -341,6 +502,9 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 // which survives moveTaskToBack/finish, so without this the music kept
                                 // playing after "Exit".
                                 playerVm.stopPlayback()
+                                // Also stop a music video — it runs on its own player, so stopPlayback
+                                // (audio only) left its audio going after Exit.
+                                playerVm.clearVideoRequest(); mvVm.close()
                                 // If there's no activity to background (or the task is
                                 // already at the root), fall back to finish() so the
                                 // popup never just sits there doing nothing.
@@ -365,12 +529,128 @@ fun AppShell(modifier: Modifier = Modifier) {
             }
         }
 
-        // Nav bar on top layer (drawn after content).
-        Box(modifier = Modifier.align(Alignment.TopCenter)) {
+        // Nav bar on top layer (drawn after content). Hidden entirely on the
+        // fullscreen music-video route so it can't steal D-pad focus.
+        // Single persistent video surface. ONE PlayerView node that resizes between fullscreen
+        // (Now Playing tab) and an in-app PiP corner — never torn down while a video is active,
+        // so the codec never loses its surface (that was the "Can't play this video" crash).
+        // A secure (HDCP) SurfaceView can't be confined to a Compose corner — it draws across
+        // whatever screen you're on. So the video surface renders ONLY fullscreen on Now Playing.
+        // On other tabs the video KEEPS PLAYING (audio; the picture is simply not drawn) — it is
+        // not closed — and reappears when you return to Now Playing. On-screen PiP over the app
+        // isn't possible for protected video; the OS system PiP is the "picture while browsing".
+        // Secure video surface — the "video in library" bleed, finally understood. A secure (HDCP)
+        // SurfaceView is a whole-screen hardware overlay. The bleed was Compose DISPOSING that
+        // SurfaceView when we left Now Playing (the old `&& isOnNowPlaying` gate): on Fire TV,
+        // destroying a SurfaceView mid-secure-frame ORPHANS its SurfaceFlinger layer, which then
+        // lingers as a frozen top overlay over Library/Browse (the black flash on return is a new
+        // surface replacing it). The fix: keep the PlayerView COMPOSED the entire time a video is
+        // active (gate on videoActive only) and merely toggle VISIBILITY. The view keeps managing
+        // its layer, so GONE reaps it cleanly instead of orphaning it. detachVideo() (via the
+        // LaunchedEffect above) disables the video track off-screen so the secure decoder stops while
+        // audio keeps playing; attachVideo() re-enables it on return.
+        if (videoActive) {
+            val mvPlayer by mvVm.playerFlow.collectAsState()
+            // The library "bleed" is a Fire TV compositor bug: a secure (HDCP) SurfaceView placed on
+            // the media-overlay plane (setZOrderMediaOverlay) keeps its LAST protected frame latched in
+            // that hardware plane. View flags (GONE) and track-disable don't reap it, so it lingers on
+            // top of Library/Browse. The only reliable teardown is to DESTROY the SurfaceView — but that
+            // orphans the plane too if a secure frame is still latched at destroy time. So the sequence
+            // is: (1) detachVideo() rebuilds the player audio-only SYNCHRONOUSLY, releasing the secure
+            // decoder and clearing the surface, THEN (2) unmount the PlayerView so its now content-free
+            // SurfaceView is destroyed cleanly and the plane is freed. Audio never stops.
+            val lowPower = playerState.lowPowerMode
+            // Two strategies, chosen by the Low Power toggle:
+            //  • Low Power ON  → FREE the secure decoder off Now Playing (detach video track + unmount
+            //    the SurfaceView). Lightest on a starved Fire TV, but re-acquiring the codec blips ~0.5s
+            //    on return.
+            //  • Low Power OFF (default) → keep the decoder ALIVE: the PlayerView stays mounted the whole
+            //    time a video is active, just shrunk to 1px BEHIND the window off Now Playing (default
+            //    z-order = behind, so the opaque tab fully covers it — no bleed, no dispose-orphan). The
+            //    surface keeps compositing (no latched stale frame), so returning is instant.
+            var surfaceMounted by remember { mutableStateOf(false) }
+            LaunchedEffect(isOnNowPlaying, lowPower) {
+                if (lowPower) {
+                    if (isOnNowPlaying) surfaceMounted = true
+                    else { mvVm.detachVideo(); surfaceMounted = false }
+                } else {
+                    surfaceMounted = true                       // keep alive; never free the decoder
+                    if (isOnNowPlaying) mvVm.attachVideo()       // re-enable if we came from low-power
+                }
+            }
+            Box(Modifier.fillMaxSize()) {
+                if (surfaceMounted) {
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        factory = { ctx ->
+                            androidx.media3.ui.PlayerView(ctx).apply {
+                                useController = false
+                                setShutterBackgroundColor(android.graphics.Color.BLACK)
+                                setKeepScreenOn(true)
+                                // Quality change rebuilds the player (single-variant master). Without this
+                                // the view blanks to BLACK the instant the old player detaches and only
+                                // repaints when the new decoder emits its first frame — that black flash is
+                                // the "480p→1080p glitch". Keeping the last frame up bridges the reload.
+                                setKeepContentOnPlayerReset(true)
+                                // DO NOT setZOrderMediaOverlay/OnTop(true). That puts the secure SurfaceView
+                                // on a hardware plane ABOVE the window, which bleeds over Library and can't be
+                                // reaped by any View teardown. DEFAULT z-order sits it BEHIND the window,
+                                // punching a hole only where mounted — off Now Playing we either unmount it
+                                // (low power) or shrink it to 1px behind the opaque tab (seamless).
+                                (videoSurfaceView as? android.view.SurfaceView)?.apply {
+                                    setZOrderMediaOverlay(false)
+                                    // Mark the surface SECURE so the compositor grants HDCP-protected HD
+                                    // output. Without it the OS lets SD through but blocks HD with
+                                    // "Required output protections are not active" (Netflix marks its
+                                    // surface secure — that's why it does 1080p here and we were stuck at
+                                    // 480p). A secure surface also reads back BLACK in screenshots.
+                                    setSecure(true)
+                                }
+                                player = mvPlayer
+                            }
+                        },
+                        update = { pv ->
+                            pv.player = mvPlayer
+                            pv.visibility = android.view.View.VISIBLE
+                            if (lowPower && isOnNowPlaying) mvVm.attachVideo()
+                        },
+                        onRelease = { it.player = null },
+                        // Seamless mode off Now Playing: 1px behind the window (decoder keeps running,
+                        // invisible). Everywhere else: fullscreen.
+                        modifier = if (!isOnNowPlaying && !lowPower) Modifier.size(1.dp)
+                                   else Modifier.fillMaxSize(),
+                    )
+                }
+                if (isOnNowPlaying) {
+                    MusicVideoScreen(
+                        vm = mvVm,
+                        // Back leaves the SCREEN but KEEPS the video playing — pop to the previous
+                        // route (e.g. the playlist). The video is hidden while its audio continues,
+                        // and reappears on return. It closes only on a regular song / queue end.
+                        onExit = { if (!navController.popBackStack()) { selectedTab = TopNavTab.ListenNow; navController.navigate(Screen.Home.route) { launchSingleTop = true } } },
+                        onFocusUp = { runCatching { navBarFocus.requestFocus() } },
+                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                        // Google TV remotes lack media keys → draw prev/play/next on screen.
+                        showOnScreenControls = com.applemusicktv.util.TvDevice.needsOnScreenMenuToggle(appContext, playerVm.remoteOverride()),
+                        queue = playerState.queue,
+                        queueIndex = playerState.queueIndex,
+                        onPickQueueItem = { playerVm.playFromQueue(it) },
+                        focusRequester = videoFocus,
+                    )
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier.align(Alignment.TopCenter).focusRequester(navBarFocus).focusGroup()
+                // When a fullscreen video is up, Down from the nav bar returns to the video controls.
+                .focusProperties { if (videoActive && isOnNowPlaying) down = videoFocus },
+        ) {
             TopNavBar(
                 selected  = selectedTab,
-                isPlaying = playerState.isPlaying,
+                // Waveform animates for video playback too, not just audio.
+                isPlaying = playerState.isPlaying || (videoActive && mvState.playing),
                 updateAvailable = pendingUpdate != null,
+                beatAnalyzer = playerVm.beatAnalyzer,
                 onSelect = { tab ->
                     selectedTab = tab
                     val route = when (tab) {
@@ -387,9 +667,17 @@ fun AppShell(modifier: Modifier = Modifier) {
                     val onThisTab = currentRoute == route ||
                         (route == Screen.Library.route && currentRoute?.startsWith("library") == true)
                     if (!onThisTab) {
+                        // Per-tab back stacks: each tab remembers the page you left it on (a playlist,
+                        // an artist, a category) and restores it when you return — including returning
+                        // from Now Playing. This is the canonical multi-back-stack recipe. Crucially
+                        // EVERY tab (Now Playing included) pops up to the start destination with
+                        // saveState, so Now Playing gets its OWN saved stack and can never sit nested
+                        // under another tab — which is what used to bleed the video screen into Library.
+                        val startId = navController.graph.findStartDestination().id
                         navController.navigate(route) {
-                            popUpTo(Screen.Home.route) { saveState = true }
-                            launchSingleTop = true; restoreState = true
+                            popUpTo(startId) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
                         }
                     }
                 },
@@ -397,6 +685,7 @@ fun AppShell(modifier: Modifier = Modifier) {
         }
 
     }
+    } // CompositionLocalProvider(LocalCardMotion)
 }
 
 /** Minimal Picture-in-Picture card: the album art darkened, with the title + artist over it. */

@@ -12,9 +12,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -47,20 +49,14 @@ fun LibraryScreen(
     onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    var section by remember { mutableStateOf(LibrarySection.Playlists) }
+    // Survive navigation away/back (saved in the nav backstack), so returning to Library
+    // lands on the same section instead of resetting to Playlists.
+    var section by rememberSaveable { mutableStateOf(LibrarySection.Playlists) }
     val state by vm.state.collectAsState()
 
     Row(modifier = modifier.fillMaxSize()) {
-        // Sidebar
-        LazyColumn(
-            modifier = Modifier.width(190.dp).fillMaxHeight().background(Color(0xFF0D0D0D)),
-            contentPadding = PaddingValues(vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            items(LibrarySection.entries) { s ->
-                SidebarItem(s.label, s == section) { section = s }
-            }
-        }
+        // Modern left sidebar (Playlists / Albums / Artists / Songs).
+        SectionSidebar(section) { section = it }
 
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
             val hasAnyData = state.playlists.isNotEmpty() || state.albums.isNotEmpty() ||
@@ -77,7 +73,7 @@ fun LibraryScreen(
                     Text("Error: ${state.error}", color = Color(0xFFFF3B30), fontSize = 14.sp)
                 }
                 else -> Column(Modifier.fillMaxSize()) {
-                    SortBar(section, state.sort.field, state.sort.dir.name) { vm.setSort(it) }
+                    SortBar(section, state.sort.field, state.sort.dir) { f, d -> vm.setSort(f, d) }
                     Box(Modifier.weight(1f)) {
                         when (section) {
                             LibrarySection.Playlists -> {
@@ -101,13 +97,66 @@ fun LibraryScreen(
     }
 }
 
+/** Modern left sidebar — vertical section nav. Selected row = red-tinted pill with a
+ *  bright accent bar; unselected are quiet. Bigger, cleaner than the old sidebar. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SectionSidebar(selected: LibrarySection, onSelect: (LibrarySection) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(224.dp)
+            .background(Color(0xFF0A0A0A))
+            .padding(horizontal = 16.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "Library",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            modifier = Modifier.padding(start = 8.dp, bottom = 14.dp),
+        )
+        LibrarySection.entries.forEach { s ->
+            val isSel = s == selected
+            Surface(
+                onClick = { onSelect(s) },
+                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = if (isSel) Color(0x33FA233B) else Color.Transparent,
+                    focusedContainerColor = if (isSel) Color(0x4DFA233B) else Color(0xFF232325),
+                ),
+                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        Modifier.width(3.dp).height(18.dp).clip(RoundedCornerShape(2.dp))
+                            .background(if (isSel) Color(0xFFFA233B) else Color.Transparent)
+                    )
+                    Text(
+                        text = s.label,
+                        fontSize = 16.sp,
+                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (isSel) Color.White else Color(0xFF9A9A9A),
+                    )
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SortBar(
     section: LibrarySection,
     currentField: SortField,
-    currentDir: String,
-    onSort: (SortField) -> Unit,
+    currentDir: com.applemusicktv.ui.viewmodel.SortDir,
+    onSort: (SortField, com.applemusicktv.ui.viewmodel.SortDir) -> Unit,
 ) {
     val fields = when (section) {
         LibrarySection.Playlists -> listOf(SortField.DEFAULT to "Playlist Order", SortField.NAME to "Name")
@@ -115,31 +164,105 @@ private fun SortBar(
         LibrarySection.Artists   -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Name")
         LibrarySection.Songs     -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Title", SortField.ARTIST to "Artist")
     }
-    val dirArrow = if (currentDir == "ASC") " ↑" else " ↓"
+    val curLabel = fields.firstOrNull { it.first == currentField }?.second ?: "Sort"
+    val dirArrow = if (currentDir == com.applemusicktv.ui.viewmodel.SortDir.ASC) "↑" else "↓"
+    var showDialog by remember { mutableStateOf(false) }
+
+    // Round ⇅ sort button, right-aligned — matches the playlist detail's sort control.
     Row(
         modifier = Modifier.fillMaxWidth().background(Color(0xFF0A0A0A)).padding(horizontal = 32.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Sort:", fontSize = 11.sp, color = Color(0xFF555555))
-        fields.forEach { (field, label) ->
-            val isActive = currentField == field
-            Surface(
-                onClick = { onSort(field) },
-                shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor        = if (isActive) Color(0xFFFA233B) else Color(0xFF1E1E1E),
-                    focusedContainerColor = if (isActive) Color(0xFFE01F33) else Color(0xFF2A2A2A),
-                ),
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-            ) {
-                Text(
-                    text = label + if (isActive) dirArrow else "",
-                    fontSize = 11.sp,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                )
+        Surface(
+            onClick = { showDialog = true },
+            shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Color(0xFF2A2A2C), focusedContainerColor = Color.White,
+            ),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        ) {
+            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                Text("⇅", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
+        }
+    }
+
+    if (showDialog) {
+        SortDialog(
+            fields = fields,
+            currentField = currentField,
+            currentDir = currentDir,
+            onPick = { f, d -> onSort(f, d) },
+            onDismiss = { showDialog = false },
+        )
+    }
+}
+
+/** Sort chooser popup: pick a field, then a direction. Real Dialog so D-pad focus
+ *  stays inside it (a plain overlay Box lets focus walk out to the grid behind). */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SortDialog(
+    fields: List<Pair<SortField, String>>,
+    currentField: SortField,
+    currentDir: com.applemusicktv.ui.viewmodel.SortDir,
+    onPick: (SortField, com.applemusicktv.ui.viewmodel.SortDir) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val Asc = com.applemusicktv.ui.viewmodel.SortDir.ASC
+    val Desc = com.applemusicktv.ui.viewmodel.SortDir.DESC
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        val firstFocus = remember { FocusRequester() }
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            colors = androidx.tv.material3.SurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E)),
+            modifier = Modifier.width(340.dp),
+        ) {
+            Column(Modifier.padding(vertical = 18.dp)) {
+                Text("Sort By", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                    modifier = Modifier.padding(start = 22.dp, bottom = 10.dp))
+                fields.forEachIndexed { i, (field, label) ->
+                    SortRow(
+                        label = label,
+                        selected = field == currentField,
+                        modifier = if (i == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                    ) { onPick(field, currentDir) }
+                }
+                Box(Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 22.dp)
+                    .height(1.dp).background(Color(0xFF3A3A3C)))
+                SortRow("Ascending", currentDir == Asc) { onPick(currentField, Asc) }
+                SortRow("Descending", currentDir == Desc) { onPick(currentField, Desc) }
+            }
+        }
+        LaunchedEffect(Unit) { firstFocus.requestFocus() }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SortRow(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E),
+        ),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, fontSize = 14.sp, color = Color.White,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                modifier = Modifier.weight(1f))
+            if (selected) Text("✓", fontSize = 15.sp, color = Color(0xFFFA233B))
         }
     }
 }
@@ -207,7 +330,7 @@ private fun PlaylistCard(
                     )
                 } else {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text("♪", fontSize = 32.sp, color = Color(0xFF444444))
+                        com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.MUSIC_NOTE, size = 32.dp, color = Color(0xFF444444))
                     }
                 }
                 if (pinned) {
@@ -243,7 +366,7 @@ private fun PlaylistCard(
                     modifier = Modifier.size(28.dp),
                 ) {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
-                        Text("▶", fontSize = 9.sp, color = Color.White)
+                        com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.PLAY, size = 11.dp, color = Color.White)
                     }
                 }
             }
@@ -318,15 +441,21 @@ private fun SongList(
             }
         }
     }
+    var pickerSong by remember { mutableStateOf<Song?>(null) }
     menuSong?.let { s ->
         SongContextMenu(
             song = s,
             onDismiss = { menuSong = null },
             onPlayNext = { playerVm.playNext(s); menuSong = null },
             onAddToQueue = { playerVm.addToQueue(s); menuSong = null },
+            onAddToLibrary = { playerVm.addToLibrary(s); menuSong = null },
+            onAddToPlaylist = { pickerSong = s; menuSong = null },
             onGoToArtist = s.artistId?.let { id -> { onArtistClick(id); menuSong = null } },
             onGoToAlbum  = s.albumId?.let  { id -> { onAlbumClick(id);  menuSong = null } },
         )
+    }
+    pickerSong?.let { s ->
+        PlaylistPickerDialog(playerVm = playerVm, song = s, onDismiss = { pickerSong = null })
     }
 }
 
@@ -337,6 +466,8 @@ private fun SongContextMenu(
     onDismiss: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToLibrary: (() -> Unit)? = null,
+    onAddToPlaylist: (() -> Unit)? = null,
     onGoToArtist: (() -> Unit)? = null,
     onGoToAlbum:  (() -> Unit)? = null,
 ) {
@@ -361,6 +492,8 @@ private fun SongContextMenu(
             Spacer(Modifier.height(2.dp))
             ContextMenuItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
             ContextMenuItem("Add to Queue", onAddToQueue)
+            if (onAddToLibrary  != null) ContextMenuItem("Add to Library",  onAddToLibrary)
+            if (onAddToPlaylist != null) ContextMenuItem("Add to Playlist", onAddToPlaylist)
             if (onGoToArtist != null) ContextMenuItem("Go to Artist", onGoToArtist)
             if (onGoToAlbum  != null) ContextMenuItem("Go to Album",  onGoToAlbum)
         }
@@ -403,5 +536,47 @@ private fun SidebarItem(label: String, isSelected: Boolean, onClick: () -> Unit)
             Box(modifier = Modifier.width(2.dp).height(20.dp).background(accent, RoundedCornerShape(topEnd = 2.dp, bottomEnd = 2.dp)))
             Text(label, fontSize = 13.sp, color = text, fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal, modifier = Modifier.padding(start = 14.dp))
         }
+    }
+}
+
+/** "Add to Playlist" picker — lists the user's editable library playlists; tap one to append the song. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun PlaylistPickerDialog(
+    playerVm: com.applemusicktv.ui.viewmodel.PlayerViewModel,
+    song: Song,
+    onDismiss: () -> Unit,
+) {
+    var playlists by remember { mutableStateOf<List<com.applemusicktv.data.network.PlaylistDto>?>(null) }
+    LaunchedEffect(Unit) { playlists = playerVm.editablePlaylists() }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        val firstFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+        Column(
+            Modifier.width(360.dp).heightIn(max = 460.dp)
+                .clip(RoundedCornerShape(16.dp)).background(Color(0xFF1C1C1E)).padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text("Add to Playlist", fontSize = 15.sp, color = Color.White, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF2A2A2A)))
+            Spacer(Modifier.height(4.dp))
+            val pls = playlists
+            when {
+                pls == null -> Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator(color = Color(0xFFFA233B))
+                }
+                pls.isEmpty() -> Text("No editable playlists", color = Color(0xFF888888), fontSize = 13.sp,
+                    modifier = Modifier.padding(16.dp))
+                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    items(pls.size) { i ->
+                        val pl = pls[i]
+                        ContextMenuItem(pl.name,
+                            { playerVm.addToPlaylist(pl.id, pl.name, song); onDismiss() },
+                            if (i == 0) Modifier.focusRequester(firstFocus) else Modifier)
+                    }
+                }
+            }
+        }
+        LaunchedEffect(playlists) { if (!playlists.isNullOrEmpty()) { kotlinx.coroutines.delay(200); runCatching { firstFocus.requestFocus() } } }
     }
 }

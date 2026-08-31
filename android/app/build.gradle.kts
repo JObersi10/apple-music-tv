@@ -13,6 +13,14 @@ val localProps = Properties().apply {
     if (f.exists()) load(f.inputStream())
 }
 
+// Short git commit the build was cut from — shown next to the version and used by the beta updater to
+// tell whether the rolling "dev" prerelease is a different build than the one running. Configuration-cache
+// safe via providers.exec; falls back to "unknown" outside a git checkout (e.g. a source tarball).
+val gitSha: String = providers.exec {
+    commandLine("git", "rev-parse", "--short", "HEAD")
+    isIgnoreExitValue = true
+}.standardOutput.asText.map { it.trim() }.orElse("unknown").get().ifBlank { "unknown" }
+
 android {
     namespace = "com.applemusicktv"
     compileSdk = 35
@@ -29,6 +37,7 @@ android {
         // to the Android-emulator host loopback. Also overridable in the Dev menu.
         val proxyBaseUrl = localProps.getProperty("proxyBaseUrl") ?: "http://10.0.2.2:3000/"
         buildConfigField("String", "PROXY_BASE_URL", "\"$proxyBaseUrl\"")
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
     }
 
     buildFeatures {

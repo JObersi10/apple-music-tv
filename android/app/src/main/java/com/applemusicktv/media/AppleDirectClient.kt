@@ -20,6 +20,27 @@ data class WebPlaybackResult(
     val hlsText:  String = "",
 )
 
+const val MV_VIDEO_FILE = "mv_video.m3u8"
+const val MV_AUDIO_FILE = "mv_audio.m3u8"
+const val MV_MASTER_FILE = "mv_master.m3u8"
+const val MV_SUBS_FILE = "mv_subs.m3u8"
+
+data class MusicVideoResult(
+    val adamId:     String,
+    /** Minimal master m3u8 referencing the two local media files by name. */
+    val masterText: String,
+    val videoText:  String,
+    val audioText:  String,
+    /** Rewritten WebVTT subtitle playlist, or null when the video has no captions. */
+    val subsText:   String? = null,
+    /** Fallback Widevine key uri for the license request body. */
+    val keyUri:     String = "",
+    /** placeholder-KID (hex) → license uri, so the callback routes per track. */
+    val keyMap:     Map<String, String> = emptyMap(),
+    /** The video heights this MV actually offers (from the master), ascending. */
+    val heights:    List<Int> = emptyList(),
+)
+
 @Singleton
 class AppleDirectClient @Inject constructor() {
 
@@ -54,22 +75,95 @@ class AppleDirectClient @Inject constructor() {
 
     fun clearBearerCache() { cachedBearer = "" }
 
+    /** Real catalogue metadata for the Info panel (composer, genre, release, label…). */
+    data class MvDetails(val info: String, val artistId: String?)
+
+    suspend fun getMusicVideoDetails(mvId: String, bearer: String, mut: String): MvDetails? =
+        withContext(Dispatchers.IO) {
+            try {
+                val numeric = mvId.filter { it.isDigit() }.ifEmpty { mvId }
+                // The id resolves for playback but may live under EITHER catalog type — try
+                // music-videos, then songs, then albums — until one returns metadata + artists.
+                var data: JSONObject? = null
+                for (type in listOf("music-videos", "songs", "albums")) {
+                    val url = "https://amp-api-edge.music.apple.com/v1/catalog/us/$type/$numeric?l=en-US&include=artists"
+                    val resp = http.newCall(Request.Builder().url(url)
+                        .addHeader("Authorization", "Bearer $bearer")
+                        .addHeader("Music-User-Token", mut)
+                        .addHeader("Origin", "https://music.apple.com").build()).execute()
+                    val body = resp.body!!.string()
+                    val d = JSONObject(body).optJSONArray("data")?.optJSONObject(0)
+                    if (d != null) { data = d; break }
+                    Log.i("AMMV", "details $type http=${resp.code} miss")
+                }
+                if (data == null) { Log.w("AMMV", "details: no metadata for $numeric on any type"); return@withContext null }
+                val a = data.optJSONObject("attributes") ?: JSONObject()
+                val artistId = data.optJSONObject("relationships")?.optJSONObject("artists")
+                    ?.optJSONArray("data")?.optJSONObject(0)?.optString("id")?.ifBlank { null }
+                Log.i("AMMV", "details resolved artistId=$artistId artist=${a.optString("artistName")}")
+                val parts = mutableListOf<String>()
+                a.optJSONArray("genreNames")?.let { g ->
+                    if (g.length() > 0) parts.add((0 until g.length()).joinToString(", ") { g.getString(it) })
+                }
+                a.optString("releaseDate").takeIf { it.isNotBlank() }?.let { parts.add("Released $it") }
+                a.optString("albumName").takeIf { it.isNotBlank() }?.let { parts.add("From \"$it\"") }
+                a.optString("composerName").takeIf { it.isNotBlank() }?.let { parts.add("Composed by $it") }
+                a.optString("copyright").takeIf { it.isNotBlank() }?.let { parts.add(it) }
+                MvDetails(parts.joinToString("\n"), artistId)
+            } catch (e: Exception) {
+                Log.w("AMMV", "MV details fetch failed: ${e.message}"); null
+            }
+        }
+
+    /** A library song's catalog id (from its `catalog` relationship), or null. Used to
+     *  recover playback when the library release itself is unsalable (1010). */
+    private suspend fun resolveCatalogId(libraryId: String, bearer: String, mut: String): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val resp = http.newCall(
+                    Request.Builder()
+                        .url("https://amp-api-edge.music.apple.com/v1/me/library/songs/$libraryId?include=catalog")
+                        .addHeader("Authorization", "Bearer $bearer")
+                        .addHeader("Music-User-Token", mut)
+                        .addHeader("Origin", "https://music.apple.com")
+                        .build()
+                ).execute()
+                val body = resp.body!!.string()
+                val data = JSONObject(body).optJSONArray("data") ?: return@withContext null
+                if (data.length() == 0) return@withContext null
+                val cat = data.getJSONObject(0)
+                    .optJSONObject("relationships")?.optJSONObject("catalog")
+                    ?.optJSONArray("data")
+                if (cat == null || cat.length() == 0) return@withContext null
+                cat.getJSONObject(0).getString("id")
+            } catch (e: Exception) {
+                Log.w("AppleDirectClient", "resolveCatalogId failed for $libraryId: ${e.message}"); null
+            }
+        }
+
     suspend fun getWebPlayback(songId: String, bearer: String, mut: String): WebPlaybackResult =
         withContext(Dispatchers.IO) {
             // Apple's webPlayback wants a library song under "universalLibraryId"
-            // and a catalog song under "salableAdamId". Sending the wrong form
-            // returns failureType 1010 (NoSalableAdamId). We can't always tell
-            // which a given id is, so try the natural form first, then the other.
+            // and a catalog song under "salableAdamId". A library row can point at a
+            // release Apple no longer serves (failureType 1010, NoSalableAdamId) even
+            // though the SAME song plays fine under its catalog id — so for a library
+            // id we also resolve its catalog id and try salableAdamId with THAT (the
+            // old code re-sent the i.xxx id in both forms, which never helped).
             val isLibrary = songId.startsWith("i.")
-            val forms = if (isLibrary)
-                listOf("universalLibraryId", "salableAdamId")
-            else
-                listOf("salableAdamId", "universalLibraryId")
+            // (field, value) pairs to attempt, in order.
+            val attempts = ArrayList<Pair<String, String>>()
+            if (isLibrary) {
+                attempts.add("universalLibraryId" to songId)
+                resolveCatalogId(songId, bearer, mut)?.let { attempts.add("salableAdamId" to it) }
+            } else {
+                attempts.add("salableAdamId" to songId)
+                attempts.add("universalLibraryId" to songId)
+            }
 
             var entry: JSONObject? = null
             var lastBody = ""
-            for (field in forms) {
-                val bodyStr = """{"$field":"$songId","language":"en-US"}"""
+            for ((field, value) in attempts) {
+                val bodyStr = """{"$field":"$value","language":"en-US"}"""
                 val resp = http.newCall(
                     Request.Builder()
                         .url("https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback")
@@ -148,6 +242,235 @@ class AppleDirectClient @Inject constructor() {
         }
 
     /**
+     * Resolve a music-video id to a set of playable, DRM-corrected HLS playlists.
+     *
+     * The catch that took three failed attempts: Apple's MV playlist ships a Widevine
+     * `#EXT-X-KEY` whose pssh carries a **placeholder KID ("Mic1…"), not the real
+     * content KID**. Trust it and the device CDM requests the wrong key → the video
+     * sample's real KID (in the fMP4 init segment's `tenc` box) is never satisfied and
+     * MediaCodec dies "Crypto key not available". So we do exactly what the audio path
+     * does: download each track's init segment, read the real KID off `tenc`, synthesize
+     * a correct Widevine pssh, and rewrite the key line with it. Apple's license endpoint
+     * returns the real content key regardless of the challenge KID (it maps by adamId),
+     * so once the session/sample/license KIDs all agree, playback works.
+     *
+     * We emit a minimal master with one video variant (best ≤1080p) + one audio rendition
+     * pointing at two locally-written media playlists; segments still stream from mvod on
+     * demand (nothing but the tiny m3u8 files touches disk). Returns the playlist texts —
+     * the caller writes the three files and plays the master via file://.
+     */
+    suspend fun getMusicVideoPlayback(mvId: String, bearer: String, mut: String, maxHeight: Int = 1080): MusicVideoResult =
+        withContext(Dispatchers.IO) {
+            val numeric = mvId.replace(Regex("^[a-z]+\\."), "")
+            val forms = listOf("salableAdamId", "universalLibraryId")
+            var entry: JSONObject? = null
+            var lastBody = ""
+            for (field in forms) {
+                val idVal = if (field == "universalLibraryId") mvId else numeric
+                val bodyStr = """{"$field":"$idVal","language":"en-US"}"""
+                val resp = http.newCall(
+                    Request.Builder()
+                        .url("https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback")
+                        .post(bodyStr.toRequestBody("application/json".toMediaType()))
+                        .addHeader("Authorization", "Bearer $bearer")
+                        .addHeader("Cookie",        "media-user-token=$mut")
+                        .addHeader("Origin",        "https://music.apple.com")
+                        .build()
+                ).execute()
+                lastBody = resp.body!!.string()
+                val json = JSONObject(lastBody)
+                if (json.has("songList") && json.getJSONArray("songList").length() > 0) {
+                    val e = json.getJSONArray("songList").getJSONObject(0)
+                    if (e.has("hls-playlist-url")) { entry = e; break }
+                }
+            }
+            if (entry == null) error("MV webPlayback rejected: ${lastBody.take(200)}")
+            val adamId = entry.optString("songId", numeric)
+            val masterUrl = entry.getString("hls-playlist-url")
+            val masterText = fetchText(masterUrl, emptyMap())
+            val mBase = masterUrl.substringBeforeLast("/") + "/"
+            fun abs(u: String) = if (u.startsWith("http")) u else mBase + u
+            val lines = masterText.lines()
+
+            // Best video variant ≤1080p (its STREAM-INF attrs are reused in our master).
+            data class V(val height: Int, val attrs: String, val uri: String)
+            val variants = mutableListOf<V>()
+            for (i in lines.indices) {
+                if (lines[i].startsWith("#EXT-X-STREAM-INF")) {
+                    val h = Regex("""RESOLUTION=\d+x(\d+)""").find(lines[i])?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val uri = lines.getOrNull(i + 1)?.takeIf { it.isNotBlank() && !it.startsWith("#") } ?: continue
+                    variants.add(V(h, lines[i].removePrefix("#EXT-X-STREAM-INF:"), uri))
+                }
+            }
+            // Pick the best variant at or below the requested quality; fall back to the lowest
+            // available if the video offers nothing that small.
+            val vPick = variants.filter { it.height in 1..maxHeight }.maxByOrNull { it.height }
+                ?: variants.filter { it.height > 0 }.minByOrNull { it.height }
+                ?: variants.maxByOrNull { it.height } ?: error("No video variant in MV master")
+            Log.i("AMMV", "quality cap=${maxHeight}p → picked ${vPick.height}p (avail=${variants.map { it.height }})")
+
+            // The audio group this variant references, else the first/highest audio rendition.
+            val wantGroup = Regex("""AUDIO="([^"]+)"""").find(vPick.attrs)?.groupValues?.get(1)
+            val audioLines = lines.filter { it.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") }
+            val aLine = audioLines.firstOrNull { wantGroup != null && it.contains("GROUP-ID=\"$wantGroup\"") }
+                ?: audioLines.lastOrNull() ?: error("No audio rendition in MV master")
+            val aUri = Regex("""URI="([^"]+)"""").find(aLine)?.groupValues?.get(1) ?: error("No audio URI")
+
+            val video = rewriteMvMedia(abs(vPick.uri))
+            val audio = rewriteMvMedia(abs(aUri))
+            val videoText = video.text
+            val audioText = audio.text
+
+            // Subtitles (WebVTT, unencrypted) — pick the DEFAULT/first CC or SUBTITLES
+            // rendition if present, absolutise its segment URIs, no DRM rewrite needed.
+            val subLine = lines.firstOrNull { it.startsWith("#EXT-X-MEDIA:TYPE=SUBTITLES") }
+                ?: lines.firstOrNull { it.startsWith("#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS") && it.contains("URI=") }
+            val subGroup = subLine?.let { Regex("""GROUP-ID="([^"]+)"""").find(it)?.groupValues?.get(1) }
+            val subsText: String? = subLine?.let { sl ->
+                val su = Regex("""URI="([^"]+)"""").find(sl)?.groupValues?.get(1) ?: return@let null
+                runCatching {
+                    val raw = fetchText(abs(su), emptyMap())
+                    val sBase = abs(su).substringBeforeLast("/") + "/"
+                    raw.lines().joinToString("\n") { ln ->
+                        if (ln.isNotBlank() && !ln.startsWith("#") && !ln.startsWith("http")) sBase + ln else ln
+                    }
+                }.getOrNull()
+            }
+            // CEA-608 closed captions are muxed INTO the video (no URI, just INSTREAM-ID) —
+            // e.g. Die With a Smile. ExoPlayer extracts them from the decoded video, but only
+            // if the master declares the CC group. Pass the line through verbatim.
+            val ccLine = lines.firstOrNull {
+                it.startsWith("#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS") && it.contains("INSTREAM-ID") && !it.contains("URI=")
+            }
+            val ccGroup = ccLine?.let { Regex("""GROUP-ID="([^"]+)"""").find(it)?.groupValues?.get(1) }
+            // Per-track routing: the DRM callback matches each session's challenge (which
+            // embeds the track's placeholder KID) to that track's license uri. Apple's
+            // license then binds the real content key under a KID the samples reference.
+            val keyMap = listOfNotNull(
+                video.kidHex?.let { it to (video.keyUri ?: "") },
+                audio.kidHex?.let { it to (audio.keyUri ?: "") },
+            ).toMap()
+            val keyUri = video.keyUri ?: ""
+            Log.i("AMMV", "keyMap=${keyMap.keys}")
+
+            // Minimal master: our single video variant + single audio rendition, both
+            // pointing at the local rewritten media playlists.
+            val master = buildString {
+                appendLine("#EXTM3U")
+                appendLine("#EXT-X-VERSION:6")
+                appendLine("#EXT-X-INDEPENDENT-SEGMENTS")
+                appendLine("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"English\",DEFAULT=YES,AUTOSELECT=YES,URI=\"$MV_AUDIO_FILE\"")
+                if (subsText != null) {
+                    appendLine("#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\",DEFAULT=NO,AUTOSELECT=YES,FORCED=NO,LANGUAGE=\"en\",URI=\"$MV_SUBS_FILE\"")
+                }
+                if (ccLine != null) appendLine(ccLine)   // CEA-608 CC group, verbatim
+                // Force AUDIO="aud" (and SUBTITLES="subs") to match our rendition groups, and
+                // drop any CLOSED-CAPTIONS ref unless we carried the CC group through.
+                var attrs = vPick.attrs.replace(Regex("""AUDIO="[^"]+""""), "AUDIO=\"aud\"")
+                    .let { if (it.contains("AUDIO=")) it else "$it,AUDIO=\"aud\"" }
+                    .replace(Regex(""",?SUBTITLES="[^"]+""""), "")
+                    .replace(Regex(""",?CLOSED-CAPTIONS=(NONE|"[^"]+")"""), "")
+                if (subsText != null) attrs = "$attrs,SUBTITLES=\"subs\""
+                attrs = if (ccGroup != null) "$attrs,CLOSED-CAPTIONS=\"$ccGroup\"" else "$attrs,CLOSED-CAPTIONS=NONE"
+                appendLine("#EXT-X-STREAM-INF:$attrs")
+                appendLine(MV_VIDEO_FILE)
+            }
+            Log.i("AMMV", "mv=$adamId picked ${vPick.height}p variant; rewrote v+a playlists keyUri=${keyUri.take(36)}")
+            val heights = variants.map { it.height }.filter { it > 0 }.distinct().sorted()
+            MusicVideoResult(adamId = adamId, masterText = master, videoText = videoText, audioText = audioText, subsText = subsText, keyUri = keyUri, keyMap = keyMap, heights = heights)
+        }
+
+    /**
+     * Fetch one MV media playlist, KEEP Apple's original Widevine key line (its pssh
+     * carries the per-track placeholder KID Apple maps to the real content key — the
+     * fMP4 `tenc` default is unprotected, so there is no real KID to synthesize), and
+     * drop the FairPlay/PlayReady key lines so ExoPlayer commits to Widevine. Segment +
+     * map URIs are absolutised so the local file resolves them against mvod. Returns the
+     * rewritten text plus this track's placeholder KID (16 bytes) and license uri so the
+     * DRM callback can route each session's request to the matching track.
+     */
+    private fun rewriteMvMedia(mediaUrl: String): MvMedia {
+        val text = fetchText(mediaUrl, emptyMap())
+        val base = mediaUrl.substringBeforeLast("/") + "/"
+        fun abs(u: String) = if (u.startsWith("http")) u else base + u
+
+        val wvLine = text.lines()
+            .firstOrNull { it.startsWith("#EXT-X-KEY") && it.contains("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed") }
+        val wvUri = wvLine?.let { Regex("""URI="([^"]+)"""").find(it)?.groupValues?.get(1) }
+        // Apple's placeholder KID (Mic1/Mic6) lives in the pssh: protobuf `12 10 <16 bytes>`.
+        val placeholderKid = wvUri?.substringAfter("base64,", "")?.let { b64 ->
+            runCatching {
+                val raw = Base64.decode(b64, Base64.DEFAULT)
+                var j = 0; var found: ByteArray? = null
+                while (j + 2 + 16 <= raw.size) {
+                    if (raw[j] == 0x12.toByte() && raw[j + 1] == 0x10.toByte()) { found = raw.copyOfRange(j + 2, j + 18); break }
+                    j++
+                }
+                found
+            }.getOrNull()
+        }
+        val kidHex = placeholderKid?.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+
+        // The tenc default_KID is what MediaCodec queries per sample; it's typically all
+        // zeros here (the content key is identified by the pssh, not tenc). Build a pssh
+        // carrying BOTH: the tenc KID (so the decoder's key lookup hits) AND the Apple
+        // placeholder KID (so the two tracks get distinct DRM sessions and the license
+        // callback can route each to its own uri).
+        val mapUri = Regex("""#EXT-X-MAP:URI="([^"]+)"""").find(text)?.groupValues?.get(1)
+        val tencKid = mapUri?.let { runCatching { extractTencKid(fetchBytes(abs(it))) }.getOrNull() }
+        val kids = listOfNotNull(tencKid, placeholderKid).ifEmpty { null }
+        val rewrittenKeyLine = kids?.let {
+            val pssh = Base64.encodeToString(widevinePssh(it), Base64.NO_WRAP)
+            "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"data:text/plain;base64,$pssh\"," +
+                "KEYFORMAT=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\",KEYFORMATVERSIONS=\"1\""
+        }
+
+        var keyEmitted = false
+        val out = buildString {
+            for (raw in text.lines()) {
+                val line = raw.trim()
+                when {
+                    line.startsWith("#EXT-X-KEY") -> {
+                        // Emit our combined-KID Widevine line once (drop FairPlay/PlayReady).
+                        if (!keyEmitted) { appendLine(rewrittenKeyLine ?: wvLine ?: line); keyEmitted = true }
+                    }
+                    line.startsWith("#EXT-X-MAP:") -> {
+                        val u = Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
+                        appendLine(if (u == null) line else line.replace("\"$u\"", "\"${abs(u)}\""))
+                    }
+                    line.isEmpty() || line.startsWith("#") -> appendLine(line)
+                    else -> appendLine(abs(line))
+                }
+            }
+        }
+        Log.i("AMMV", "track tencKid=${tencKid?.joinToString(""){"%02x".format(it.toInt() and 0xFF)}} placeholder=$kidHex")
+        return MvMedia(out, wvUri, kidHex)
+    }
+
+    private data class MvMedia(val text: String, val keyUri: String?, val kidHex: String?)
+
+    /** Scan an fMP4 init segment for the `tenc` box and return its 16-byte default KID. */
+    private fun extractTencKid(bytes: ByteArray): ByteArray? {
+        var i = 0
+        while (i + 4 <= bytes.size - 4) {
+            if (bytes[i] == 't'.code.toByte() && bytes[i + 1] == 'e'.code.toByte() &&
+                bytes[i + 2] == 'n'.code.toByte() && bytes[i + 3] == 'c'.code.toByte()) {
+                // tenc body: version(1) flags(3) reserved(1) pattern(1) isProtected(1)
+                // ivSize(1) then default_KID(16). KID starts 4(type)+9 from here.
+                // tenc body after 'tenc': version(1) flags(3) reserved(1) pattern(1)
+                // isProtected(1) ivSize(1) then default_KID(16) → KID at 4+8.
+                val kidStart = i + 4 + 8
+                if (kidStart + 16 <= bytes.size) return bytes.copyOfRange(kidStart, kidStart + 16)
+            }
+            i++
+        }
+        return null
+    }
+
+    private fun fetchBytes(url: String): ByteArray =
+        http.newCall(Request.Builder().url(url).build()).execute().body!!.bytes()
+
+    /**
      * ExoPlayer's HLS parser hard-rejects Apple's `#EXT-X-KEY:METHOD=ISO-23001-7`
      * ("Couldn't match METHOD=..."), so the manifest never even loads. Drop the key
      * line — the CENC pssh lives in the fMP4 init segment, and the DrmSessionManager
@@ -191,10 +514,22 @@ class AppleDirectClient @Inject constructor() {
             "KEYFORMAT=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\",KEYFORMATVERSIONS=\"1\""
     }
 
+    /** Minimal Widevine pssh box wrapping one or more key ids. */
+    private fun widevinePssh(kids: List<ByteArray>): ByteArray {
+        // Widevine protobuf: field 1 (algorithm) = AESCTR, then field 2 (key_id) repeated.
+        var payload = byteArrayOf(0x08, 0x01)
+        for (kid in kids) payload = payload + byteArrayOf(0x12, 0x10) + kid
+        return psshBox(payload)
+    }
+
     /** Minimal Widevine pssh box wrapping a single key id. */
     private fun widevinePssh(kid: ByteArray): ByteArray {
         // Widevine protobuf: field 1 (algorithm) = AESCTR, field 2 (key_id) = kid.
         val payload = byteArrayOf(0x08, 0x01, 0x12, 0x10) + kid
+        return psshBox(payload)
+    }
+
+    private fun psshBox(payload: ByteArray): ByteArray {
         val systemId = byteArrayOf(
             0xED.toByte(), 0xEF.toByte(), 0x8B.toByte(), 0xA9.toByte(), 0x79, 0xD6.toByte(),
             0x4A, 0xCE.toByte(), 0xA3.toByte(), 0xC8.toByte(), 0x27, 0xDC.toByte(),

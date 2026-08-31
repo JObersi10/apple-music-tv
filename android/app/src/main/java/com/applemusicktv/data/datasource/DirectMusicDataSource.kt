@@ -10,6 +10,20 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
     var storefront: String = "us"
         private set
 
+    // ── Library writes (standalone path) ────────────────────────────────
+    /** Add a catalog item to the user's library. type is "songs"/"albums"/"music-videos"/"playlists". */
+    suspend fun addToLibrary(id: String, type: String): Result<Unit> = runCatching {
+        val res = api.addToLibrary(mapOf("ids[$type]" to id))
+        if (!res.isSuccessful) error("HTTP ${res.code()}")
+    }
+
+    /** Append a song to an editable library playlist. */
+    suspend fun addToPlaylist(playlistId: String, songId: String, type: String = "songs"): Result<Unit> = runCatching {
+        val res = api.addTracksToPlaylist(playlistId,
+            com.applemusicktv.data.network.AddTracksBody(listOf(com.applemusicktv.data.network.AddTrackRef(songId, type))))
+        if (!res.isSuccessful) error("HTTP ${res.code()}")
+    }
+
     suspend fun detectStorefront() {
         runCatching {
             val sf = api.storefront().data.firstOrNull()?.id
@@ -27,7 +41,187 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
             playlists = res.results.playlists.data
                 .sortedByDescending { it.attributes?.playlistType == "editorial" }
                 .map { it.toPlaylistDto() },
+            curators = searchCurators(term),
         )
+    }
+
+    // ── Editorial categories (curators + multirooms) — standalone parity ──────
+    private fun resolveArt(url: String?, size: Int = 400): String? = url
+        ?.replace("{w}", "$size")?.replace("{h}", "$size")?.replace("{f}", "jpg")
+
+    private fun edItemToAlbumDto(it: EdItem): AlbumDto? {
+        val a = it.attributes ?: return null
+        // Curators (genre/mood/decade tiles, radio shows) carry editorial artwork, not `artwork`,
+        // and MUST be id-prefixed so the Category screen opens them as a nested page (not an album).
+        if (it.type == "apple-curators" || it.type == "curators") {
+            val ea = a.editorialArtwork
+            val curUrl = (ea?.subscriptionCover ?: ea?.brandLogo)?.url ?: a.artwork?.url ?: return null
+            val name = (a.name ?: "Unknown").replace(Regex("^Apple Music (?=\\S)"), "").replace(Regex("^Apple (?=\\S)"), "")
+            return AlbumDto(
+                id = (if (it.type == "apple-curators") "ac-" else "c-") + it.id,
+                title = name, artistName = "", artworkUrl = curUrl, type = "curators",
+                artworkBgColor = null, releaseDate = null,
+            )
+        }
+        val url = a.artwork?.url ?: return null   // require artwork, same as the proxy
+        return AlbumDto(
+            id             = it.id,
+            title          = a.name ?: "Unknown",
+            artistName     = a.artistName ?: a.curatorName ?: "",
+            artworkUrl     = url,
+            type           = it.type ?: "albums",
+            artworkBgColor = a.artwork.bgColor,
+            releaseDate    = null,
+        )
+    }
+
+    /** Curators + multirooms, tagged by kind (multirooms first). Empty on any failure. */
+    suspend fun searchCurators(term: String): List<CuratorDto> = runCatching {
+        val res = api.edSearch(
+            storefront, term,
+            // editorial-items (multirooms) is only accepted alongside a broad type set.
+            types = "artists,albums,songs,playlists,curators,apple-curators,music-videos,stations,editorial-items",
+        )
+        val multirooms = mutableListOf<CuratorDto>()
+        val curators   = mutableListOf<CuratorDto>()
+        val seen = HashSet<String>()
+        val idRe = Regex("""multi-?room[s]?/(\d+)""")
+        for (group in res.results.values) for (item in group.data) {
+            val a = item.attributes ?: continue
+            when (item.type) {
+                "editorial-items" -> {
+                    if (a.link?.feature != "multirooms") continue
+                    val id = idRe.find(a.link.url ?: a.url ?: "")?.groupValues?.get(1) ?: continue
+                    if (!seen.add("mr$id")) continue
+                    multirooms += CuratorDto(
+                        id = id, name = a.editorialNotes?.name ?: a.name ?: "Unknown",
+                        kind = "multiroom", isApple = false,
+                        artworkUrl = resolveArt(a.editorialArtwork?.subscriptionCover?.url ?: a.editorialArtwork?.brandLogo?.url),
+                    )
+                }
+                "curators", "apple-curators" -> {
+                    if (!seen.add(item.id)) continue
+                    curators += CuratorDto(
+                        id = item.id, name = a.name ?: "Unknown",
+                        kind = if (item.type == "apple-curators") "apple-curator" else "curator",
+                        isApple = item.type == "apple-curators",
+                        artworkUrl = resolveArt(a.artwork?.url),
+                    )
+                }
+            }
+        }
+        multirooms + curators
+    }.getOrDefault(emptyList())
+
+    // Genre/mood/decade grid — three editorial rooms of apple-curators. Mirrors the proxy.
+    suspend fun getCategories(): List<CategorySectionDto> {
+        val rooms = listOf("Genres" to "6456176470", "Moods & Activities" to "6456176472", "Decades" to "6456176471")
+        val drop = Regex("rewind|replay|year in|wrapped", RegexOption.IGNORE_CASE)
+        return rooms.mapNotNull { (title, room) ->
+            val items = runCatching {
+                api.edRoom(storefront, room).data.firstOrNull()?.relationships?.contents?.data.orEmpty()
+                    .filter { it.type == "apple-curators" || it.type == "curators" }
+                    .filter { !drop.containsMatchIn(it.attributes?.name ?: "") }
+                    .map {
+                        val a = it.attributes
+                        val ea = a?.editorialArtwork
+                        CuratorDto(
+                            id = it.id,
+                            name = (a?.name ?: "Unknown").replace(Regex("^Apple Music (?=\\S)"), "").replace(Regex("^Apple (?=\\S)"), ""),
+                            kind = if (it.type == "apple-curators") "apple-curator" else "curator",
+                            isApple = it.type == "apple-curators",
+                            artworkUrl = resolveArt(ea?.subscriptionCover?.url ?: ea?.brandLogo?.url ?: a?.artwork?.url, 600),
+                        )
+                    }
+            }.getOrDefault(emptyList())
+            if (items.isEmpty()) null else CategorySectionDto(title, items)
+        }
+    }
+
+    suspend fun getCurator(id: String, isApple: Boolean): MultiRoomDto {
+        val kind = if (isApple) "apple-curators" else "curators"
+        val cur = api.edCurator(storefront, kind, id).data.firstOrNull()
+            ?: return MultiRoomDto(id = id)
+        var sections = cur.relationships?.grouping?.data?.firstOrNull()?.id
+            ?.let { groupingSections(it) } ?: emptyList()
+        if (sections.isEmpty()) {
+            val items = cur.relationships?.playlists?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
+            if (items.isNotEmpty()) sections = listOf(HomeSection("Playlists", items))
+        }
+        val ea = cur.attributes?.editorialArtwork
+        val hero = resolveArt(ea?.superHeroWide?.url ?: ea?.brandLogo?.url ?: cur.attributes?.artwork?.url, 1600)
+        return MultiRoomDto(id = id, title = cur.attributes?.name ?: "", artworkUrl = hero, sections = sections)
+    }
+
+    private suspend fun groupingSections(groupingId: String): List<HomeSection> = runCatching {
+        val tab = api.edGrouping(storefront, groupingId).data.firstOrNull()
+            ?.relationships?.tabs?.data?.firstOrNull()
+        (tab?.relationships?.children?.data ?: emptyList()).mapNotNull { k ->
+            val kind = k.attributes?.editorialElementKind
+            if (kind != "326" && kind != "345") return@mapNotNull null
+            val title = k.attributes?.name ?: k.attributes?.title ?: return@mapNotNull null
+            val albums = k.relationships?.contents?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
+            if (albums.isEmpty()) null else HomeSection(title, albums)
+        }
+    }.getOrDefault(emptyList())
+
+    // Multiroom hero blurb is skipped on the direct path (its description is a string|object
+    // union that the typed parser can't take); shelves are what matter.
+    /** A plain editorial ROOM — the "see all" page behind a Browse shelf. Its contents are a flat
+     *  list (e.g. room 6503108310 "Daily Top 100" = 100 country playlists), so it renders as one
+     *  section. This is what the "More" card at the end of a shelf opens. */
+    suspend fun getRoom(id: String): MultiRoomDto {
+        val room = api.edRoom(storefront, id).data.firstOrNull() ?: return MultiRoomDto(id = id)
+        val items = room.relationships?.contents?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
+        val title = room.attributes?.title ?: room.attributes?.name ?: ""
+        return MultiRoomDto(
+            id = id, title = title,
+            sections = if (items.isEmpty()) emptyList() else listOf(HomeSection(title, items)),
+        )
+    }
+
+    /** A catalog grouping (e.g. Music Videos = grouping 34). Video shelves become `videos` sections
+     *  so CategoryScreen plays them in the video player; everything else is album/curator cards. */
+    suspend fun getGrouping(id: String): MultiRoomDto {
+        val g = api.edGrouping(storefront, id).data.firstOrNull() ?: return MultiRoomDto(id = id)
+        val tab = g.relationships?.tabs?.data?.firstOrNull()
+        val sections = (tab?.relationships?.children?.data ?: emptyList()).mapNotNull { k ->
+            val kind = k.attributes?.editorialElementKind
+            if (kind != "326" && kind != "327") return@mapNotNull null
+            val title = k.attributes?.name ?: k.attributes?.title ?: return@mapNotNull null
+            val contents = k.relationships?.contents?.data ?: emptyList()
+            val types = contents.map { it.type }.toSet()
+            if (types.isNotEmpty() && types.all { it == "music-videos" || it == "uploaded-videos" }) {
+                val videos = contents.mapNotNull(::edItemToVideo)
+                if (videos.isEmpty()) null else HomeSection(title, videos = videos)
+            } else {
+                val albums = contents.mapNotNull(::edItemToAlbumDto)
+                if (albums.isEmpty()) null else HomeSection(title, albums)
+            }
+        }
+        return MultiRoomDto(id = id, title = g.attributes?.title ?: g.attributes?.name ?: "", sections = sections)
+    }
+
+    private fun edItemToVideo(it: EdItem): com.applemusicktv.data.network.SongDto? {
+        val a = it.attributes ?: return null
+        val url = a.artwork?.url ?: return null
+        return com.applemusicktv.data.network.SongDto(
+            id = it.id, type = "music-videos", title = a.name ?: "Unknown",
+            artistName = a.artistName ?: "", albumName = "", durationMs = 0L,
+            artworkUrl = url, artworkBgColor = a.artwork.bgColor, previewUrl = null, previewHlsUrl = null,
+        )
+    }
+
+    suspend fun getMultiRoom(id: String): MultiRoomDto {
+        val room = api.edMultiRoom(storefront, id).data.firstOrNull()
+            ?: return MultiRoomDto(id = id)
+        val sections = (room.relationships?.children?.data ?: emptyList()).mapNotNull { k ->
+            if (k.attributes?.editorialElementKind != "345") return@mapNotNull null
+            val title = k.attributes.title ?: return@mapNotNull null
+            val albums = k.relationships?.contents?.data?.mapNotNull(::edItemToAlbumDto).orEmpty()
+            if (albums.isEmpty()) null else HomeSection(title, albums)
+        }
+        return MultiRoomDto(id = id, title = room.attributes?.title ?: "", sections = sections)
     }
 
     suspend fun librarySongs(): Result<LibrarySongsResponse> = runCatching {
@@ -133,6 +327,40 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         api.catalogArtist(storefront, catId ?: id).data.first().toArtistDto()
     }
 
+    /** Related albums, standalone: Apple has no "related" endpoint, so use other albums by the same
+     *  artist (derived from the album's first track), minus the album itself. */
+    suspend fun relatedAlbums(id: String): Result<List<AlbumDto>> = runCatching {
+        val artistId = albumTracks(id).getOrNull()?.firstOrNull()?.artistId ?: return@runCatching emptyList()
+        artistAlbums(artistId).getOrNull().orEmpty().filter { it.id != id }
+    }
+
+    /** Apple system status (Music services), standalone: fetch Apple's public status feed directly. */
+    suspend fun appleStatus(): Result<com.applemusicktv.data.network.AppleStatusResponse> = runCatching {
+        val txt = plainHttpText("https://www.apple.com/support/systemstatus/data/system_status_en_US.js")
+        val json = txt.trim().let { if (it.startsWith("{")) it else it.replace(Regex("^[^(]*\\("), "").replace(Regex("\\)\\s*;?\\s*$"), "") }
+        val obj = org.json.JSONObject(json)
+        val now = System.currentTimeMillis()
+        val keywords = listOf("Apple Music", "iTunes Match")
+        val out = ArrayList<com.applemusicktv.data.network.AppleServiceStatus>()
+        val services = obj.optJSONArray("services")
+        if (services != null) for (i in 0 until services.length()) {
+            val svc = services.getJSONObject(i)
+            val name = svc.optString("serviceName")
+            if (keywords.none { name.contains(it) }) continue
+            val events = svc.optJSONArray("events")
+            var live = 0
+            if (events != null) for (j in 0 until events.length()) {
+                val end = events.getJSONObject(j).opt("epochEndDate")
+                val ongoing = end == null || end == org.json.JSONObject.NULL ||
+                    ((end as? Number)?.toLong() ?: 0L) > now
+                if (ongoing) live++
+            }
+            out += com.applemusicktv.data.network.AppleServiceStatus(name, if (live > 0) "issue" else "operational")
+        }
+        com.applemusicktv.data.network.AppleStatusResponse(
+            ok = out.all { it.status == "operational" }, services = out, checkedAt = "")
+    }
+
     /** Standalone autoplay: Apple's song radio needs a bearer we don't hold on-disk, so
      *  derive a comparable queue from the seed's artist + similar artists' top songs. */
     suspend fun relatedSongs(seedId: String): Result<List<SongDto>> = runCatching {
@@ -147,6 +375,57 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
 
     /** Top songs for a genre (Apple charts) → a shuffled genre station queue. */
     @Suppress("UNCHECKED_CAST")
+    /** Build a playable queue from a station's rolling next-tracks feed (standalone path). */
+    suspend fun stationTracks(id: String): Result<List<SongDto>> = runCatching {
+        val out = LinkedHashMap<String, SongDto>()
+        repeat(12) {
+            if (out.size >= 20) return@repeat
+            val batch = runCatching { api.stationNextTracks(id).data }.getOrDefault(emptyList())
+            for (item in batch) {
+                val dto = item.toSongDto()
+                if (dto.id.isNotEmpty()) out[dto.id] = dto
+            }
+        }
+        out.values.toList()
+    }
+
+    /** Live-radio stream + Widevine key server, no proxy. Mirrors the server's /station/:id/stream:
+     *  play/assets for the live HLS + key server, then the media playlist for the Widevine EXT-X-KEY
+     *  URI (the license body's `uri`). The CDN rejects the auth headers our Retrofit client injects,
+     *  so the m3u8 fetches use a bare OkHttp client. */
+    suspend fun stationStream(id: String): Result<StationStreamResponse> = runCatching {
+        val res = api.playAssets(
+            "https://amp-api.music.apple.com/v1/play/assets",
+            mapOf("format" to "stream", "hasDrm" to "true", "id" to id,
+                  "kind" to "radioStation", "mediaType" to "0", "keyFormat" to "web"),
+        )
+        val asset = res.results?.assets?.firstOrNull() ?: error("no play asset")
+        val url = asset.url ?: error("no stream url")
+        val wvKeyUri = runCatching {
+            val master = plainHttpText(url)
+            val mediaUrl = master.lineSequence().firstOrNull { it.startsWith("http") }?.trim()
+                ?: return@runCatching null
+            val media = plainHttpText(mediaUrl)
+            media.lineSequence().firstOrNull {
+                it.startsWith("#EXT-X-KEY") && it.contains("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed")
+            }?.let { Regex("URI=\"([^\"]*)\"").find(it)?.groupValues?.getOrNull(1) }
+        }.getOrNull()
+        StationStreamResponse(
+            liveStreamUrl = url,
+            drmKeyUri     = asset.keyServerUrl,
+            certUrl       = asset.widevineKeyCertificateUrl,
+            wvKeyUri      = wvKeyUri,
+            adamId        = id.removePrefix("ra."),
+        )
+    }
+
+    private val plainHttp by lazy { okhttp3.OkHttpClient() }
+    private suspend fun plainHttpText(url: String): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        plainHttp.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { r ->
+            r.body?.string() ?: ""
+        }
+    }
+
     suspend fun genreStationSongs(genreId: String): Result<List<SongDto>> = runCatching {
         val raw = api.charts(storefront, types = "songs", limit = 50, genre = genreId)
         val results = raw["results"] as? Map<*, *> ?: return@runCatching emptyList()
@@ -191,12 +470,13 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         fun artwork(m: Map<*, *>?): String? =
             (m?.get("artwork") as? Map<*, *>)?.get("url") as? String
 
-        fun songs(key: String): List<SongDto> =
+        fun songs(key: String, forceType: String? = null): List<SongDto> =
             ((views[key] as? Map<*, *>)?.get("data") as? List<*>)?.mapNotNull { e ->
                 val n = e as? Map<*, *> ?: return@mapNotNull null
                 val a = n["attributes"] as? Map<*, *> ?: return@mapNotNull null
                 SongDto(
                     id = n["id"] as? String ?: return@mapNotNull null,
+                    type = forceType ?: (n["type"] as? String ?: "songs"),
                     title = a["name"] as? String ?: "",
                     artistName = a["artistName"] as? String ?: "",
                     albumName = a["albumName"] as? String ?: "",
@@ -244,6 +524,7 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
             editorialNotes = ((attrs["editorialNotes"] as? Map<*, *>)?.get("standard")
                 ?: (attrs["editorialNotes"] as? Map<*, *>)?.get("short")) as? String,
             topSongs = songs("top-songs"),
+            musicVideos = songs("top-music-videos", forceType = "music-videos"),
             latestRelease = albums("latest-release").firstOrNull(),
             albums = albums("full-albums"),
             featuredAlbums = albums("featured-albums"),
@@ -341,6 +622,18 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
         val square = (video["motionSquareVideo1x1"] ?: video["motionDetailSquare"]) as? Map<*, *>
             ?: return@runCatching null
         ((square["video"] as? String))
+    }
+
+    /** Motion artwork for an album card directly (l.* resolves to catalog first). Null if none. */
+    @Suppress("UNCHECKED_CAST")
+    suspend fun albumMotion(albumId: String): Result<String?> = runCatching {
+        val catId = if (isLibraryId(albumId)) catalogIdForAlbum(albumId) ?: return@runCatching null else albumId
+        val raw = api.catalogAlbumWithMotion(storefront, catId)
+        val attrs = ((raw["data"] as? List<*>)?.firstOrNull() as? Map<*, *>)?.get("attributes") as? Map<*, *>
+        val ev = attrs?.get("editorialVideo") as? Map<*, *> ?: return@runCatching null
+        val square = (ev["motionSquareVideo1x1"] ?: ev["motionDetailSquare"]) as? Map<*, *>
+            ?: return@runCatching null
+        (square["video"] as? String)
     }
 
     /** Probe: log what a personalized station (ra.*) actually returns. */

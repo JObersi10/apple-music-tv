@@ -48,83 +48,93 @@ home.get("/", async (c) => {
   const mut = resolveMUT(c);
   const sf = getStorefront() || "us";
   const h = mut ? appleHeaders(mut) : bearerOnly();
-  const sections: Array<{ title: string; albums: any[] }> = [];
+  const sections: Array<{ title: string; albums: any[]; kind?: string; style?: string }> = [];
 
-  // 1. Personalized recommendations — "Top Picks for You"
-  //    Contains new releases, Made For You, artist stations, etc.
+  // Personalized recommendations feed — this IS the signed-in music.apple.com "Listen Now"/Home
+  //    page. Each recommendation is a titled shelf ("Playlists Made for You", "Recently Played",
+  //    genre essentials, "More from <artist>", "New Releases for You", …). We emit each as its own
+  //    section in Apple's order, exactly like the web. Stations shelves are skipped until station
+  //    playback is wired (a station card that can't play would look broken).
   if (mut) {
     try {
-      const res = await axios.get(`${APPLE}/v1/me/recommendations`, {
-        params: {
-          limit: 20,
-          "include[personal-recommendation]": "contents",
-        },
-        headers: h,
-      });
-      const topPicks: any[] = [];
-      const genreSections: Map<string, any[]> = new Map();
-
-      const recs = res.data?.data ?? [];
-      for (const rec of recs) {
-        const title: string = rec.attributes?.title?.stringForDisplay ?? "For You";
-        const contents: any[] = rec.relationships?.contents?.data ?? [];
-        const recType: string = rec.attributes?.resourceTypes?.[0] ?? "";
-        if (recType === "stations" || title.toLowerCase().includes("station")) continue;
-        const items: any[] = contents
-          .filter((item: any) => item.type !== "stations")
-          .map((item: any) => {
-            if (item.type === "albums") { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }
-            if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName } : null; }
-            return itemFromRaw(item);
-          }).filter(Boolean);
-        if (items.length === 0) continue;
-
-        if (title.toLowerCase().includes("genre") || rec.attributes?.kind === "genre-mix") {
-          genreSections.set(title, items);
-        } else {
-          topPicks.push(...items);
+      // Apple's recommendations upstream is flaky: ~1 in 10 calls returns 500 "Upstream Service
+      // Error" (50001). Worse, `art[url]=f` on the edge host makes that 500 near-certain — drop it.
+      // Retry a few times so a single unlucky call doesn't collapse Home to the charts fallback.
+      let res: any = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          res = await axios.get(`${APPLE}/v1/me/recommendations`, {
+            params: { limit: 25, "include[personal-recommendation]": "contents" },
+            headers: h,
+          });
+          break;
+        } catch (err: any) {
+          if (attempt === 2) throw err;
+          await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
         }
       }
-
-      if (topPicks.length > 0) sections.push({ title: "Top Picks for You", albums: topPicks });
-      for (const [title, items] of genreSections) {
-        sections.push({ title, albums: items });
+      for (const rec of (res.data?.data ?? [])) {
+        const title: string = rec.attributes?.title?.stringForDisplay
+          ?? rec.attributes?.reason?.stringForDisplay
+          ?? "For You";
+        const contents: any[] = rec.relationships?.contents?.data ?? [];
+        const items = contents.map((item: any) => {
+          if (item.type === "albums") { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }
+          if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName, type: "playlists" } : null; }
+          return itemFromRaw(item);
+        }).filter(Boolean);
+        if (items.length > 0) {
+          // ONLY "Playlists Made for You" animates (Get Up!/Chill/Your Essentials…) — the one row
+          // Apple animates on the web Home. Every animated card costs the TV a video decoder.
+          if (/^Playlists Made for You/i.test(title)) {
+            await Promise.all(items.map(async (it: any) => {
+              try {
+                const r = await axios.get(`${APPLE}/v1/catalog/${sf}/playlists/${it.id}`, {
+                  params: { extend: "editorialVideo" }, headers: h,
+                });
+                const ev = r.data?.data?.[0]?.attributes?.editorialVideo;
+                it.motionUrl = (ev?.motionSquareVideo1x1 ?? ev?.motionDetailSquare)?.video ?? null;
+              } catch { /* motion art is optional polish */ }
+            }));
+          }
+          sections.push({ title, albums: items, kind: rec.attributes?.kind });
+        }
       }
     } catch (e: any) {
-      // Apple's rec endpoint intermittently 500s — retry below
-      // retry once — Apple's rec endpoint intermittently 500s
-      try {
-        const retry = await axios.get(`${APPLE}/v1/me/recommendations`, {
-          params: { limit: 20, "include[personal-recommendation]": "contents" },
-          headers: h,
-        });
-        const items = (retry.data?.data ?? []).flatMap((rec: any) => {
-          const contents: any[] = rec.relationships?.contents?.data ?? [];
-          return contents.map((item: any) => {
-            if (item.type === "albums") { const a = normaliseAlbum(item); return a.artworkUrl ? a : null; }
-            if (item.type === "playlists") { const p = normalisePlaylist(item); return p.artworkUrl ? { ...p, title: p.name, artistName: p.curatorName } : null; }
-            return itemFromRaw(item);
-          }).filter(Boolean);
-        });
-        if (items.length > 0) sections.push({ title: "Top Picks for You", albums: items });
-      } catch {}
+      console.warn("[home] recommendations failed:", e?.response?.status, e?.message);
     }
   }
 
-  // 2. Recently Played
-  if (mut) {
-    try {
-      const res = await axios.get(`${APPLE}/v1/me/recent/played`, {
-        params: { limit: 20, types: "albums,playlists" },
-        headers: h,
-      });
-      const items = (res.data?.data ?? []).map(itemFromRaw).filter(Boolean);
-      if (items.length > 0) sections.push({ title: "Recently Played", albums: items });
-    } catch (e: any) {
-      console.warn("[home] recently-played failed:", e.message);
-    }
+  // "Find Your Mood" — Apple's Moods & Activities editorial room, same shelf the web Home shows
+  // under the personalized feed. Cards carry the CategoryScreen id prefix so tapping opens that page.
+  try {
+    const res = await axios.get(`${APPLE}/v1/editorial/${sf}/rooms/6456176472`, {
+      headers: h,
+      params: { include: "contents", extend: "editorialArtwork", l: "en-US", platform: "web", "art[url]": "f" },
+    });
+    const drop = /rewind|replay|year in|wrapped/i;
+    const items = (res.data?.data?.[0]?.relationships?.contents?.data ?? [])
+      .filter((it: any) => it.type === "apple-curators" || it.type === "curators")
+      .filter((it: any) => !drop.test(it.attributes?.name ?? ""))
+      .map((it: any) => {
+        const a = it.attributes ?? {};
+        const ea = a.editorialArtwork ?? {};
+        const url = artUrl(ea.subscriptionCover?.url ?? ea.brandLogo?.url ?? a.artwork?.url, 600);
+        if (!url) return null;
+        return {
+          id: (it.type === "apple-curators" ? "ac-" : "c-") + it.id,
+          title: (a.name ?? "Unknown").replace(/^Apple Music (?=\S)/, "").replace(/^Apple (?=\S)/, ""),
+          artistName: "", artworkUrl: url, type: "curators",
+          artworkBgColor: null, releaseDate: null, trackCount: 0,
+        };
+      }).filter(Boolean);
+    if (items.length) sections.push({ title: "Find Your Mood", albums: items });
+  } catch (e: any) {
+    console.warn("[home] moods failed:", e?.response?.status, e?.message);
   }
 
+  // Charts + new releases fill in when there's no MUT (logged-out) or the rec feed was thin.
+  if (sections.length < 2) {
   // 3. New in catalog — top albums chart (new releases)
   try {
     const res = await axios.get(`${APPLE}/v1/catalog/${sf}/charts`, {
@@ -160,24 +170,33 @@ home.get("/", async (c) => {
   } catch (e: any) {
     console.warn("[home] charts/playlists failed:", e.message);
   }
+  } // end fallback
 
-  // 5. Recently Added from library (fallback / extra)
-  if (mut) {
-    try {
-      const res = await axios.get(`${APPLE}/v1/me/library/recently-added`, {
-        params: { limit: 20 },
-        headers: h,
-      });
-      const items = (res.data?.data ?? []).map(itemFromRaw).filter(Boolean);
-      if (items.length > 0) sections.push({ title: "Recently Added", albums: items });
-    } catch (e: any) {
-      console.warn("[home] recently-added failed:", e.message);
-    }
+  const isMade = (s: { title: string }) => /^Playlists Made for You/i.test(s.title);
+
+  // "Top Picks for You" — Apple's web Home leads with this hero, but /me/recommendations doesn't
+  // return it as a named shelf. Its cards ARE the lead item of each personalized artist/station
+  // recommendation ("Featuring LAUV", "More from BTS: Deep Cuts", "… Similar Artists Station"), each
+  // captioned by its row title. We rebuild it from exactly those rows, then lead the page with it.
+  const pickRows = sections.filter((s) => s.kind === "music-recommendations" && !isMade(s));
+  const topPicks: any[] = [];
+  const pseen = new Set<string>();
+  for (const row of pickRows) {
+    const lead = (row.albums ?? []).find((a: any) => a && !pseen.has(a.id));
+    if (!lead) continue;
+    pseen.add(lead.id);
+    topPicks.push({ ...lead, title: row.title }); // caption = the row title
+    if (topPicks.length >= 10) break;
   }
 
+  const made = sections.filter(isMade).map((s) => ({ ...s, style: "gradient" }));
+  const rest = sections.filter((s) => !isMade(s));
 
-
-  return c.json({ sections });
+  // Lead with Top Picks; "Playlists Made for You" sits lower (~4th) so fresher rows lead.
+  const out: Array<{ title: string; albums: any[]; style?: string }> = [...rest];
+  if (made.length) out.splice(Math.min(3, out.length), 0, ...made);
+  if (topPicks.length >= 3) out.unshift({ title: "Top Picks for You", albums: topPicks, style: "picks" });
+  return c.json({ sections: out });
 });
 
 export default home;

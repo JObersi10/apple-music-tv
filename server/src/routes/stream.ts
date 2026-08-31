@@ -128,7 +128,9 @@ function abortBackgroundJobs(exceptSongId?: string) {
 /** Decrypt a song to a seekable cache file (once), returning its path. */
 async function ensureDecrypted(songId: string, mut: string, background = false): Promise<string> {
   if (unavailableIds.has(songId)) {
-    throw new Error(`decrypt skipped: ${songId} previously reported UNAVAILABLE:3077`);
+    const err: any = new Error(`decrypt skipped: ${songId} previously reported UNAVAILABLE`);
+    err.exitCode = 2;   // 404 → permanent skip, no retry storm
+    throw err;
   }
   const out = cachePath(songId);
   if (fs.existsSync(out) && fs.statSync(out).size > 0) {
@@ -264,9 +266,20 @@ async function getStreamParams(songId: string, mut: string) {
 
   const WEB_PLAYBACK = "https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/webPlayback";
 
-  const bodies = isLibrary
-    ? [{ universalLibraryId: songId }, { salableAdamId: numericId }]
-    : [{ salableAdamId: numericId }, { universalLibraryId: songId }];
+  // For a library row, the salableAdamId fallback needs the REAL catalog id — stripping
+  // the "i." prefix just leaves the library suffix (not numeric), so the fallback never
+  // worked. Resolve the catalog id from the library song's catalog relationship. This is
+  // what recovers dead library rows (failureType 1010, NoSalableAdamId) whose catalog
+  // copy still plays.
+  const bodies: Array<Record<string, string>> = [];
+  if (isLibrary) {
+    bodies.push({ universalLibraryId: songId });
+    const catId = await resolveCatalogId(songId, mut);
+    if (catId && catId !== songId) bodies.push({ salableAdamId: catId });
+  } else {
+    bodies.push({ salableAdamId: numericId });
+    bodies.push({ universalLibraryId: songId });
+  }
 
   let entry: any;
   for (const bodyBase of bodies) {
@@ -292,7 +305,12 @@ async function getStreamParams(songId: string, mut: string) {
 
   if (!asset?.URL) {
     const flavors = assets.map((a: any) => a.flavor).join(", ") || "none";
-    throw new Error(`No playable asset (flavors: ${flavors})`);
+    // No streamable asset in this storefront (preview-only / withdrawn). Cache it so we
+    // stop re-hitting webPlayback on every ExoPlayer retry, and signal a permanent skip.
+    unavailableIds.add(songId);
+    const err: any = new Error(`No playable asset (flavors: ${flavors})`);
+    err.exitCode = 2;   // treated as 404 → ExoPlayer skips without retrying
+    throw err;
   }
 
   console.log(`[stream] asset flavor=${asset.flavor} url=${asset.URL.substring(0, 80)}…`);

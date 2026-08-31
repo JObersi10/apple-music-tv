@@ -1,0 +1,59 @@
+package com.applemusicktv.ui.viewmodel
+
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.applemusicktv.data.network.HomeSection
+import com.applemusicktv.data.repository.MusicRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+data class CategoryUiState(
+    val isLoading:   Boolean = true,
+    val title:       String = "",
+    val description: String? = null,
+    val artworkUrl:  String? = null,
+    val sections:    List<HomeSection> = emptyList(),
+    val error:       String? = null,
+)
+
+/** An Apple editorial "multiroom" category page — a title, a blurb, and several playlist/album shelves. */
+@HiltViewModel
+class CategoryViewModel @Inject constructor(
+    private val repo: MusicRepository,
+    savedState: SavedStateHandle,
+) : ViewModel() {
+
+    // Route id is prefixed with the page flavour: "ac-<id>" apple-curator, "c-<id>" curator,
+    // "mr-<id>" editorial multiroom.
+    private val rawId = savedState.get<String>("categoryId") ?: ""
+    private val isApple = rawId.startsWith("ac-")
+    private val isMultiRoom = rawId.startsWith("mr-")
+    // "room-<id>" is a plain editorial room — the "More" (see all) page at the end of a Browse shelf.
+    private val isRoom = rawId.startsWith("room-")
+    // "grouping-<id>" is a catalog grouping page (e.g. Music Videos = grouping 34).
+    private val isGrouping = rawId.startsWith("grouping-")
+    private val realId = rawId.removePrefix("ac-").removePrefix("c-").removePrefix("mr-").removePrefix("room-").removePrefix("grouping-")
+    private val _state = MutableStateFlow(CategoryUiState())
+    val state: StateFlow<CategoryUiState> = _state
+
+    init { if (realId.isNotEmpty()) load() }
+
+    private fun load() = viewModelScope.launch {
+        (when {
+            isRoom      -> repo.getRoom(realId)
+            isMultiRoom -> repo.getMultiRoom(realId)
+            isGrouping  -> repo.getGrouping(realId)
+            else        -> repo.getCurator(realId, isApple)
+        })
+            .onSuccess { d ->
+                _state.value = CategoryUiState(
+                    isLoading = false, title = d.title, description = d.description,
+                    artworkUrl = d.artworkUrl, sections = d.sections,
+                )
+            }
+            .onFailure { _state.value = CategoryUiState(isLoading = false, error = it.message) }
+    }
+}

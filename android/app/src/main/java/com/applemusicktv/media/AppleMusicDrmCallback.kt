@@ -18,9 +18,31 @@ class AppleMusicDrmCallback(
     private val keyUri: String,
     private val bearer: String,
     private val mut:    String,
+    /** For music videos: placeholder-KID(hex) → license uri. Empty for audio. When set,
+     *  each key request is routed to the uri whose KID bytes appear in the challenge, so
+     *  the separate audio and video tracks each get their own license. */
+    private val keyMap: Map<String, String> = emptyMap(),
 ) : MediaDrmCallback {
 
     private val http = OkHttpClient()
+
+    /** Pick the license uri whose placeholder KID bytes are embedded in this challenge. */
+    private fun uriForChallenge(challenge: ByteArray): String {
+        if (keyMap.isEmpty()) return keyUri
+        for ((kidHex, uri) in keyMap) {
+            val kid = ByteArray(16) { i -> ((Character.digit(kidHex[i * 2], 16) shl 4) + Character.digit(kidHex[i * 2 + 1], 16)).toByte() }
+            if (indexOf(challenge, kid) >= 0) return uri
+        }
+        return keyUri
+    }
+
+    private fun indexOf(haystack: ByteArray, needle: ByteArray): Int {
+        outer@ for (i in 0..haystack.size - needle.size) {
+            for (j in needle.indices) if (haystack[i + j] != needle[j]) continue@outer
+            return i
+        }
+        return -1
+    }
 
     /**
      * Device provisioning. This is NOT an Apple call — it goes to Google's Widevine
@@ -48,10 +70,11 @@ class AppleMusicDrmCallback(
         request: ExoMediaDrm.KeyRequest,
     ): ByteArray {
         val challenge = Base64.encodeToString(request.data, Base64.NO_WRAP)
+        val uri = uriForChallenge(request.data)
         val body = JSONObject().apply {
             put("challenge",      challenge)
             put("key-system",     "com.widevine.alpha")
-            put("uri",            keyUri)
+            put("uri",            uri)
             put("adamId",         adamId)
             put("isLibrary",      false)
             put("user-initiated", true)
@@ -66,7 +89,10 @@ class AppleMusicDrmCallback(
             .build()
 
         val resp = http.newCall(httpReq).execute()
-        val licenseB64 = JSONObject(resp.body!!.string()).getString("license")
+        val respBody = resp.body!!.string()
+        val json = JSONObject(respBody)
+        android.util.Log.i("AMMV", "license http=${resp.code} status=${json.opt("status")} hasLicense=${json.has("license")} uri=${uri.take(40)}")
+        val licenseB64 = json.getString("license")
         return Base64.decode(licenseB64, Base64.DEFAULT)
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -94,12 +95,24 @@ fun ArtistDetailScreen(
             item { SectionTitle("Top Songs") }
             item {
                 Row(Modifier.padding(start = 48.dp, end = 48.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PillButton("▶  Play") { playerVm.playAlbum(state.topSongs, 0) }
-                    PillButton("⇄  Shuffle") { playerVm.playAlbum(state.topSongs.shuffled(), 0) }
-                    PillButton("📻  Station") { vm.playStation { songs -> playerVm.playAlbum(songs, 0) } }
+                    PillButton(com.applemusicktv.ui.components.Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54)) { playerVm.playAlbum(state.topSongs, 0) }
+                    PillButton(com.applemusicktv.ui.components.Glyph.SHUFFLE, "Shuffle", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) { playerVm.playAlbum(state.topSongs.shuffled(), 0) }
+                    PillButton(com.applemusicktv.ui.components.Glyph.RADIO, "Station", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) { vm.playStation { songs -> playerVm.playAlbum(songs, 0) } }
                 }
             }
             itemsIndexedTopSongs(state.topSongs, playerVm)
+        }
+
+        // Music Videos (Essentials) — 16:9 thumbnails, play via the MV path.
+        if (state.musicVideos.isNotEmpty()) {
+            item { SectionTitle("Music Videos") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    itemsIndexed(state.musicVideos, key = { _, v -> v.id }) { i, v ->
+                        ArtistVideoCard(v) { playerVm.playAlbum(state.musicVideos, i) }
+                    }
+                }
+            }
         }
 
         state.latestRelease?.let { latest ->
@@ -155,16 +168,31 @@ private fun SectionTitle(title: String) {
         modifier = Modifier.padding(start = 48.dp, end = 48.dp, top = 24.dp, bottom = 12.dp))
 }
 
+/** 16:9 music-video thumbnail with title/artist below — matches the video shelves elsewhere. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun PillButton(label: String, onClick: () -> Unit) {
+private fun ArtistVideoCard(video: Song, onPlay: () -> Unit) {
     Surface(
-        onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B), focusedContainerColor = Color(0xFFCC1A2E)),
+        onClick = onPlay,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        modifier = Modifier.width(300.dp),
     ) {
-        Box(Modifier.padding(horizontal = 26.dp, vertical = 10.dp)) {
-            Text(label, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+        Column {
+            Box(
+                Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp)).background(Color(0xFF1A1A1C))
+            ) {
+                if (video.artworkUrl != null) AsyncImage(
+                    model = video.artworkUrl(600), contentDescription = null,
+                    contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Text(video.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+                maxLines = 1, modifier = Modifier.padding(top = 8.dp))
+            Text(video.artistName, fontSize = 12.sp, color = Color(0xFF9A9A9A), maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp, bottom = 4.dp))
         }
     }
 }

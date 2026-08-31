@@ -142,7 +142,7 @@ private fun StationRow(st: RadioStation, onClick: () -> Unit) {
                 ).joinToString(" · ")
                 if (sub.isNotEmpty()) Text(sub, fontSize = 10.sp, color = Color(0xFF777777), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 1.dp))
             }
-            Text("▶", fontSize = 13.sp, color = Color(0xFFFA233B))
+            com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.PLAY, size = 13.dp, color = Color(0xFFFA233B))
         }
     }
 }

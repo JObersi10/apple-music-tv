@@ -29,6 +29,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import com.applemusicktv.data.model.Song
+import com.applemusicktv.ui.components.Glyph
+import com.applemusicktv.ui.components.Icon
 import com.applemusicktv.ui.viewmodel.PlaylistDetailViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 
@@ -42,6 +44,7 @@ fun PlaylistDetailScreen(
     onBack: () -> Unit,
     onArtistClick: (String) -> Unit = {},
     onAlbumClick: (String) -> Unit = {},
+    onMusicVideoClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val vm: PlaylistDetailViewModel = hiltViewModel()
@@ -49,8 +52,28 @@ fun PlaylistDetailScreen(
 
     LaunchedEffect(playlistId) { vm.load(playlistId, artworkUrl) }
 
-    var sort by remember { mutableStateOf(PlaylistSort.DEFAULT) }
-    var descending by remember { mutableStateOf(false) }
+    // Sort is remembered PER PLAYLIST (keyed by id) in SharedPreferences.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val sortPrefs = remember { context.getSharedPreferences("playlist_sort", android.content.Context.MODE_PRIVATE) }
+    var sort by remember(playlistId) {
+        mutableStateOf(
+            sortPrefs.getString("f_$playlistId", null)
+                ?.let { runCatching { PlaylistSort.valueOf(it) }.getOrNull() } ?: PlaylistSort.DEFAULT
+        )
+    }
+    var descending by remember(playlistId) { mutableStateOf(sortPrefs.getBoolean("d_$playlistId", false)) }
+    var showSortDialog by remember { mutableStateOf(false) }
+
+    if (showSortDialog) {
+        PlaylistSortDialog(
+            current = sort, descending = descending,
+            onPick = { f, desc ->
+                sort = f; descending = desc
+                sortPrefs.edit().putString("f_$playlistId", f.name).putBoolean("d_$playlistId", desc).apply()
+            },
+            onDismiss = { showSortDialog = false },
+        )
+    }
     val sortedTracks = remember(state.tracks, sort, descending) {
         val base = when (sort) {
             PlaylistSort.DEFAULT -> state.tracks
@@ -63,6 +86,7 @@ fun PlaylistDetailScreen(
     }
 
     var menuSongState by remember { mutableStateOf<Song?>(null) }
+    var addToSong by remember { mutableStateOf<Song?>(null) }
     var lastDismissMs by remember { mutableStateOf(0L) }
     val dismissMenu: () -> Unit = {
         lastDismissMs = System.currentTimeMillis()
@@ -123,63 +147,23 @@ fun PlaylistDetailScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 48.dp),
                 ) {
-                    // Sticky Play/Shuffle header
+                    // Sticky Play/Shuffle header — sort is a round button pushed to the right.
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth()
                                 .background(Color(0xFF0A0A0A))
                                 .padding(horizontal = 24.dp, vertical = 16.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks, 0) },
-                                shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFFFA233B), focusedContainerColor = Color(0xFFCC1A2E)),
-                            ) {
-                                Box(Modifier.padding(horizontal = 28.dp, vertical = 11.dp)) {
-                                    Text("▶  Play", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                            Surface(
-                                onClick = { playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true) },
-                                shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
-                            ) {
-                                Box(Modifier.padding(horizontal = 28.dp, vertical = 11.dp)) {
-                                    Text("⇄  Shuffle", fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                    }
-                    // Sort bar
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("Sort", fontSize = 11.sp, color = Color(0xFF666666))
-                            for (opt in PlaylistSort.entries) {
-                                val selected = opt == sort
-                                Surface(
-                                    onClick = { if (sort == opt) descending = !descending else { sort = opt; descending = false } },
-                                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                                    colors = ClickableSurfaceDefaults.colors(
-                                        containerColor = if (selected) Color(0xFF2E2E30) else Color.Transparent,
-                                        focusedContainerColor = Color(0xFF3A3A3C),
-                                    ),
-                                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-                                ) {
-                                    Box(Modifier.padding(horizontal = 12.dp, vertical = 5.dp)) {
-                                        Text(
-                                            opt.label + if (selected) (if (descending) "  ↓" else "  ↑") else "",
-                                            fontSize = 11.sp,
-                                            color = if (selected) Color.White else Color(0xFF888888),
-                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                        )
-                                    }
-                                }
+                            PillButton(Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54)) {
+                                playerVm.playAlbum(sortedTracks, 0)   // mixed queue; videos route to the video player
                             }
+                            PillButton(Glyph.SHUFFLE, "Shuffle", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) {
+                                playerVm.playAlbum(sortedTracks.shuffled(), 0, shuffle = true)
+                            }
+                            Spacer(Modifier.weight(1f))
+                            SortCircleButton(onClick = { showSortDialog = true })
                         }
                     }
                     trackItems(sortedTracks, playerVm) { song ->
@@ -222,13 +206,18 @@ fun PlaylistDetailScreen(
                 Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                PlaylistContextItem("▶", "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                PlaylistContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                PlaylistContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
+                PlaylistContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
+                PlaylistContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
                 HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                s.artistId?.let { aid -> PlaylistContextItem("♪", "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(aid); dismissMenu() } }) }
-                s.albumId?.let  { alid -> PlaylistContextItem("◉", "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(alid);  dismissMenu() } }) }
+                s.artistId?.let { aid -> PlaylistContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(aid); dismissMenu() } }) }
+                s.albumId?.let  { alid -> PlaylistContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(alid);  dismissMenu() } }) }
             }
         }
+    }
+
+    addToSong?.let { s ->
+        com.applemusicktv.ui.components.AddToDialog(playerVm, s, onDismiss = { addToSong = null })
     }
 
     } // outer Box
@@ -238,12 +227,92 @@ private enum class PlaylistSort(val label: String) {
     DEFAULT("Default"), TITLE("Title"), ARTIST("Artist"), ALBUM("Album")
 }
 
-private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onLongPress: (Song) -> Unit = {}) {
+/** Round sort button (right side of the header) — opens the sort popup. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@androidx.compose.runtime.Composable
+private fun SortCircleButton(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color(0xFF2A2A2C), focusedContainerColor = Color.White,
+        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+    ) {
+        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+            Text("⇅", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        }
+    }
+}
+
+/** Sort chooser popup for a playlist's track list. Real Dialog so D-pad focus stays in. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@androidx.compose.runtime.Composable
+private fun PlaylistSortDialog(
+    current: PlaylistSort,
+    descending: Boolean,
+    onPick: (PlaylistSort, Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        val firstFocus = remember { FocusRequester() }
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            colors = androidx.tv.material3.SurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E)),
+            modifier = Modifier.width(340.dp),
+        ) {
+            Column(Modifier.padding(vertical = 18.dp)) {
+                Text("Sort By", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                    modifier = Modifier.padding(start = 22.dp, bottom = 10.dp))
+                PlaylistSort.entries.forEachIndexed { i, opt ->
+                    PlaylistSortRow(opt.label, opt == current,
+                        modifier = if (i == 0) Modifier.focusRequester(firstFocus) else Modifier) {
+                        onPick(opt, descending)
+                    }
+                }
+                Box(Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 22.dp)
+                    .height(1.dp).background(Color(0xFF3A3A3C)))
+                PlaylistSortRow("Ascending", !descending) { onPick(current, false) }
+                PlaylistSortRow("Descending", descending) { onPick(current, true) }
+            }
+        }
+        LaunchedEffect(Unit) { firstFocus.requestFocus() }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@androidx.compose.runtime.Composable
+private fun PlaylistSortRow(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E),
+        ),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, fontSize = 14.sp, color = Color.White,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                modifier = Modifier.weight(1f))
+            if (selected) Text("✓", fontSize = 15.sp, color = Color(0xFFFA233B))
+        }
+    }
+}
+
+private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onMusicVideoClick: (Song) -> Unit = {}, onLongPress: (Song) -> Unit = {}) {
     items(tracks.size) { idx ->
         val song = tracks[idx]
         @OptIn(ExperimentalTvMaterial3Api::class)
         Surface(
-            onClick     = { playerVm.playAlbum(tracks, idx) },
+            onClick     = {
+                // Mixed queue: tap plays the whole list from here; playQueueItem routes each
+                // item to the audio engine or the video player.
+                playerVm.playAlbum(tracks, idx)
+            },
             onLongClick = { onLongPress(song) },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
@@ -259,15 +328,25 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("${idx + 1}", fontSize = 12.sp, color = Color(0xFF555555), modifier = Modifier.width(24.dp))
-                Box(Modifier.size(40.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF2A2A2A))) {
+                // Music-video frames are 16:9 — show the whole frame in a wide thumbnail
+                // instead of a square crop that lops off the sides. Songs stay square.
+                val thumbMod = if (song.isMusicVideo) Modifier.height(40.dp).aspectRatio(16f / 9f)
+                               else Modifier.size(40.dp)
+                Box(thumbMod.clip(RoundedCornerShape(5.dp)).background(Color(0xFF2A2A2A))) {
                     if (song.artworkUrl != null)
-                        AsyncImage(model = song.artworkUrl(80), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        AsyncImage(model = song.artworkUrl(120), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 }
                 Column(Modifier.weight(1f)) {
                     Text(song.title, fontSize = 13.sp, color = Color.White, maxLines = 1, fontWeight = FontWeight.Medium)
                     Text(song.artistName, fontSize = 11.sp, color = Color(0xFF666666), maxLines = 1)
                 }
-                Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFF555555))
+                if (song.isMusicVideo) {
+                    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        Text("MV", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFF555555))
+                }
             }
         }
     }
@@ -275,7 +354,7 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun PlaylistContextItem(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun PlaylistContextItem(icon: Glyph, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -287,8 +366,31 @@ private fun PlaylistContextItem(icon: String, label: String, onClick: () -> Unit
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(icon, fontSize = 16.sp, color = Color(0xFF888888), modifier = Modifier.width(22.dp))
+            Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
+                Icon(icon, size = 17.dp, color = Color(0xFFB0B0B4))
+            }
             Text(label, fontSize = 15.sp, color = Color.White)
+        }
+    }
+}
+
+/** Rounded Apple-style action pill with a drawn leading glyph. Grows + brightens on focus. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+internal fun PillButton(glyph: Glyph, label: String, base: Color, focusColor: Color, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(24.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = base, focusedContainerColor = focusColor),
+        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 26.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Icon(glyph, size = 15.dp, color = Color.White)
+            Text(label, fontSize = 14.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
         }
     }
 }

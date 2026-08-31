@@ -14,11 +14,24 @@ import retrofit2.HttpException
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** An editorial curator (e.g. "Formula 1", "Tomorrowland") — opens a page of its playlists. */
+data class Curator(
+    val id:         String,
+    val name:       String,
+    val kind:       String,   // "multiroom" | "curator" | "apple-curator"
+    val isApple:    Boolean,
+    val artworkUrl: String?,
+)
+
+/** A titled row of category tiles (Genres, Moods & Activities, Decades). */
+data class CategoryGroup(val title: String, val items: List<Curator>)
+
 data class SearchResults(
-    val songs:     List<Song>   = emptyList(),
-    val albums:    List<Album>  = emptyList(),
-    val artists:   List<Artist> = emptyList(),
-    val playlists: List<Album>  = emptyList(),
+    val songs:     List<Song>    = emptyList(),
+    val albums:    List<Album>   = emptyList(),
+    val artists:   List<Artist>  = emptyList(),
+    val playlists: List<Album>   = emptyList(),
+    val curators:  List<Curator> = emptyList(),
 )
 
 @Singleton
@@ -51,23 +64,32 @@ class MusicRepository @Inject constructor(
     suspend fun search(term: String, limit: Int = 20): Result<SearchResults> {
         if (!useProxy) {
             return direct.search(term, limit).map { r ->
-                SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto), playlists = r.playlists.map(::playlistToAlbum))
+                SearchResults(songs = r.songs.map(::songFromDto), albums = r.albums.map(::albumFromDto), artists = r.artists.map(::artistFromDto),
+                    playlists = r.playlists.map(::playlistToAlbum).filter { it.id.startsWith("pl.") },
+                    curators = r.curators.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
             }
         }
         return runCatching {
             val res = api.search(term, limit)
             // The proxy backend often doesn't surface catalog playlists — fall back to a
             // direct Apple catalog search for them so the Playlists row still populates.
-            val playlists = res.playlists.map(::playlistToAlbum).ifEmpty {
+            // Keep only Apple editorial/curated playlists (catalog id `pl.`); drop personal
+            // user playlists (`p.`), which aren't what a catalog search is meant to show.
+            val playlists = (res.playlists.map(::playlistToAlbum).ifEmpty {
                 runCatching { direct.search(term, limit).getOrNull()?.playlists?.map(::playlistToAlbum) }
                     .getOrNull().orEmpty()
-            }
-            SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists)
+            }).filter { it.id.startsWith("pl.") }
+            val curators = res.curators.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) }
+            SearchResults(songs = res.songs.map(::songFromDto), albums = res.albums.map(::albumFromDto), artists = res.artists.map(::artistFromDto), playlists = playlists, curators = curators)
         }
     }
 
-    suspend fun getStationTracks(id: String) = apiCall { api.getStationTracks(id).songs.map(::songFromDto) }
-    suspend fun getStationStream(id: String) = apiCall { api.getStationStream(id) }
+    suspend fun getStationTracks(id: String) =
+        if (!useProxy) direct.stationTracks(id).map { it.map(::songFromDto) }
+        else apiCall { api.getStationTracks(id).songs.map(::songFromDto) }
+    suspend fun getStationStream(id: String) =
+        if (!useProxy) direct.stationStream(id)
+        else apiCall { api.getStationStream(id) }
     suspend fun getAlbum(id: String) =
         if (!useProxy) direct.album(id).map(::albumFromDto)
         else apiCall { albumFromDto(api.getAlbum(id)) }
@@ -80,7 +102,7 @@ class MusicRepository @Inject constructor(
     // album's artist relationship, which AlbumDto doesn't carry. Standalone returns
     // nothing rather than guessing; the shelf just doesn't render.
     suspend fun getRelatedAlbums(id: String) =
-        if (!useProxy) Result.success(emptyList<com.applemusicktv.data.model.Album>())
+        if (!useProxy) direct.relatedAlbums(id).map { it.map(::albumFromDto) }
         else apiCall { api.getRelatedAlbums(id).albums.map(::albumFromDto) }
 
     suspend fun getSong(id: String) =
@@ -102,18 +124,69 @@ class MusicRepository @Inject constructor(
     // ── Home ─────────────────────────────────────────────────────────────
     suspend fun getHome() =
         if (!useProxy) runCatching { sectionsOf(directBrowse.home(mutPrefs.hasMUT())) }
-        else runCatching { api.getHome() }
+        else runCatching { api.getHome() }.recoverCatching {
+            // Proxy was marked reachable but the call failed (server went down between the 30s health
+            // pings). Don't strand the tab empty — flip to standalone and serve Home directly.
+            serverPrefs.serverReachable = false
+            sectionsOf(directBrowse.home(mutPrefs.hasMUT()))
+        }
 
+    private val gradientTitleRe = Regex("^Playlists Made for You", RegexOption.IGNORE_CASE)
+
+    // Style by title so the direct path matches the proxy: "Top Picks for You" is the big-lockup
+    // hero, "Playlists Made for You" is the gradient shelf.
     private fun sectionsOf(pairs: List<Pair<String, List<com.applemusicktv.data.network.AlbumDto>>>) =
         com.applemusicktv.data.network.HomeResponse(
             sections = pairs.map { (title, albums) ->
-                com.applemusicktv.data.network.HomeSection(title, albums)
+                val style = when {
+                    title.equals("Top Picks for You", ignoreCase = true) -> "picks"
+                    gradientTitleRe.containsMatchIn(title) -> "gradient"
+                    else -> null
+                }
+                com.applemusicktv.data.network.HomeSection(title, albums, style = style)
             }
         )
 
     suspend fun getBrowse() =
-        if (!useProxy) runCatching { sectionsOf(directBrowse.browse()) }
-        else runCatching { api.getBrowse() }
+        if (!useProxy) runCatching { com.applemusicktv.data.network.HomeResponse(directBrowse.browse()) }
+        else runCatching { api.getBrowse() }.recoverCatching {
+            serverPrefs.serverReachable = false
+            com.applemusicktv.data.network.HomeResponse(directBrowse.browse())
+        }
+    /** Editorial "multiroom" category page (e.g. The Sounds of Formula 1). Proxy-only for now —
+     *  standalone (direct) port is a follow-up. */
+    // Curator page (playlists, or grouping tabs for rich apple-curators).
+    suspend fun getCurator(id: String, isApple: Boolean) =
+        if (!useProxy) runCatching { direct.getCurator(id, isApple) }
+        else runCatching { api.getCurator(id, if (isApple) 1 else 0) }
+
+    // Editorial multiroom page (hand-built shelves; hero blurb on proxy only).
+    /** A plain editorial room — the "see all" page opened by a shelf's "More" card. */
+    suspend fun getRoom(id: String) =
+        if (!useProxy) runCatching { direct.getRoom(id) }
+        else runCatching { api.getRoom(id) }
+
+    suspend fun getMultiRoom(id: String) =
+        if (!useProxy) runCatching { direct.getMultiRoom(id) }
+        else runCatching { api.getMultiRoom(id) }
+
+    /** A catalog grouping page (e.g. Music Videos = grouping 34). */
+    suspend fun getGrouping(id: String) =
+        if (!useProxy) runCatching { direct.getGrouping(id) }
+        else runCatching { api.getGrouping(id) }
+
+    // Genre/mood/decade tile grid (each tile is a curator → category page).
+    suspend fun getCategories(): Result<List<CategoryGroup>> =
+        if (!useProxy) runCatching { direct.getCategories().map { it.toGroup() } }
+        else runCatching {
+            api.getCategories().sections.map { s ->
+                CategoryGroup(s.title, s.items.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
+            }
+        }
+
+    private fun CategorySectionDto.toGroup() =
+        CategoryGroup(title, items.map { Curator(it.id, it.name, it.kind, it.isApple, it.artworkUrl) })
+
     suspend fun getGenres() =
         if (!useProxy) direct.genres().map { g -> g.filter { it.name.isNotEmpty() && it.id != "34" } }
         else runCatching { api.getGenres().genres }
@@ -151,11 +224,24 @@ class MusicRepository @Inject constructor(
     suspend fun getPlaylistMotion(playlistId: String): Result<String?> =
         if (!useProxy) direct.playlistMotion(playlistId) else Result.success(null)
 
+    /** Motion loop for any card (editorial playlist / album / song), or null. Used for
+     *  focus-triggered animated artwork on every shelf. Proxy exposes only song→album motion. */
+    suspend fun cardMotion(id: String, type: String): String? = runCatching {
+        if (useProxy) return@runCatching runCatching { api.getCardMotion(type, id).video }.getOrNull()
+        when {
+            id.startsWith("pl.") || type == "playlists" -> getPlaylistMotion(id).getOrNull()
+            type == "albums" || id.startsWith("l.")      -> direct.albumMotion(id).getOrNull()
+            type == "songs"                              -> getMotion(id).getOrNull()
+            else -> null
+        }
+    }.getOrNull()
+
     /** Probe whether the configured proxy server is reachable. */
     suspend fun pingServer(): Boolean =
         runCatching { api.health(); true }.getOrDefault(false)
 
-    suspend fun getAppleStatus() = runCatching { api.appleStatus() }
+    suspend fun getAppleStatus() =
+        if (!useProxy) direct.appleStatus() else runCatching { api.appleStatus() }
 
     /** Pre-warm bearer token + storefront for standalone mode. */
     suspend fun prepareStandalone() {
@@ -183,6 +269,23 @@ class MusicRepository @Inject constructor(
     suspend fun getLibraryPlaylists(limit: Int = 25) =
         if (!useProxy) direct.libraryPlaylists().map { it.playlists }
         else apiCall { api.getLibraryPlaylists(limit).playlists }
+
+    // ── Library writes ──────────────────────────────────────────────────
+    /** Add a song (or album/video) to the user's library. A song's catalog id is what Apple wants;
+     *  a library id (starts with "i.") is already in the library, so it's a no-op success. */
+    suspend fun addToLibrary(song: Song): Result<Unit> {
+        if (song.id.startsWith("i.")) return Result.success(Unit)   // already a library item
+        val type = if (song.isMusicVideo) "music-videos" else "songs"
+        return if (!useProxy) direct.addToLibrary(song.id, type)
+        else runCatching { api.addToLibrary(mapOf("id" to song.id, "type" to type)); Unit }
+    }
+
+    /** Append a song to one of the user's editable library playlists. */
+    suspend fun addToPlaylist(playlistId: String, song: Song): Result<Unit> {
+        val type = if (song.isMusicVideo) "music-videos" else "songs"
+        return if (!useProxy) direct.addToPlaylist(playlistId, song.id, type)
+        else runCatching { api.addTrackToPlaylist(playlistId, mapOf("id" to song.id, "type" to type)); Unit }
+    }
 
     suspend fun getPlaylistTracks(id: String) =
         if (!useProxy) direct.playlistTracks(id).map { it.songs.map(::songFromDto) }
@@ -219,6 +322,7 @@ class MusicRepository @Inject constructor(
         genreNames     = dto.genreNames,
         artistId       = dto.artistId,
         albumId        = dto.albumId,
+        type           = dto.type,
     )
 
     fun albumFromDto(dto: AlbumDto) = Album(
@@ -234,6 +338,9 @@ class MusicRepository @Inject constructor(
         recordLabel    = dto.recordLabel,
         copyright      = dto.copyright,
         editorialNotes = dto.editorialNotes,
+        motionUrl      = dto.motionUrl,
+        tagline        = dto.tagline,
+        wideArtworkUrl = dto.wideArtworkUrl,
     )
 
     /** Search playlists render as album-style cards; the "pl.*" id routes to the playlist screen. */

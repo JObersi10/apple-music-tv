@@ -25,13 +25,19 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
      */
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
-            .memoryCache { MemoryCache.Builder(this).maxSizeBytes(48 * 1024 * 1024).build() }
+            .memoryCache { MemoryCache.Builder(this).maxSizeBytes(64 * 1024 * 1024).build() }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(100L * 1024 * 1024)
+                    .maxSizeBytes(150L * 1024 * 1024)
                     .build()
             }
+            // Fire TV menu smoothness: RGB_565 halves bitmap memory for opaque artwork (no alpha
+            // needed) → far less GC churn while flinging shelves. respectCacheHeaders(false) keeps
+            // decoded art in cache so re-focusing a shelf never re-fetches/re-decodes.
+            .allowRgb565(true)
+            .respectCacheHeaders(false)
+            .crossfade(false)
             .build()
 
     @Inject lateinit var webServer: InAppWebServer
@@ -44,7 +50,10 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
         super.onCreate()
         com.applemusicktv.util.CrashReporter.install(this)
         clearStaleCaches()
-        webServer.start(appScope)
+        webServer.boot(appScope)   // starts only if the Dev toggle is on
+        // Route volume-leveling diagnostics into the APP log (so they show under App Log, not Network,
+        // and stream live on the :8081 event port).
+        com.applemusicktv.media.GainProcessor.logger = { tag, msg -> webServer.addLog(tag, msg) }
         // Sync locally-stored MUT to proxy server on startup so ExoPlayer stream requests work
         val mut = mutPrefs.getMUT()
         if (mut.isNotEmpty()) {

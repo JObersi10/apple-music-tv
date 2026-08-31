@@ -13,6 +13,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.*
 import com.applemusicktv.data.model.Album
@@ -26,15 +27,15 @@ fun HomeScreen(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
+    onCategoryClick: (String) -> Unit = {},
     vm: HomeViewModel = hiltViewModel(),
     modifier: Modifier = Modifier,
 ) {
     val state by vm.state.collectAsState()
+    val lowPower = playerVm.state.collectAsState().value.lowPowerMode
 
-    if (state.isLoading) {
-        Box(modifier.fillMaxSize(), Alignment.Center) {
-            CircularProgressIndicator(color = Color(0xFFFA233B))
-        }
+    if (state.isLoading && state.sections.isEmpty()) {
+        Box(modifier.fillMaxSize()) { com.applemusicktv.ui.components.ShelfSkeleton() }
         return
     }
 
@@ -65,7 +66,9 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
         items(state.sections, key = { it.title }) { section ->
-            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick)
+            // The hero row (a recommendation, never Recently Played) is chosen + styled server-side
+            // and on the direct path, so just render whatever style the section carries.
+            ContentRow(section, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick, motionEnabled = !lowPower)
         }
     }
 }
@@ -76,7 +79,65 @@ private fun ContentRow(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit,
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
+    onCategoryClick: (String) -> Unit,
+    motionEnabled: Boolean = true,
 ) {
+    val openCard: (Album) -> Unit = { album ->
+        val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
+        val isStation = album.id.startsWith("ra.")
+        val isCategory = album.id.startsWith("ac-") || album.id.startsWith("c-") || album.id.startsWith("mr-")
+        when {
+            isCategory -> onCategoryClick(album.id)
+            isStation  -> playerVm.playStation(album.id, album.artworkUrl(600))
+            isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
+            else       -> onAlbumClick(album.id)
+        }
+    }
+
+    // "Top Picks for You" hero — big square lockups with the caption below (like apple.com).
+    if (section.style == "picks") {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 48.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(section.albums, key = { it.id }, contentType = { "picks" }) { album ->
+                    AlbumCard(
+                        album = album, size = 210,
+                        onClick = { openCard(album) },
+                        onLongClick = { if (album.id.startsWith("pl.") || album.id.startsWith("p.")) playerVm.shufflePlayPlaylist(album.id) },
+                        motionEnabled = motionEnabled,
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    // Spotlight rows ("Playlists Made for You") render as big gradient cards.
+    if (section.style == "gradient") {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 48.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(section.albums, key = { it.id }, contentType = { "gradient" }) { album ->
+                    com.applemusicktv.ui.components.GradientCard(
+                        album = album, width = 250,
+                        onClick = { openCard(album) },
+                        onLongClick = { if (album.id.startsWith("pl.") || album.id.startsWith("p.")) playerVm.shufflePlayPlaylist(album.id) },
+                        motionEnabled = motionEnabled,
+                    )
+                }
+            }
+        }
+        return
+    }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text       = section.title,
@@ -89,15 +150,18 @@ private fun ContentRow(
             contentPadding        = PaddingValues(horizontal = 48.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            items(section.albums, key = { it.id }) { album ->
+            items(section.albums, key = { it.id }, contentType = { "album" }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
                 val isStation = album.id.startsWith("ra.")
+                // "Find Your Mood" cards carry the CategoryScreen prefix ("ac-"/"c-").
+                val isCategory = album.id.startsWith("ac-") || album.id.startsWith("c-") || album.id.startsWith("mr-")
                 AlbumCard(
                     album = album,
                     size = 130,
                     onClick = {
                         when {
-                            isStation  -> playerVm.probeStation(album.id)
+                            isCategory -> onCategoryClick(album.id)
+                            isStation  -> playerVm.playStation(album.id, album.artworkUrl(600))
                             isPlaylist -> onPlaylistClick(album.id, album.title, album.artworkUrl(500) ?: "")
                             else       -> onAlbumClick(album.id)
                         }
@@ -105,6 +169,7 @@ private fun ContentRow(
                     onLongClick = {
                         if (isPlaylist) playerVm.shufflePlayPlaylist(album.id)
                     },
+                    motionEnabled = motionEnabled,
                 )
             }
         }
