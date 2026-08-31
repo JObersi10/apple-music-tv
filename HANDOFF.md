@@ -47,6 +47,28 @@ Apple Music Radio LIVE stations (`attributes.isLive === true`) stay and play. A 
 ALL `type==="stations"` and wrongly removed the live radio shelf. Applied in `browse.ts` (shelf +
 spotlight) and standalone `DirectBrowseSource`.
 
+Built this turn: **sleep-timer 5s fade-out** (`SLEEP_FADE_MS`, volume ramp in `pollProgress`;
+`sleepFadeActive` restores volume on cancel) and **Create Station** long-press item (playlist +
+album context menus → `createSongStation` → `playStation("ra.{catalogId}")`; Apple exposes a
+per-song station `ra.{catalogId}`, verified via `songs/{id}?include=station`).
+
+**Backlog — queue editing (design agreed, not built).** Queue is `_state.queue` + `queueIndex`;
+ExoPlayer holds one item, so edits are pure list mutation. Remove: drop from list, decrement index
+if below current (removing the current = advance). Reorder: move in list, fix index. UI: long-press
+a queue row → move-mode (D-pad Up/Down moves, OK drops), only over `userQueue`, tail stays fixed.
+No decoder juggling — low risk.
+
+**Backlog — lyrics translation (Apple-style, not built).** Show a dim translated line under each
+original. First probe whether Apple's `songs/{id}/lyrics` (or `/syllable-lyrics`) accepts a target
+language param → render second TTML line. If not, on-device ML Kit translation (no external API,
+fits the no-external-calls rule). Decide after the probe.
+
+**Next up (bug, not done): uneven vertical focus in Listen Now / Browse.** Scrolling DOWN
+through shelves, a newly-hovered row/item isn't centered the way the others are — it lands
+"half a bit" off, not consistently centered like the rest. Likely a LazyColumn
+bring-into-view / scroll-alignment issue (focused shelf not settling to a consistent viewport
+position). Investigate `HomeScreen`/`BrowseScreen` LazyColumn + item focus/`bringIntoView`.
+
 **Next up (idea, not done): queue ↔ lyrics switching UX.** The Menu-button toggle between the
 queue panel and lyrics feels clunky; user wants a better interaction. No design chosen yet — worth
 exploring (swipe/tabs/peek, or a segmented control) next session.

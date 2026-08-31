@@ -54,6 +54,8 @@ enum class RepeatMode { Off, One, All }
 
 /** Rebuffers on one song before standalone is abandoned for it. */
 private const val STUTTER_LIMIT = 3
+/** Sleep timer eases the volume down over this window before pausing. */
+private const val SLEEP_FADE_MS = 5_000L
 
 /** Dump schm/tenc/pssh of the standalone init segment. Costs a full segment download. */
 private const val PROBE_INIT_SEGMENT = false
@@ -252,6 +254,8 @@ class PlayerViewModel @Inject constructor(
     private var cfWindowLoggedForSongId: String? = null
     /** Title of the song whose standalone attempt already failed — retry proxy once, then give up. */
     private var standaloneFailedSongId: String? = null
+    /** True while the sleep timer's final-5s volume ramp is active (so a cancel can restore volume). */
+    private var sleepFadeActive = false
     /** Library song id whose catalog (not-in-library) on-device retry already ran — try once. */
     private var catalogRetriedSongId: String? = null
     /** Songs Apple 404s on (pulled from the catalogue). Skipped without a retry. */
@@ -1444,6 +1448,17 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** "Create Station" from a song — Apple exposes a per-song radio whose id is `ra.{catalogId}`
+     *  (verified: song 6799279367 → station ra.6799279367). Library ids resolve to catalog first. */
+    fun createSongStation(song: com.applemusicktv.data.model.Song) = viewModelScope.launch {
+        val catId = if (song.id.startsWith("i."))
+            appleClient.resolveCatalogFor(song.id, mutPrefs.getMUT())
+        else song.id.filter { it.isDigit() }.ifEmpty { song.id }
+        if (catId.isNullOrEmpty()) { toast("Can't start a station for \"${song.title}\""); return@launch }
+        toast("Starting \"${song.title}\" station")
+        playStation("ra.$catId")
+    }
+
     /** Genre station — shuffled top songs for the genre, played standalone. */
     fun playGenreStation(genreId: String) = viewModelScope.launch {
         val songs = repo.getGenreStation(genreId).getOrDefault(emptyList())
@@ -1954,11 +1969,20 @@ class PlayerViewModel @Inject constructor(
             // Auto-save position every 10s while playing so restore lands at the right spot
             if (playing && now - lastAutoSaveMs > 10_000L) { lastAutoSaveMs = now; saveState() }
             val timerEnd = _state.value.sleepTimerEndsAt
-            if (timerEnd != null && System.currentTimeMillis() >= timerEnd) {
-                val pos = player.currentPosition
-                webServer.addLog("SLEEP", "timer fired at pos=${pos}ms song=${_state.value.currentSong?.title}")
-                player.pause()
-                _state.update { it.copy(sleepTimerEndsAt = null, isPlaying = false) }
+            if (timerEnd != null) {
+                val remaining = timerEnd - System.currentTimeMillis()
+                // Ease the volume down over the final 5s instead of a hard cut.
+                if (remaining in 1..SLEEP_FADE_MS && playing) {
+                    sleepFadeActive = true
+                    player.volume = (remaining.toFloat() / SLEEP_FADE_MS).coerceIn(0f, 1f)
+                }
+                if (remaining <= 0L) {
+                    webServer.addLog("SLEEP", "timer fired at pos=${player.currentPosition}ms song=${_state.value.currentSong?.title}")
+                    player.pause(); player.volume = 1f; sleepFadeActive = false
+                    _state.update { it.copy(sleepTimerEndsAt = null, isPlaying = false) }
+                }
+            } else if (sleepFadeActive) {
+                player.volume = 1f; sleepFadeActive = false   // timer cancelled mid-fade → restore
             }
 
             // HTTP prefetch N+2 at 2/3 through current song
