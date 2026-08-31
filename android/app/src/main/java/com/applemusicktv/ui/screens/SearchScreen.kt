@@ -73,13 +73,16 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
     // Back closes the editor instead of leaving the tab with the IME still up.
     androidx.activity.compose.BackHandler(enabled = editing) { closeEditor() }
 
-    Column(modifier = modifier.fillMaxSize().padding(48.dp)) {
-        Text("Search", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+    // Match Listen Now: no boxed-in 48dp margin. Header is inset 48, the content lists
+    // carry their own horizontal contentPadding so rows bleed to the screen edge.
+    Column(modifier = modifier.fillMaxSize().padding(top = 28.dp)) {
+        Text("Search", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+            modifier = Modifier.padding(start = 48.dp))
         Spacer(Modifier.height(10.dp))
 
         if (editing) {
             Row(
-                modifier = Modifier.fillMaxWidth(0.5f).height(40.dp)
+                modifier = Modifier.padding(start = 48.dp).fillMaxWidth(0.5f).height(40.dp)
                     .background(Color(0xFF1C1C1E), RoundedCornerShape(10.dp))
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -92,8 +95,8 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                         imeAction = androidx.compose.ui.text.input.ImeAction.Search,
                     ),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                        onSearch = { closeEditor() },
-                        onDone = { closeEditor() },
+                        onSearch = { vm.commitSearch(); closeEditor() },
+                        onDone = { vm.commitSearch(); closeEditor() },
                     ),
                     modifier = Modifier.weight(1f).focusRequester(focusRequester)
                         // Only close once it has actually held focus: onFocusChanged
@@ -123,7 +126,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             }
         } else {
             Row(
-                modifier = Modifier.fillMaxWidth(0.5f),
+                modifier = Modifier.padding(start = 48.dp).fillMaxWidth(0.5f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -190,7 +193,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             }
             state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty() || state.results!!.playlists.isNotEmpty() || state.results!!.curators.isNotEmpty()) -> {
                 val results = state.results!!
-                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 4.dp, bottom = 102.dp)) {
                     // Top Results — the strongest hit of each kind up front, the way Apple Music leads
                     // its search page. Editorial playlists first (what the user missed), then artist,
                     // album and the #1 song, so the best match is one focus move away.
@@ -369,7 +372,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             state.query.length < 2 -> {
                 // Category tiles + recents when not searching
                 if (state.categories.isNotEmpty() || recents.isNotEmpty()) {
-                    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 4.dp, bottom = 102.dp)) {
                         // Recent searches first — retyping on a remote is the slow part.
                         if (recents.isNotEmpty()) {
                             item {

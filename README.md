@@ -12,7 +12,8 @@ Runs **fully standalone on-device**. No computer required.
 
 <br>
 
-![Now Playing demo](images/nowplaying.gif)
+<img src="images/nowplaying.gif" alt="Now Playing demo" width="640">
+
 
 </div>
 
@@ -45,11 +46,11 @@ A proper 10-foot Apple Music experience built with Jetpack Compose for TV — th
 
 </div>
 
-| Listen Now | Browse |
+| Browse | Library |
 |:---:|:---:|
-| [![Listen Now](images/listen-now.png)](images/listen-now.png) | [![Browse](images/browse.png)](images/browse.png) |
-| **Library** | **Music Video** |
-| [![Library](images/library.png)](images/library.png) | [![Music Video](images/music-video.png)](images/music-video.png) |
+| [![Browse](images/browse.png)](images/browse.png) | [![Library](images/library.png)](images/library.png) |
+| **Search** | **Categories** |
+| [![Search](images/search.png)](images/search.png) | [![Categories](images/category.png)](images/category.png) |
 
 ---
 

@@ -4,13 +4,12 @@ Screenshots and art referenced by the root README. Drop your own captures here w
 
 | File | Screen |
 |------|--------|
-| `listen-now.png` | Listen Now / Home |
+| `now-playing.png` | Now Playing — dynamic background + word-synced lyrics (README hero) |
 | `browse.png` | Browse |
-| `lyrics.png` | Now Playing — lyrics view |
-| `now-playing.png` | Now Playing — dynamic background |
 | `library.png` | Library (sidebar + grid) |
-| `music-video.png` | A music video playing |
-| `demo.gif` | (optional) short demo loop for the top of the README |
+| `search.png` | Search — genres / moods tiles |
+| `category.png` | A category / curator page |
+| `nowplaying.gif` | Demo loop at the top of the README |
 
 Capture on a Fire TV / Android TV:
 
