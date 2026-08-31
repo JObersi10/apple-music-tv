@@ -11,6 +11,8 @@ Runs **fully standalone on-device**. No computer required.
 
 ![status](https://img.shields.io/badge/status-active-brightgreen) ![platform](https://img.shields.io/badge/platform-Fire%20TV%20%7C%20Android%20TV-blue) ![license](https://img.shields.io/badge/use-personal%20%2F%20educational-lightgrey)
 
+![Now Playing demo](./images/nowplaying.gif)
+
 </div>
 
 > **Personal / educational project.** You bring your own Apple Music subscription and Music-User-Token. Streams are decrypted locally for playback only. Not affiliated with Apple.
