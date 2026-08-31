@@ -400,11 +400,13 @@ browse.get("/", async (c) => {
         continue;
       }
 
-      const albums = contents.map((it: any) => {
-        if (it.type === "songs" || it.type === "music-videos" || it.type === "uploaded-videos") return songCard(it);
-        if (it.type === "playlists") return playlistCard(it);
-        return itemFromRaw(it);
-      }).filter(Boolean);
+      const albums = contents
+        .filter((it: any) => it.type !== "stations")   // radio shows/stations don't play — omit
+        .map((it: any) => {
+          if (it.type === "songs" || it.type === "music-videos" || it.type === "uploaded-videos") return songCard(it);
+          if (it.type === "playlists") return playlistCard(it);
+          return itemFromRaw(it);
+        }).filter(Boolean);
       if (albums.length) sections.push({ title, albums, roomId });
     }
 
@@ -420,6 +422,7 @@ browse.get("/", async (c) => {
       const content = card.relationships?.contents?.data?.[0];
       if (!content) continue;
       const t = content.type;
+      if (t === "stations") continue;   // "NEW RADIO SHOW" cards — radio doesn't play yet, omit
       const obj = (t === "playlists") ? playlistCard(content)
         : (t === "apple-curators" || t === "curators") ? curatorCard(content)
         : (t === "songs" || t === "music-videos") ? songCard(content)

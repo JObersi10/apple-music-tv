@@ -103,6 +103,12 @@ class InAppWebServer @Inject constructor(
             logs.addLast(line)
         }
         broadcastLive(line)
+        // Debug mirror to the PC proxy console. SKIP when the proxy isn't reachable —
+        // otherwise every log line blocks an IO thread up to connectTimeout (1s) trying
+        // to reach a dead host. In standalone-primary mode the app logs constantly during
+        // playback, which saturated the IO dispatcher and starved Coil image decode →
+        // stuttery menu scroll. The :8081 SSE stream still carries logs live.
+        if (!serverPrefs.serverReachable) return
         appScope?.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val body = """{"level":"$level","msg":${org.json.JSONObject.quote(msg)}}"""

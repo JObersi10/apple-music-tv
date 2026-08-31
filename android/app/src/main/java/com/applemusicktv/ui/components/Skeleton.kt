@@ -21,22 +21,30 @@ fun ShelfSkeleton(rows: Int = 4, cardSize: Int = 130) {
         label = "a",
     )
     val bar = Color.White.copy(alpha = a)
+    // Mirror the real Home order: a big "Top Picks for You" lockup row (210dp squares) leads, then
+    // the standard shelves. A uniform grid didn't match and the swap to real content jumped.
     Column(
         Modifier.fillMaxSize().padding(top = 28.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
-        repeat(rows) {
-            Column {
-                Box(Modifier.padding(start = 48.dp, bottom = 14.dp)
-                    .width(180.dp).height(18.dp).clip(RoundedCornerShape(5.dp)).background(bar))
-                Row(Modifier.padding(start = 48.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    repeat(6) {
-                        Column {
-                            Box(Modifier.size(cardSize.dp).clip(RoundedCornerShape(12.dp)).background(bar))
-                            Box(Modifier.padding(top = 8.dp).width((cardSize * 0.7).dp).height(11.dp)
-                                .clip(RoundedCornerShape(4.dp)).background(bar))
-                        }
-                    }
+        SkeletonRow(bar, cardSize = 210, cards = 5)   // hero: Top Picks
+        repeat((rows - 1).coerceAtLeast(1)) {
+            SkeletonRow(bar, cardSize = cardSize, cards = 6)
+        }
+    }
+}
+
+@Composable
+private fun SkeletonRow(bar: Color, cardSize: Int, cards: Int) {
+    Column {
+        Box(Modifier.padding(start = 48.dp, bottom = 14.dp)
+            .width(180.dp).height(18.dp).clip(RoundedCornerShape(5.dp)).background(bar))
+        Row(Modifier.padding(start = 48.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            repeat(cards) {
+                Column {
+                    Box(Modifier.size(cardSize.dp).clip(RoundedCornerShape(12.dp)).background(bar))
+                    Box(Modifier.padding(top = 8.dp).width((cardSize * 0.7).dp).height(11.dp)
+                        .clip(RoundedCornerShape(4.dp)).background(bar))
                 }
             }
         }

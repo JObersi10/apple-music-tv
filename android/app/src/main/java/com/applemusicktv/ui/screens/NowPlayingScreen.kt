@@ -951,12 +951,29 @@ private const val VALUE_CEILING = 0.80f
 
 /** Extracts a dark base color + a vibrant accent color from the artwork. */
 @Composable
-private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
+private fun rememberArtworkPalette(artworkUrl: String?, seed: String = ""): List<Color> {
     val context = LocalContext.current
     val fallback = listOf(Color(0xFF0A0A0A), Color(0xFF0D0D0D), Color(0xFF0A0A0A), Color(0xFF111111), Color(0xFF080808), Color(0xFF0D0D0D))
-    var colors by remember(artworkUrl) { mutableStateOf(fallback) }
+    // A song with NO usable artwork (obscure "internet" library tracks) shouldn't sit on a
+    // flat grey backdrop. Derive a stable, muted 6-colour set from a hash of the song id so
+    // each one gets its own quiet colour instead — real B&W covers still go grey via the
+    // monochrome branch below (they DO produce a bitmap).
+    val seeded = remember(seed) {
+        if (seed.isEmpty()) fallback else {
+            val h = (seed.hashCode() and 0x7FFFFFFF)
+            val baseHue = (h % 360).toFloat()
+            val hsv = FloatArray(3)
+            List(6) { i ->
+                hsv[0] = (baseHue + i * 47f) % 360f
+                hsv[1] = 0.55f
+                hsv[2] = 0.34f + (i % 3) * 0.06f   // deep, below the white-lyric competition line
+                Color(android.graphics.Color.HSVToColor(hsv))
+            }
+        }
+    }
+    var colors by remember(artworkUrl) { mutableStateOf(seeded) }
     LaunchedEffect(artworkUrl) {
-        if (artworkUrl == null) return@LaunchedEffect
+        if (artworkUrl == null) { colors = seeded; return@LaunchedEffect }
         try {
             // Decode a SMALL bitmap for the palette — Palette downsamples internally anyway, so a
             // 1200² ARGB bitmap (~5.7 MB, kept in RAM with allowHardware off) was pure waste on a
@@ -968,7 +985,8 @@ private fun rememberArtworkPalette(artworkUrl: String?): List<Color> {
             val request = ImageRequest.Builder(context).data(artworkUrl).size(256).allowHardware(false)
                 .memoryCachePolicy(coil.request.CachePolicy.DISABLED).build()
             val result = loader.execute(request)
-            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
+            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
+                ?: run { colors = seeded; return@LaunchedEffect }   // load failed → seeded colour, not grey
             // Finer quantization (32 vs 16) surfaces smaller accent regions — a teal logo, a red
             // jacket — that the 6 named roles miss entirely.
             val p = Palette.from(bitmap).maximumColorCount(32).generate()
@@ -1060,7 +1078,7 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     val band2State = animateFloatAsState(rawBands.getOrElse(2) { 0f }.coerceIn(0f, 1f), bandSpring, label = "treble")
 
     val paletteUrl = artworkUrlTemplate?.replace("{w}", "300")?.replace("{h}", "300")?.replace("{f}", "jpg")
-    val palette = rememberArtworkPalette(paletteUrl)
+    val palette = rememberArtworkPalette(paletteUrl, seed = songKey)
     val animatedStates = palette.mapIndexed { i, c ->
         animateColorAsState(c, tween(1500), label = "blob$i")
     }

@@ -281,12 +281,14 @@ class DirectBrowseSource @Inject constructor(
                     if (videos.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, videos = videos, roomId = roomId)
                     continue
                 }
-                val albums = maps.mapNotNull { m ->
-                    when (m["type"] as? String) {
-                        "songs", "music-videos", "uploaded-videos" -> songCard(m)
-                        else -> itemFromRaw(m)   // albums + playlists (playlist id prefix routes correctly)
+                val albums = maps
+                    .filter { it["type"] as? String != "stations" }   // radio shows/stations don't play — omit
+                    .mapNotNull { m ->
+                        when (m["type"] as? String) {
+                            "songs", "music-videos", "uploaded-videos" -> songCard(m)
+                            else -> itemFromRaw(m)   // albums + playlists (playlist id prefix routes correctly)
+                        }
                     }
-                }
                 if (albums.isNotEmpty()) sections += com.applemusicktv.data.network.HomeSection(title, albums, roomId = roomId)
             }
 
@@ -304,6 +306,7 @@ class DirectBrowseSource @Inject constructor(
                 val content = (((cm["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)
                     ?.get("data") as? List<*>)?.firstOrNull() as? Map<*, *> ?: continue
                 val t = content["type"] as? String
+                if (t == "stations") continue   // "NEW RADIO SHOW" cards — radio doesn't play yet, omit
                 var obj = when (t) {
                     "songs", "music-videos" -> songCard(content)
                     "apple-curators", "curators" -> curatorCard(content)
