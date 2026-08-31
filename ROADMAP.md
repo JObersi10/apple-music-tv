@@ -25,6 +25,13 @@ Rough direction, not a promise. Roughly ordered by impact.
     Apple's servers. Watch for: 2FA, captchas, and login-flow HTML changes (same fragility as the
     bearer scrape). Bearer + storefront detection already exist server-side, so only the MUT hand-off
     is new. Start with the phone route; treat the on-TV WebView as a stretch.
+  - **How the extract actually has to work (the constraint).** You can't read the token out of a
+    normal external browser tab — the session lives in *its* origin, not ours. So either: (a) the user
+    authenticates **inside an embedded WebView / iframe we control** (phone companion or on-TV), where
+    after login we can read `media-user-token` from that WebView's cookies/`localStorage`; or (b) the
+    **server sits in the auth handshake** (proxying `music.apple.com`) and intercepts the response where
+    Apple returns the session tokens. Both mean *we host the login surface* — a plain "open Apple in
+    your browser" link can't hand the token back. This is the real design decision to make next time.
 
 ## UI Overhaul — match the real Apple Music app
 
