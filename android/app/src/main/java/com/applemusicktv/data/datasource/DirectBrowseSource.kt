@@ -282,7 +282,11 @@ class DirectBrowseSource @Inject constructor(
                     continue
                 }
                 val albums = maps
-                    .filter { it["type"] as? String != "stations" }   // radio shows/stations don't play — omit
+                    // Keep Apple Music Radio LIVE stations (isLive); drop only non-live radio shows.
+                    .filter { m ->
+                        m["type"] as? String != "stations" ||
+                            (m["attributes"] as? Map<*, *>)?.get("isLive") == true
+                    }
                     .mapNotNull { m ->
                         when (m["type"] as? String) {
                             "songs", "music-videos", "uploaded-videos" -> songCard(m)
@@ -306,7 +310,7 @@ class DirectBrowseSource @Inject constructor(
                 val content = (((cm["relationships"] as? Map<*, *>)?.get("contents") as? Map<*, *>)
                     ?.get("data") as? List<*>)?.firstOrNull() as? Map<*, *> ?: continue
                 val t = content["type"] as? String
-                if (t == "stations") continue   // "NEW RADIO SHOW" cards — radio doesn't play yet, omit
+                if (t == "stations" && (content["attributes"] as? Map<*, *>)?.get("isLive") != true) continue   // non-live radio shows don't play — omit; keep live radio
                 var obj = when (t) {
                     "songs", "music-videos" -> songCard(content)
                     "apple-curators", "curators" -> curatorCard(content)

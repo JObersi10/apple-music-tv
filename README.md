@@ -82,12 +82,18 @@ remux instead and serves a seekable MP4 over HTTP Range.
 - **⚙ Settings** screen — Crossfade, Standalone toggle, Screensaver timeout, Background
   play, Lyrics offset, Beat latency, live network log, and Reset App (replaces the old
   dev menu; dev tools tucked inside)
-- Library sort (field + asc/desc) with on-device caching
+- **Apple Music Radio** — Apple Music 1 / Hits / Country **live** stations play (Widevine
+  live HLS), with the current-track title/artist, a LIVE badge, and synced lyrics for the
+  track on air. Radio *shows* (non-live episodes) are hidden until playback is wired.
+- **Radio stations** — a station card plays its rolling next-tracks queue.
+- **Music videos & interviews** — play full-screen, grouped ("Music Videos", "Behind the
+  Songs"), and surface on artist pages.
+- **Dead library songs** — a library track whose in-library release was withdrawn falls back
+  to the catalog copy on-device automatically, so it still plays.
+- **Library** — modern left-sidebar categories (Playlists / Albums / Artists / Songs), a sort
+  popup **remembered per playlist**, pinned playlists, on-device caching
+- **Per-tab navigation memory** — each tab returns to the page you left it on
 - Remote/controller media keys via a Media3 `MediaSession`
-
-> **Not standalone:** live Apple Music radio (`ra.*`, Apple Music 1) is FairPlay-
-> protected live HLS and can't be played on-device; personalized `ra.*` mixes need a
-> radio-tuner endpoint not yet wired. Internet radio above is DRM-free and works.
 
 ---
 

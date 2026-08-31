@@ -401,7 +401,9 @@ browse.get("/", async (c) => {
       }
 
       const albums = contents
-        .filter((it: any) => it.type !== "stations")   // radio shows/stations don't play — omit
+        // Keep Apple Music Radio LIVE stations (isLive) — they play. Drop only non-live
+        // stations (radio shows/episodes), which don't play yet.
+        .filter((it: any) => it.type !== "stations" || it.attributes?.isLive === true)
         .map((it: any) => {
           if (it.type === "songs" || it.type === "music-videos" || it.type === "uploaded-videos") return songCard(it);
           if (it.type === "playlists") return playlistCard(it);
@@ -422,7 +424,7 @@ browse.get("/", async (c) => {
       const content = card.relationships?.contents?.data?.[0];
       if (!content) continue;
       const t = content.type;
-      if (t === "stations") continue;   // "NEW RADIO SHOW" cards — radio doesn't play yet, omit
+      if (t === "stations" && content.attributes?.isLive !== true) continue;   // non-live radio shows don't play — omit; keep live radio
       const obj = (t === "playlists") ? playlistCard(content)
         : (t === "apple-curators" || t === "curators") ? curatorCard(content)
         : (t === "songs" || t === "music-videos") ? songCard(content)

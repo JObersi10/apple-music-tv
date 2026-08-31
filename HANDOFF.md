@@ -42,6 +42,15 @@ Removed:
 
 Version bumped to **1.2** (`versionCode 3`); Dev-menu build line reads `BuildConfig.VERSION_NAME`.
 
+**Radio filter is isLive-aware**: Browse hides only NON-live stations (radio shows/episodes);
+Apple Music Radio LIVE stations (`attributes.isLive === true`) stay and play. A first pass filtered
+ALL `type==="stations"` and wrongly removed the live radio shelf. Applied in `browse.ts` (shelf +
+spotlight) and standalone `DirectBrowseSource`.
+
+**Next up (idea, not done): queue ↔ lyrics switching UX.** The Menu-button toggle between the
+queue panel and lyrics feels clunky; user wants a better interaction. No design chosen yet — worth
+exploring (swipe/tabs/peek, or a segmented control) next session.
+
 ---
 
 ## Session 2026-08-19 — Now Playing customization, perf/footprint, updater grant fix (v1.1 release prep)
