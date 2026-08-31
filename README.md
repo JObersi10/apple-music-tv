@@ -30,18 +30,17 @@ A proper 10-foot Apple Music experience built with Jetpack Compose for TV — th
 
 ## Screenshots
 
-<!-- TODO: drop 4–6 real Fire TV screenshots into docs/screenshots/ and update the paths below.
-     Suggested set: Listen Now, Browse, Now Playing (lyrics), Now Playing (dynamic background),
-     Library, Music Video. A short demo GIF (browse → lyrics → Now Playing) placed right here,
-     above the table, helps enormously — especially for AFTVnews-style coverage. -->
+<!-- Drop your screenshots into images/ with these exact names and they'll show up here.
+     A short demo GIF (browse → lyrics → Now Playing) as images/demo.gif above the table
+     helps a lot. Capture on a Fire TV with: adb exec-out screencap -p > shot.png -->
 
 | Listen Now | Now Playing — Lyrics | Dynamic Background |
 |---|---|---|
-| _add `docs/screenshots/listen-now.png`_ | _add `docs/screenshots/lyrics.png`_ | _add `docs/screenshots/now-playing.png`_ |
+| [![Listen Now](images/listen-now.png)](images/listen-now.png) | [![Lyrics](images/lyrics.png)](images/lyrics.png) | [![Now Playing](images/now-playing.png)](images/now-playing.png) |
 
 | Library | Browse | Music Video |
 |---|---|---|
-| _add `docs/screenshots/library.png`_ | _add `docs/screenshots/browse.png`_ | _add `docs/screenshots/music-video.png`_ |
+| [![Library](images/library.png)](images/library.png) | [![Browse](images/browse.png)](images/browse.png) | [![Music Video](images/music-video.png)](images/music-video.png) |
 
 ---
 
