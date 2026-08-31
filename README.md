@@ -5,6 +5,7 @@ A native **Android TV / Fire TV** Apple Music client. It runs **fully standalone
 no computer required. An optional **PC proxy server** is still supported as an
 alternate audio path (useful for debugging or offloading decryption).
 
+![np](./images/nowplaying.gif)
 > **Personal / educational project.** You need your own Apple Music subscription
 > and Music-User-Token. Streams are decrypted locally for playback only.
 
