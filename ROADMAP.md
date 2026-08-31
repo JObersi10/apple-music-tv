@@ -30,8 +30,8 @@ Studied from the live app. The look is not one thing — it's ~8 systems used co
    Focus = scale up ~1.06 + brighten + white title; unfocused sits dimmer. Every shelf is the same card.
 3. **Typography ramp.** SF-style. Tiny UPPERCASE tracking-wide labels ("UPDATED PLAYLIST"), bold
    titles, medium-grey subtitles, generous line-height. Three or four sizes, reused — not ad-hoc.
-4. **Richer top nav.** Home · New · Videos · Radio · Library · Now Playing, plus a search glyph and an
-   AirPlay/route glyph, in a translucent pill. (We currently have Listen Now / Browse / Library /
+4. **Richer top nav.** Home · New · Videos · Radio · Library · Now Playing, plus a search glyph and a
+   **Settings** (gear) glyph, in a translucent pill. (We currently have Listen Now / Browse / Library /
    Search / Now Playing.)
 5. **Shelf grammar.** Horizontal shelves with a title and "see all"; cards carry a subtitle underneath.
    Songs render as a **3-column grid of rows** (art + title + artist), not a single list. Big
@@ -63,7 +63,7 @@ Build the kit first so every screen swap is cheap and consistent:
    focus state. Highest visual payoff, lowest risk.
 3. **Navigation** — rename + expand the top nav: **Listen Now → Home, Browse → New**, add **Videos**
    and **Radio** tabs (wire to the existing music-video grouping + station/radio endpoints), keep
-   Library / Now Playing, add the search + AirPlay glyphs. Update back-behaviour + exit-dialog strings
+   Library / Now Playing, add the search + settings glyphs. Update back-behaviour + exit-dialog strings
    that currently say "Listen Now".
 4. **Detail screens** — two-pane album/playlist; artist full-bleed hero + top-songs grid + bio box +
    similar-artist circles.
