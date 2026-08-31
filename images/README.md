@@ -5,9 +5,11 @@ Screenshots and art referenced by the root README. Drop your own captures here w
 | File | Screen |
 |------|--------|
 | `now-playing.png` | Now Playing — dynamic background + word-synced lyrics (README hero) |
+| `listen-now.png` | Listen Now / Home (Top Picks) |
 | `browse.png` | Browse |
 | `library.png` | Library (sidebar + grid) |
 | `search.png` | Search — genres / moods tiles |
+| `music-video.png` | A music video playing |
 | `category.png` | A category / curator page |
 | `nowplaying.gif` | Demo loop at the top of the README |
 

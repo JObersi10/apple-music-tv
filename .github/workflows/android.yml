@@ -69,8 +69,13 @@ jobs:
         with:
           tag_name: dev
           name: "Latest dev build"
+          # The `commit <sha>` line is REQUIRED: the in-app Beta updater greps it
+          # (UpdateChecker.parseRelease) to tell this rolling build apart from the
+          # installed one. Without it, Beta never offers CI builds.
           body: |
             Auto-built from `main`. Sideload: `adb install -r app-debug.apk`
+
+            commit ${{ github.sha }}
           prerelease: true
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:

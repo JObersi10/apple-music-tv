@@ -46,11 +46,13 @@ A proper 10-foot Apple Music experience built with Jetpack Compose for TV — th
 
 </div>
 
-| Browse | Library |
+| Listen Now | Browse |
 |:---:|:---:|
-| [![Browse](images/browse.png)](images/browse.png) | [![Library](images/library.png)](images/library.png) |
-| **Search** | **Categories** |
-| [![Search](images/search.png)](images/search.png) | [![Categories](images/category.png)](images/category.png) |
+| [![Listen Now](images/listen-now.png)](images/listen-now.png) | [![Browse](images/browse.png)](images/browse.png) |
+| **Library** | **Search** |
+| [![Library](images/library.png)](images/library.png) | [![Search](images/search.png)](images/search.png) |
+| **Music Video** | **Categories** |
+| [![Music Video](images/music-video.png)](images/music-video.png) | [![Categories](images/category.png)](images/category.png) |
 
 ---
 
