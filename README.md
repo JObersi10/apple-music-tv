@@ -1,8 +1,7 @@
 <div align="center">
 
-# Apple Music TV
+![Apple Music TV](images/banner.svg)
 
-**A native Apple Music client for Android TV & Fire TV.**
 Browse, search, your full library, word-synced lyrics, music videos, live radio — on the big screen.
 Runs **fully standalone on-device**. No computer required.
 
@@ -11,7 +10,9 @@ Runs **fully standalone on-device**. No computer required.
 
 ![status](https://img.shields.io/badge/status-active-brightgreen) ![platform](https://img.shields.io/badge/platform-Fire%20TV%20%7C%20Android%20TV-blue) ![license](https://img.shields.io/badge/use-personal%20%2F%20educational-lightgrey)
 
-![Now Playing demo](./images/nowplaying.gif)
+<br>
+
+![Now Playing demo](images/nowplaying.gif)
 
 </div>
 
@@ -32,17 +33,23 @@ A proper 10-foot Apple Music experience built with Jetpack Compose for TV — th
 
 ## Screenshots
 
-<!-- Drop your screenshots into images/ with these exact names and they'll show up here.
-     A short demo GIF (browse → lyrics → Now Playing) as images/demo.gif above the table
-     helps a lot. Capture on a Fire TV with: adb exec-out screencap -p > shot.png -->
+<!-- Drop your 1920x1080 (16:9) screenshots into images/ with these exact names and they render here.
+     Capture on a Fire TV with:  adb exec-out screencap -p > shot.png
+     Layout is a full-width hero + a 2-up grid so 16:9 shots stay large. -->
 
-| Listen Now | Now Playing — Lyrics | Dynamic Background |
-|---|---|---|
-| [![Listen Now](images/listen-now.png)](images/listen-now.png) | [![Lyrics](images/lyrics.png)](images/lyrics.png) | [![Now Playing](images/now-playing.png)](images/now-playing.png) |
+<div align="center">
 
-| Library | Browse | Music Video |
-|---|---|---|
-| [![Library](images/library.png)](images/library.png) | [![Browse](images/browse.png)](images/browse.png) | [![Music Video](images/music-video.png)](images/music-video.png) |
+**Now Playing — live album-colour background + word-synced lyrics**
+
+[![Now Playing](images/now-playing.png)](images/now-playing.png)
+
+</div>
+
+| Listen Now | Browse |
+|:---:|:---:|
+| [![Listen Now](images/listen-now.png)](images/listen-now.png) | [![Browse](images/browse.png)](images/browse.png) |
+| **Library** | **Music Video** |
+| [![Library](images/library.png)](images/library.png) | [![Music Video](images/music-video.png)](images/music-video.png) |
 
 ---
 
