@@ -252,6 +252,8 @@ class PlayerViewModel @Inject constructor(
     private var cfWindowLoggedForSongId: String? = null
     /** Title of the song whose standalone attempt already failed — retry proxy once, then give up. */
     private var standaloneFailedSongId: String? = null
+    /** Library song id whose catalog (not-in-library) on-device retry already ran — try once. */
+    private var catalogRetriedSongId: String? = null
     /** Songs Apple 404s on (pulled from the catalogue). Skipped without a retry. */
     private val unavailableSongIds = mutableSetOf<String>()
     /** Avoids re-logging the audio format on every READY (seeks re-enter it). */
@@ -667,6 +669,46 @@ class PlayerViewModel @Inject constructor(
                 return
             }
 
+            // Dead LIBRARY song: its in-library release is withdrawn (webPlayback returns a
+            // songList for universalLibraryId but the assets fail DRM), yet the SAME song
+            // plays from the catalog. Before touching the proxy, retry the catalog
+            // (not-in-library) version ON-DEVICE — exactly like playing it from Apple Music.
+            run {
+                val cur = _state.value.queue.getOrNull(_state.value.queueIndex)
+                if (usingStandalone && !crossfadeInProgress && cur != null &&
+                    cur.id.startsWith("i.") && catalogRetriedSongId != cur.id) {
+                    catalogRetriedSongId = cur.id
+                    val myGen = ++playGen
+                    webServer.addLog("PLR", "standalone failed for $song — retrying catalog copy on-device")
+                    viewModelScope.launch {
+                        val mut = mutPrefs.getMUT()
+                        // 1) linked catalog release; 2) if none, catalog search by title+artist
+                        //    (uploaded/matched "internet songs" have no catalog relationship).
+                        val catId = appleClient.resolveCatalogFor(cur.id, mut)
+                            ?: appleClient.searchCatalogSongId(cur.title, cur.artistName, mut)
+                        if (catId == null || catId == cur.id || myGen != playGen) {
+                            webServer.addLog("PLR", "no catalog copy for ${cur.title} — falling through")
+                            if (myGen == playGen) retryStandaloneOrProxy(cur, pos, wasPlaying, song)
+                            return@launch
+                        }
+                        webServer.addLog("PLR", "catalog copy id=$catId for ${cur.title}")
+                        val catSong = cur.copy(id = catId)
+                        val src = buildStandaloneSource(catSong)
+                        if (myGen != playGen) return@launch
+                        if (src != null) {
+                            usingStandalone = true
+                            player.setMediaSource(src); player.prepare()
+                            player.volume = 1f; player.playWhenReady = wasPlaying
+                            _state.update { it.copy(standaloneActive = true) }
+                            webServer.addLog("PLR", "catalog copy on-device OK for ${cur.title}")
+                        } else {
+                            webServer.addLog("PLR", "catalog copy on-device failed for ${cur.title}")
+                            retryStandaloneOrProxy(cur, pos, wasPlaying, song)
+                        }
+                    }
+                    return
+                }
+            }
             // A standalone failure must not advance — it'd fail identically on the next
             // song and rip through the whole queue. Retry this one through the proxy.
             if (usingStandalone && !crossfadeInProgress && standaloneFailedSongId != song) {
@@ -703,6 +745,34 @@ class PlayerViewModel @Inject constructor(
                 advanceQueue()
             }
         }
+    }
+
+    /** Last-resort fallback for a song that failed on-device (both its own and, for
+     *  library ids, its catalog copy): route it through the PC proxy. No-op if there's
+     *  no current queue item. */
+    private fun retryStandaloneOrProxy(cur: Song, pos: Long, wasPlaying: Boolean, songTitle: String) {
+        standaloneFailedSongId = songTitle
+        usingStandalone = false
+        standaloneFailures++
+        _state.update { it.copy(standaloneActive = false) }
+        if (!serverPrefs.serverReachable) {
+            webServer.addLog("PLR", "on-device failed for $songTitle and no server — skipping")
+            toast("Can't play \"$songTitle\" on-device, and no server to fall back to")
+            advanceQueue()
+            return
+        }
+        webServer.addLog("PLR", "on-device exhausted for $songTitle — retrying via proxy (#$standaloneFailures)")
+        if (standaloneFailures >= 3 && standalonePrefs.isEnabled()) {
+            standalonePrefs.setEnabled(false)
+            webServer.addLog("PLR", "standalone disabled after $standaloneFailures failures")
+            toast("On-device playback isn't working here — switched back to the server")
+        } else {
+            toast("On-device playback failed — using the server")
+        }
+        player.setMediaItem(buildMediaItem(cur, repo.streamUrl(cur.id)))
+        player.prepare()
+        if (pos > 3_000) player.seekTo(pos)
+        player.volume = 1f; player.playWhenReady = wasPlaying
     }
 
     private fun buildMediaSession(exo: ExoPlayer): androidx.media3.session.MediaSession =
@@ -1185,6 +1255,7 @@ class PlayerViewModel @Inject constructor(
         }
         beatAnalyzer.resetBeat(); mainProc?.resetBeat()
         crossfadeSkipSongId = null
+        catalogRetriedSongId = null   // fresh selection → allow a new catalog on-device retry
         // Cancel any in-progress crossfade
         fadeJob?.cancel()
         crossfadeInProgress = false
