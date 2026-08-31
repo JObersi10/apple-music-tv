@@ -52,19 +52,6 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      # Build a changelog from the commits in this push (fallback: last 5 commits).
-      - name: Build changelog
-        id: changelog
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          LOG="$(git log --no-merges --pretty=format:'- %s (%h)' '${{ github.event.before }}..${{ github.sha }}' 2>/dev/null)"
-          if [ -z "$LOG" ]; then LOG="$(git log --no-merges -5 --pretty=format:'- %s (%h)')"; fi
-          {
-            echo 'log<<CHANGELOG_EOF'
-            echo "$LOG"
-            echo 'CHANGELOG_EOF'
-          } >> "$GITHUB_OUTPUT"
-
       # Publish a rolling "dev" release on every push to main.
       # Anyone with the repo URL can download the APK — no login required.
       - name: Publish dev release
@@ -72,14 +59,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: dev
-          name: "Latest build"
+          name: "Latest dev build"
           body: |
-            Auto-built from `main` — commit ${{ github.sha }}
-
-            ### Changes in this build
-            ${{ steps.changelog.outputs.log }}
-
-            **Install:** sideload onto Fire TV / Google TV via `adb install -r app-debug.apk`
+            Auto-built from `main`. Sideload: `adb install -r app-debug.apk`
           prerelease: true
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
