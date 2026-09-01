@@ -42,16 +42,6 @@ apply to those components, not to the rest of this project.
 - **httpx** — BSD-3-Clause — https://www.python-httpx.org
   HTTP client used by the Python decryption scripts.
 
-## Inspiration / reference
-
-- **Spicy Lyrics** — https://github.com/Spikerko/spicy-lyrics
-  Referenced only as inspiration for the concept of dynamic, word-synchronized
-  lyrics. Its lyrics API keys on Spotify track IDs and needs Spotify auth, which
-  this project doesn't have, so it is not used as a data source either. The
-  word-synced lyrics implementation here was written independently (Apple TTML
-  parsing in `server/src/routes/lyrics.ts` + custom Compose rendering); no Spicy
-  Lyrics code was copied or adapted.
-
 ## Data sources
 
 - **Apple Music** — https://music.apple.com

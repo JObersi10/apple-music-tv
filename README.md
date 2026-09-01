@@ -79,7 +79,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to build it, [SECURITY.md](SECURITY.md) f
 
 ## Credits
 
-The Apple Music decryption workflow was adapted from [gamdl](https://github.com/glomatico/gamdl) (MIT) and relies on [pywidevine](https://github.com/devine-dl/pywidevine) (GPL-3.0). The word-synced lyrics implementation was written independently; [Spicy Lyrics](https://github.com/Spikerko/spicy-lyrics) was a reference for the concept of dynamic word-synchronized lyrics.
+The Apple Music decryption workflow was adapted from [gamdl](https://github.com/glomatico/gamdl) (MIT) and relies on [pywidevine](https://github.com/devine-dl/pywidevine) (GPL-3.0).
 
 Full attribution for every third-party component is in **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**.
 
