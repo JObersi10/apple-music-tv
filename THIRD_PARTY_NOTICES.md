@@ -35,16 +35,29 @@ apply to those components, not to the rest of this project.
   Image loading for artwork on the Android app.
 - **Hono** — MIT — https://hono.dev
   Web framework for the optional PC proxy server.
+- **@syncfm/applemusic-api** — MIT — https://github.com/syncfm/applemusic-api
+  Apple Music web-API client used by the proxy server for search and catalog calls.
+- **axios** — MIT — https://github.com/axios/axios
+  HTTP client used by the proxy server.
+- **httpx** — BSD-3-Clause — https://www.python-httpx.org
+  HTTP client used by the Python decryption scripts.
 
 ## Inspiration / reference
 
 - **Spicy Lyrics** — https://github.com/Spikerko/spicy-lyrics
   Referenced only as inspiration for the concept of dynamic, word-synchronized
-  lyrics. The word-synced lyrics implementation in this project was written
-  independently; no Spicy Lyrics code was copied or adapted.
+  lyrics. Its lyrics API keys on Spotify track IDs and needs Spotify auth, which
+  this project doesn't have, so it is not used as a data source either. The
+  word-synced lyrics implementation here was written independently (Apple TTML
+  parsing in `server/src/routes/lyrics.ts` + custom Compose rendering); no Spicy
+  Lyrics code was copied or adapted.
 
-## Data source
+## Data sources
 
-Apple Music content, artwork, editorial data, and lyrics are provided by Apple.
-This project is not affiliated with or endorsed by Apple. You must bring your own
-Apple Music subscription; streams are decrypted locally for personal playback only.
+- **Apple Music** — https://music.apple.com
+  Provides all catalog content, artwork, editorial data, and primary lyrics. This
+  project is not affiliated with or endorsed by Apple. You must bring your own
+  Apple Music subscription; streams are decrypted locally for personal playback only.
+- **LRCLIB** — https://lrclib.net
+  Community lyrics database used as the line-synced lyrics fallback when Apple has
+  no timed lyrics for a track.
