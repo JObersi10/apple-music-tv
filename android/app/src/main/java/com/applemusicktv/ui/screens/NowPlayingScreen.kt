@@ -1545,17 +1545,21 @@ private fun WordWipeLine(
                 isCurrent -> ((progressMs - word.startMs).toFloat() / dur).coerceIn(0f, 1f)
                 else      -> 0f
             }
-            // Smooth sine swell — grows to a peak mid-word then eases back to original
-            // size by the end. Sine (not a linear triangle) keeps it from reading as
-            // shake; left-anchored so the first letter stays put. Slow/held words swell +
-            // glow more; fast words stay flat.
+            // Smooth sine swell — grows to a peak mid-word then eases back to original size by the
+            // end. Sine (not a linear triangle) keeps it from reading as shake. Slow/held words
+            // swell + glow more; fast words stay flat.
+            //
+            // Growth is applied as REAL font size (not a graphicsLayer scale), so the word takes up
+            // more width in the FlowRow and the rest of THIS line reflows to the right to make room,
+            // then settles back as the word shrinks — the Apple-style nudge. Kept subtle (~5%) so a
+            // held word never bumps a trailing word onto the next line.
             val slow  = (dur.coerceIn(300L, 1600L) - 300L) / 1300f
             val pulse = if (isCurrent) kotlin.math.sin(frac * Math.PI.toFloat()).coerceIn(0f, 1f) else 0f
-            val grow  = 1f + 0.09f * slow * pulse
+            val grow  = 1f + 0.055f * slow * pulse
             val glowA = if (isCurrent && dur > 700L) 0.34f * pulse * slow else 0f
             WordWipe(
                 text  = word.text + if (i < words.lastIndex) " " else "",
-                frac  = frac, scale = grow, glowAlpha = glowA,
+                frac  = frac, glowAlpha = glowA, grow = grow,
                 fontSize = fontSize, lineHeight = lineHeight, weight = weight,
                 sungColor = sungColor, unsungColor = unsungColor,
             )
@@ -1567,8 +1571,8 @@ private fun WordWipeLine(
 private fun WordWipe(
     text: String,
     frac: Float,
-    scale: Float,
     glowAlpha: Float,
+    grow: Float = 1f,
     fontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
@@ -1592,11 +1596,11 @@ private fun WordWipe(
     val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 14f) else null
     Text(
         text,
+        // Growth rides a graphicsLayer SCALE (GPU, no per-frame relayout) — smoother on Fire TV than
+        // animating fontSize, which relaid out the whole line every frame and read as choppy. Trade-off:
+        // the word scales over its neighbours instead of nudging the line (revisit if the nudge matters).
+        modifier = if (grow != 1f) Modifier.graphicsLayer { scaleX = grow; scaleY = grow } else Modifier,
         style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp, brush = brush, shadow = glow),
-        modifier = Modifier.graphicsLayer {
-            scaleX = scale; scaleY = scale
-            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
-        },
     )
 }
 
@@ -1712,6 +1716,10 @@ private fun QueuePanel(
 ) {
     val listState = rememberLazyListState()
     var movingIndex by remember { mutableStateOf<Int?>(null) }
+    // Keep focus on the row being moved: it re-keys (its index changes) on every reorder, which would
+    // otherwise drop focus to the nav bar. Re-request focus whenever the moving index changes.
+    val moveFocus = remember { FocusRequester() }
+    LaunchedEffect(movingIndex) { if (movingIndex != null) runCatching { moveFocus.requestFocus() } }
 
     // Always scroll to top (current song) when index changes or userQueue gains items
     LaunchedEffect(currentIndex, userQueue.size) {
@@ -1763,8 +1771,11 @@ private fun QueuePanel(
                 val song = visibleQueue[rel]
                 val isCurrent = false
                 val isMoving = idx == movingIndex
-                val movingMod = if (isMoving) Modifier.onKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                // onPreviewKeyEvent intercepts D-pad BEFORE Compose's focus search — otherwise Up at
+                // the top row escapes to the nav bar instead of moving the song. focusRequester keeps
+                // the handler on the row as it re-keys on each reorder.
+                val movingMod = if (isMoving) Modifier.focusRequester(moveFocus).onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (event.key) {
                         Key.DirectionUp -> {
                             val target = (movingIndex!! - 1).coerceAtLeast(currentIndex + 1)
@@ -1776,13 +1787,13 @@ private fun QueuePanel(
                             if (target != movingIndex) { onMove(movingIndex!!, target); movingIndex = target }
                             true
                         }
-                        Key.Enter -> { movingIndex = null; true }
+                        Key.Enter, Key.DirectionCenter, Key.Back -> { movingIndex = null; true }
                         else -> false
                     }
                 } else Modifier
                 Surface(
                     onClick = { if (movingIndex == idx) movingIndex = null else onSelect(idx) },
-                    onLongClick = { if (rel > 0) movingIndex = idx },
+                    onLongClick = { movingIndex = idx },
                     shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                     colors = ClickableSurfaceDefaults.colors(
                         containerColor        = when { isMoving -> Color(0x44FA233B); isCurrent -> Color(0x26FFFFFF); else -> Color.Transparent },

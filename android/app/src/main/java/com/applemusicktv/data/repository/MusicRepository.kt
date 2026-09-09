@@ -175,6 +175,10 @@ class MusicRepository @Inject constructor(
         if (!useProxy) runCatching { direct.getGrouping(id) }
         else runCatching { api.getGrouping(id) }
 
+    /** Shazam song-ID for an internet-radio stream (proxy-only — needs the server + shazamio). */
+    suspend fun identifyStream(url: String): com.applemusicktv.data.network.IdentifyDto? =
+        runCatching { api.identifyStream(url) }.getOrNull()
+
     // Genre/mood/decade tile grid (each tile is a curator → category page).
     suspend fun getCategories(): Result<List<CategoryGroup>> =
         if (!useProxy) runCatching { direct.getCategories().map { it.toGroup() } }

@@ -515,13 +515,16 @@ class MusicVideoViewModel @Inject constructor(
     /** Open the artist page. Uses the resolved id if we have it, else fetches it on demand
      *  (the details fetch can lag or fail, but the button stays usable). */
     fun openArtist(navigate: (String) -> Unit) {
-        _state.value.artistId?.let { navigate(it); return }
+        // Only navigate with a NON-BLANK id. A blank id builds a malformed ArtistDetail route and the
+        // NavController silently falls back to the start destination — that was the "Go to Artist
+        // jumps to Home" bug. Blank → resolve on demand instead of navigating to nothing.
+        _state.value.artistId?.takeIf { it.isNotBlank() }?.let { navigate(it); return }
         val id = curAdamId ?: curMvId ?: return
         viewModelScope.launch {
             val bearer = appleClient.getBearer(); val mut = mutPrefs.getMUT()
             if (bearer.isEmpty() || mut.isEmpty()) return@launch
             val d = withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(id, bearer, mut) }
-            d?.artistId?.let { _state.value = _state.value.copy(artistId = it); navigate(it) }
+            d?.artistId?.takeIf { it.isNotBlank() }?.let { _state.value = _state.value.copy(artistId = it); navigate(it) }
         }
     }
 

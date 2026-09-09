@@ -144,6 +144,7 @@ fun AppShell(modifier: Modifier = Modifier) {
             Screen.Search.route    -> selectedTab = TopNavTab.Search
             Screen.NowPlaying.route -> selectedTab = TopNavTab.NowPlaying
             Screen.DevMenu.route   -> selectedTab = TopNavTab.Dev
+            Screen.Radio.route     -> selectedTab = TopNavTab.Radio
             else -> {}
         }
     }
@@ -276,27 +277,48 @@ fun AppShell(modifier: Modifier = Modifier) {
                 .padding(top = if (isOnNowPlaying) 0.dp else navBarHeight),
         ) {
             composable(Screen.Home.route) {
-                HomeScreen(
-                    playerVm = playerVm,
-                    vm = homeVm,
-                    onAlbumClick = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                    onPlaylistClick = { id, name, artworkUrl ->
-                        navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
-                    },
-                    // "Find Your Mood" cards are already prefixed (ac-/c-/mr-) for CategoryScreen.
-                    onCategoryClick = { navController.navigate(Screen.Category.route(it)) },
-                )
+                val newUi = playerVm.state.collectAsState().value.newUiEnabled
+                val onAlbum: (String) -> Unit = { navController.navigate(Screen.AlbumDetail.route(it)) }
+                val onPlaylist: (String, String, String) -> Unit = { id, name, artworkUrl ->
+                    navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
+                }
+                // "Find Your Mood" cards are already prefixed (ac-/c-/mr-) for CategoryScreen.
+                val onCategory: (String) -> Unit = { navController.navigate(Screen.Category.route(it)) }
+                if (newUi) {
+                    com.applemusicktv.ui.screens.HomeScreenV2(
+                        playerVm = playerVm, vm = homeVm,
+                        onAlbumClick = onAlbum, onPlaylistClick = onPlaylist, onCategoryClick = onCategory,
+                    )
+                } else {
+                    HomeScreen(
+                        playerVm = playerVm, vm = homeVm,
+                        onAlbumClick = onAlbum, onPlaylistClick = onPlaylist, onCategoryClick = onCategory,
+                    )
+                }
             }
             composable(Screen.Browse.route) {
-                BrowseScreen(
-                    playerVm       = playerVm,
-                    onAlbumClick   = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
-                    onGenreClick   = { id, name -> navController.navigate(Screen.Genre.route(id, name)) },
-                    onCuratorClick = { navController.navigate(Screen.Category.route(it)) },
-                    // "More" at the end of a shelf → that shelf's full editorial room page.
-                    onSeeAll       = { navController.navigate(Screen.Category.route("room-$it")) },
-                )
+                val newUi = playerVm.state.collectAsState().value.newUiEnabled
+                val onAlbum: (String) -> Unit = { navController.navigate(Screen.AlbumDetail.route(it)) }
+                val onPlaylist: (String, String, String) -> Unit = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) }
+                val onCurator: (String) -> Unit = { navController.navigate(Screen.Category.route(it)) }
+                // "More" at the end of a shelf → that shelf's full editorial room page.
+                val onSeeAll: (String) -> Unit = { navController.navigate(Screen.Category.route("room-$it")) }
+                if (newUi) {
+                    com.applemusicktv.ui.screens.BrowseScreenV2(
+                        playerVm = playerVm,
+                        onAlbumClick = onAlbum, onPlaylistClick = onPlaylist,
+                        onCuratorClick = onCurator, onSeeAll = onSeeAll,
+                    )
+                } else {
+                    BrowseScreen(
+                        playerVm       = playerVm,
+                        onAlbumClick   = onAlbum,
+                        onPlaylistClick = onPlaylist,
+                        onGenreClick   = { id, name -> navController.navigate(Screen.Genre.route(id, name)) },
+                        onCuratorClick = onCurator,
+                        onSeeAll       = onSeeAll,
+                    )
+                }
             }
             composable(
                 route     = Screen.Genre.route,
@@ -367,7 +389,13 @@ fun AppShell(modifier: Modifier = Modifier) {
                 }
             }
             composable(Screen.Radio.route) {
-                RadioScreen(playerVm = playerVm)
+                RadioScreen(
+                    playerVm        = playerVm,
+                    onAlbumClick    = { navController.navigate(Screen.AlbumDetail.route(it)) },
+                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                    onCuratorClick  = { navController.navigate(Screen.Category.route(it)) },
+                    onArtistClick   = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                )
             }
             composable(Screen.DevMenu.route)    {
                 DevMenuScreen(
@@ -388,11 +416,18 @@ fun AppShell(modifier: Modifier = Modifier) {
                 route     = Screen.ArtistDetail.route,
                 arguments = listOf(navArgument("artistId") { type = NavType.StringType }),
             ) {
-                ArtistDetailScreen(
-                    playerVm = playerVm,
-                    onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
-                )
+                val newUi = playerVm.state.collectAsState().value.newUiEnabled
+                val onAlbum: (String) -> Unit = { navController.navigate(Screen.AlbumDetail.route(it)) }
+                val onArtist: (String) -> Unit = { navController.navigate(Screen.ArtistDetail.route(it)) }
+                if (newUi) {
+                    com.applemusicktv.ui.screens.ArtistDetailScreenV2(
+                        playerVm = playerVm, onAlbumClick = onAlbum, onArtistClick = onArtist,
+                    )
+                } else {
+                    ArtistDetailScreen(
+                        playerVm = playerVm, onAlbumClick = onAlbum, onArtistClick = onArtist,
+                    )
+                }
             }
             composable(
                 route     = Screen.PlaylistDetail.route,
@@ -574,13 +609,21 @@ fun AppShell(modifier: Modifier = Modifier) {
             //    z-order = behind, so the opaque tab fully covers it — no bleed, no dispose-orphan). The
             //    surface keeps compositing (no latched stale frame), so returning is instant.
             var surfaceMounted by remember { mutableStateOf(false) }
-            LaunchedEffect(isOnNowPlaying, lowPower) {
-                if (lowPower) {
-                    if (isOnNowPlaying) surfaceMounted = true
-                    else { mvVm.detachVideo(); surfaceMounted = false }
-                } else {
-                    surfaceMounted = true                       // keep alive; never free the decoder
-                    if (isOnNowPlaying) mvVm.attachVideo()       // re-enable if we came from low-power
+            // ALWAYS free the secure decoder + unmount the SurfaceView when off Now Playing — the only
+            // teardown that reliably stops the protected frame bleeding onto other tabs (Videos/Library
+            // /Browse). The old seamless path (keep the decoder alive, shrink to 1px behind the window)
+            // let the video show through the new Videos tab. Costs ~0.5s codec re-acquire on return;
+            // worth it to kill the bleed for good. Audio never stops (detachVideo rebuilds audio-only).
+            LaunchedEffect(isOnNowPlaying) {
+                if (isOnNowPlaying) { surfaceMounted = true; mvVm.attachVideo() }
+                else {
+                    // Clear the output surface FIRST, then wait a beat so ExoPlayer actually processes
+                    // clearVideoSurface() on its playback thread BEFORE we destroy the SurfaceView.
+                    // Unmounting in the same frame destroyed the surface with a protected frame still
+                    // latched — that orphaned frame is the bleed onto Library/Videos.
+                    mvVm.detachVideo()
+                    kotlinx.coroutines.delay(120)
+                    surfaceMounted = false
                 }
             }
             Box(Modifier.fillMaxSize()) {
@@ -656,11 +699,15 @@ fun AppShell(modifier: Modifier = Modifier) {
                 isPlaying = playerState.isPlaying || (videoActive && mvState.playing),
                 updateAvailable = pendingUpdate != null,
                 beatAnalyzer = playerVm.beatAnalyzer,
+                newUi = playerState.newUiEnabled,
                 onSelect = { tab ->
                     selectedTab = tab
                     val route = when (tab) {
                         TopNavTab.ListenNow  -> Screen.Home.route
                         TopNavTab.Browse     -> Screen.Browse.route
+                        // New-UI-only tabs. Videos = the Music Videos grouping (34) rendered as a category.
+                        TopNavTab.Videos     -> Screen.Category.route("grouping-34")
+                        TopNavTab.Radio      -> Screen.Radio.route
                         TopNavTab.Library    -> Screen.Library.route
                         TopNavTab.Search     -> Screen.Search.route
                         TopNavTab.NowPlaying -> Screen.NowPlaying.route

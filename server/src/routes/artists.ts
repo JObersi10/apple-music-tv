@@ -38,7 +38,7 @@ artistRoutes.get("/:id/full", async (c) => {
   try {
     const views = "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos"
     const url = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/artists/${id}` +
-      `?views=${views}&extend=editorialNotes` +
+      `?views=${views}&extend=editorialNotes,artistBio,bornOrFormed,origin` +
       `&limit[artists:top-songs]=20&limit[artists:full-albums]=30&limit[artists:top-music-videos]=20`
     const res = await axios.get(url, { headers })
     const artist = res.data?.data?.[0]
@@ -63,6 +63,11 @@ artistRoutes.get("/:id/full", async (c) => {
       artworkUrl: attr.artwork?.url ?? null,
       genreNames: attr.genreNames ?? [],
       editorialNotes: attr.editorialNotes?.standard ?? attr.editorialNotes?.short ?? null,
+      // Artist "About" facts (The Weeknd → origin "Toronto, ON, Canada", born "February 16, 1990").
+      // Apple only returns these when explicitly extended; artistBio is the richer long-form note.
+      origin: attr.origin ?? null,
+      bornOrFormed: attr.bornOrFormed ?? null,
+      artistBio: attr.artistBio ?? null,
       topSongs,
       musicVideos,
       latestRelease: latest[0] ?? null,

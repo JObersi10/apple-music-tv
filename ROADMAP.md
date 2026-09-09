@@ -9,8 +9,23 @@ Rough direction, not a promise. Roughly ordered by impact.
 - **Queue editing** — reorder and remove from Up Next with the D-pad (list-mutation only, no decoder juggling).
 - **Lyrics translation** — Apple-style translated line under each original; probe Apple's endpoint first, else on-device ML Kit translation.
 - **Autoplay / infinite mix** — station-style continuation when the queue ends.
-- **Automatic MUT capture (sign-in, no copy-paste)** — kill the manual "copy the token from
-  devtools" step. Two routes, in order of realism:
+- **Automatic MUT capture (sign-in, no copy-paste)** — **RESOLVED 2026-09-08 (on-device).** The
+  **on-TV WebView is the answer** (`AppleSignInScreen`, Dev → Account → Sign In): it loads the real
+  `music.apple.com`, so it's same-origin and auto-reads `media-user-token`. Confirmed Apple's login
+  renders in it. To avoid D-pad typing, use the **Amazon Fire TV phone app as a keyboard**.
+  - **DEAD END — phone web sign-in (do not retry).** A `:8080`/HTTPS `:8443` page loading MusicKit JS
+    with the *scraped* bearer **cannot work**: Apple **origin-locks** the anonymous bearer to
+    `music.apple.com`. MusicKit loads + Apple login popup succeeds, but `authorize()` →
+    `GET /v1/me/storefront` = **401** (our Origin ≠ Apple's) → `webPlayerLogout` 403. Reproduced on
+    Chrome desktop (not iOS/HTTPS-specific). Confirmed via console + HAR. MusicKit-web needs a **paid
+    developer token with registered origins** — off the table for this project. All that web/HTTPS/
+    keystore code was removed. (Music Assistant's "free" button uses a maintainer's bundled *paid*
+    token.) A phone-native capture without a paid token needs a **native companion app** with a WebView
+    on `music.apple.com` (user rejected apps) — a pure web page can't (cross-origin/CSP).
+  - Possible future: an in-app **phone→TV keyboard relay** (type on phone, inject key events into the
+    on-TV WebView via its `InputConnection`) to replace the Amazon app dependency.
+  - Historical analysis of the (non-viable) phone routes kept below.
+  Two routes, in order of realism:
   - **Phone companion sign-in (preferred).** The existing `:8080` phone page gains a "Sign in to
     Apple Music" button that opens `music.apple.com` in the phone's own browser/WebView. Once the
     user logs in there (2FA is native and painless on a phone, unlike a TV remote), the session's
@@ -32,6 +47,21 @@ Rough direction, not a promise. Roughly ordered by impact.
     **server sits in the auth handshake** (proxying `music.apple.com`) and intercepts the response where
     Apple returns the session tokens. Both mean *we host the login surface* — a plain "open Apple in
     your browser" link can't hand the token back. This is the real design decision to make next time.
+	
+	~~Have a hard cache limit of 150MB, even tho we did implement such thing, it does not take into effect since i see it go above of 300MB, maybe cuz of Music Video cache? you check.~~
+	**DONE 2026-09-08 (unbuilt).** Cause was the standalone decrypt `clear_*.mp4` scratch (un-evicted, not Coil). `MediaCacheManager.trim` now caps it; verify on device.
+	~~Also cache like limit changer, user can cap the cache size from like no cache to 50MB to 100MB .etc till 2GB.~~
+	**DONE (unbuilt).** `CachePreferences` + Dev → Storage → Media cache (Off … 2 GB).
+	
+	~~the app ALWAYS remembers if u turned on shuffle or repeat on or off, applies to all playlists & albums, and also music videos.~~
+	**DONE (unbuilt).** Persisted globally; `playAlbum`/`playVideos` open in the remembered shuffle.
+	
+	~~when a word grows, it should move the rest of the lyrics IN ITS specific line to the right, to make space for when it grows and goes back when it shrinks, but more subtle,~~
+	**DONE (unbuilt).** Word growth is now real `fontSize` so the FlowRow line reflows; tune the ~5.5% factor on device.
+	
+	~~when pausing song in the middle of a crossfade it doesnt stop.~~
+	**DONE (unbuilt).** `collapseCrossfade` folds to the incoming player on pause so audio stops.
+	
 
 ## UI Overhaul — match the real Apple Music app
 
@@ -68,6 +98,14 @@ Studied from the live app. The look is not one thing — it's ~8 systems used co
 8. **Motion.** Shared-element transitions into detail, gentle parallax on hero art, a spring on focus.
 
 ### Phase 0 — design-system foundation (no visible change yet)
+
+**IN PROGRESS (2026-09-08, on-device):** Phase 0 kit done (`ui/theme/AmTokens.kt`,
+`ui/components/AmComponents.kt`), New-UI flag (Dev → Interface, default off). **Phase 2:** `HomeScreenV2`
++ `BrowseScreenV2` live behind the flag (branched in `AppShell` on `newUiEnabled`), type sizes tuned
+smaller. **Phase 3 (partial):** nav rename Listen Now→Home / Browse→New + **Videos + Radio tabs** done
+(flag-gated in `TopNavBar`). **Still TODO:** Library V2, Search V2, detail two-pane (Phase 4), Artist
+hero, Now Playing/video (Phase 5), motion (Phase 6) — the user wants ALL pages consistent with Home.
+Also queue editing (Now Playing panel) and the MV→artist nav bug + Radio redesign (see HANDOFF).
 
 Build the kit first so every screen swap is cheap and consistent:
 

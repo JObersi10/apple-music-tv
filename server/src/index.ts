@@ -15,6 +15,7 @@ import streamRoutes from "./routes/stream"
 import motionRoutes from "./routes/motion"
 import homeRoutes from "./routes/home"
 import browseRoutes from "./routes/browse"
+import { identifyRoutes } from "./routes/identify"
 
 export const music = new AppleMusic({ region: Region.US, authType: AuthType.Scraped })
 await music.init()
@@ -79,6 +80,7 @@ app.route("/api/stream",    streamRoutes)
 app.route("/api/motion",    motionRoutes)
 app.route("/api/home",      homeRoutes)
 app.route("/api/browse",    browseRoutes)
+app.route("/api/identify",  identifyRoutes)
 
 app.onError((err, c) => {
   console.error(err)

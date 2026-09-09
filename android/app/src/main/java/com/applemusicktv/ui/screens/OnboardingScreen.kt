@@ -132,8 +132,22 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
 }
 
 @Composable
+@OptIn(ExperimentalTvMaterial3Api::class)
 private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmodel.OnboardingState) {
     StepHeader("Sign in", "Your Apple Music token is pasted from your phone — it's too long to type with a remote.")
+
+    var showSignIn by remember { mutableStateOf(false) }
+    if (showSignIn) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showSignIn = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            AppleSignInScreen(
+                onToken = { token -> vm.signInWithToken(token); showSignIn = false },
+                onClose = { showSignIn = false },
+            )
+        }
+    }
 
     Row(Modifier.padding(top = 22.dp), verticalAlignment = Alignment.Top) {
         Column(Modifier.weight(1f)) {
@@ -146,8 +160,8 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
             )
             Spacer(Modifier.height(18.dp))
             Text(
-                "Paste your Music-User-Token there and this screen will continue on its own.",
-                fontSize = 14.sp, color = Color(0xFF888888),
+                "Easiest: tap \"Or sign in on this TV\" below to log in with Apple right here — it grabs your token automatically. (Tip: use the Amazon Fire TV phone app as a keyboard to type your Apple ID.) Or paste a Music-User-Token from your phone.",
+                fontSize = 14.sp, color = Color(0xFF888888), lineHeight = 19.sp,
             )
             Spacer(Modifier.height(6.dp))
             Text(
@@ -161,6 +175,11 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
             )
             Spacer(Modifier.height(18.dp))
             Text("Without a token you get 30-second previews only.", fontSize = 12.sp, color = Color(0xFF555555))
+            Spacer(Modifier.height(16.dp))
+            // Alternative to the phone paste: sign in with Apple ID right here in an in-app browser.
+            androidx.tv.material3.Button(onClick = { showSignIn = true }) {
+                Text("Or sign in on this TV")
+            }
         }
 
         // QR of the same URL. Drawn on a white card with a quiet zone — a code that

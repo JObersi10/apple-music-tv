@@ -37,9 +37,9 @@ fun ShelfSkeleton(rows: Int = 4, cardSize: Int = 130) {
 @Composable
 private fun SkeletonRow(bar: Color, cardSize: Int, cards: Int) {
     Column {
-        Box(Modifier.padding(start = 48.dp, bottom = 14.dp)
+        Box(Modifier.padding(start = 24.dp, bottom = 14.dp)
             .width(180.dp).height(18.dp).clip(RoundedCornerShape(5.dp)).background(bar))
-        Row(Modifier.padding(start = 48.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(Modifier.padding(start = 24.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             repeat(cards) {
                 Column {
                     Box(Modifier.size(cardSize.dp).clip(RoundedCornerShape(12.dp)).background(bar))

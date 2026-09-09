@@ -63,12 +63,22 @@ data class SimilarArtistDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class IdentifyDto(
+    val title:   String? = null,
+    val artist:  String? = null,
+    val artwork: String? = null,
+)
+
+@JsonClass(generateAdapter = true)
 data class ArtistFullDto(
     val id:             String,
     val name:           String,
     val artworkUrl:     String?,
     val genreNames:     List<String>          = emptyList(),
     val editorialNotes: String?               = null,
+    val origin:         String?               = null,
+    val bornOrFormed:   String?               = null,
+    val artistBio:      String?               = null,
     val topSongs:       List<SongDto>         = emptyList(),
     val musicVideos:    List<SongDto>         = emptyList(),
     val latestRelease:  AlbumDto?             = null,
@@ -271,6 +281,10 @@ interface ProxyApi {
 
     @GET("api/browse/grouping/{id}")
     suspend fun getGrouping(@Path("id") id: String): MultiRoomDto
+
+    /** Shazam song-ID for an internet-radio stream. Returns nulls on a miss. */
+    @GET("api/identify")
+    suspend fun identifyStream(@Query("url") url: String): IdentifyDto
 
     @GET("api/browse/categories")
     suspend fun getCategories(): CategoriesResponse
