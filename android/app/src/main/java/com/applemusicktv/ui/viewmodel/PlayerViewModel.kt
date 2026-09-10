@@ -162,7 +162,7 @@ data class PlayerState(
     /** Low Power Mode: cheaper background rendering (also forces motion art off). */
     val lowPowerMode: Boolean = false,
     /** v2 UI overhaul flag: when on, screens rebuilt on the AmCard/Shelf kit are shown. Default off. */
-    val newUiEnabled: Boolean = false,
+    val newUiEnabled: Boolean = true,
     /** Volume leveling (loudness AGC) on the audio path. */
     val volumeLeveling: Boolean = false,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
@@ -838,7 +838,7 @@ class PlayerViewModel @Inject constructor(
             volumeLeveling = prefs.getBoolean("volume_leveling", false),
             isShuffled = prefs.getBoolean("shuffle_on", false),
             repeatMode = repeatFromPrefs(),
-            newUiEnabled = prefs.getBoolean("new_ui", false),
+            newUiEnabled = prefs.getBoolean("new_ui", true),
         ) }
         player.addListener(playerListener)
         mediaSession = buildMediaSession(player)
@@ -1019,7 +1019,7 @@ class PlayerViewModel @Inject constructor(
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), newUiEnabled = prefs.getBoolean("new_ui", false), translateLyrics = prefs.getBoolean("translate_lyrics", false), progressMs = posMs) }
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), newUiEnabled = prefs.getBoolean("new_ui", true), translateLyrics = prefs.getBoolean("translate_lyrics", false), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {

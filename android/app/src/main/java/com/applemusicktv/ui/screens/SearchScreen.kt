@@ -164,6 +164,13 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
 
         val ms = menuSong
         if (ms != null) {
+            // Search songs arrive without artist/album ids — resolve them so Go to Artist/Album show.
+            LaunchedEffect(ms.id) {
+                if (ms.artistId == null || ms.albumId == null) {
+                    val (aId, alId) = playerVm.lookupSongIds(ms.id)
+                    if (aId != null || alId != null) menuSong = ms.copy(artistId = aId ?: ms.artistId, albumId = alId ?: ms.albumId)
+                }
+            }
             com.applemusicktv.ui.components.AmContextMenu(
                 title = ms.title,
                 subtitle = ms.artistName,
@@ -173,6 +180,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                 actions = buildList {
                     add(com.applemusicktv.ui.components.AmMenuAction("Play Next", com.applemusicktv.ui.components.Glyph.PLAY_NEXT) { playerVm.playNext(ms); menuSong = null })
                     add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", com.applemusicktv.ui.components.Glyph.QUEUE_ADD) { playerVm.addToQueue(ms); menuSong = null })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Create Station", com.applemusicktv.ui.components.Glyph.RADIO) { playerVm.createSongStation(ms); menuSong = null })
                     ms.artistId?.let { aid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", com.applemusicktv.ui.components.Glyph.ARTIST) { onArtistClick(aid); menuSong = null }) }
                     ms.albumId?.let { alid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Album", com.applemusicktv.ui.components.Glyph.ALBUM) { onAlbumClick(alid); menuSong = null }) }
                 },

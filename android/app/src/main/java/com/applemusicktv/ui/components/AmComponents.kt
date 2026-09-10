@@ -288,7 +288,6 @@ fun AmContextMenu(
     // the card before the dialog existed) — we consume that UP. A deliberate later press has both a
     // DOWN and UP here, so it passes through. Any directional/Back press also arms (user has moved on).
     var armed by remember(title) { mutableStateOf(false) }
-    var sawOkDown by remember(title) { mutableStateOf(false) }
     LaunchedEffect(title) { runCatching { firstFocus.requestFocus() } }
     fun isOk(k: Key) = k == Key.DirectionCenter || k == Key.Enter || k == Key.NumPadEnter
     // Resolve Apple's {w}x{h}bb.{f} template so the header art shows on every path (library rows
@@ -301,13 +300,14 @@ fun AmContextMenu(
         Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
             Column(Modifier.width(320.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF1C1C1E)).padding(8.dp)
                 .onPreviewKeyEvent { e ->
+                    // A held OK auto-repeats KeyDowns into the dialog once it's focused, so we can't
+                    // trust "first down". Instead: consume EVERYTHING until the OK is physically
+                    // released once (first KeyUp) — that release is the long-press ending. Consume
+                    // that UP too and arm. Nothing can fire row 1 before a real, fresh press.
                     when {
                         armed -> false
-                        isOk(e.key) && e.type == KeyEventType.KeyDown -> { sawOkDown = true; true }
-                        isOk(e.key) && e.type == KeyEventType.KeyUp && !sawOkDown -> { armed = true; true }
-                        isOk(e.key) && e.type == KeyEventType.KeyUp -> { armed = true; false }
-                        e.type == KeyEventType.KeyDown -> { armed = true; false }
-                        else -> false
+                        e.type == KeyEventType.KeyUp -> { armed = true; true }
+                        else -> true   // swallow all downs/repeats while the opening OK is still held
                     }
                 },
                 verticalArrangement = Arrangement.spacedBy(2.dp)) {
