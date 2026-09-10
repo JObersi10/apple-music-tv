@@ -1,5 +1,18 @@
 # Roadmap — deferred work
 
+## Artist page (V2) revamp — DO FIRST
+`ArtistDetailScreenV2.kt`. Two things:
+1. **Collapsing hero, not a fixed block.** Today the artist photo is LazyColumn item 0 (480dp) that
+   scrolls away entirely. Wanted: the photo stays as a **backdrop** and fades *behind/into* the Top
+   Songs (Apple style) — content scrolls up over the gradient, the picture is still visible mid-page,
+   not pinned on top. Likely: pin the image in the `Box` background, overlay the scrolling content, and
+   drive its alpha/parallax from the LazyColumn scroll offset; reset cleanly on scroll back to top.
+2. **Focus-up trap.** Once focus goes DOWN into Top Songs / lower shelves you can't come back UP. Cause:
+   the hero controls scroll off-screen and get disposed, so there's no focusable target above. Fix with a
+   focus restorer / keeping the hero controls reachable (e.g. `focusRestorer`, a sticky control row, or
+   scroll-to-top on Up from the first shelf). Verify on-device — TV focus can't be checked blind.
+
+
 ## Lyrics translation without the proxy
 Today `/api/translate` (proxy) does a keyless Google `translate_a/single` call and the app calls the
 proxy. To drop the server dependence, move the call **into the app** — either:
