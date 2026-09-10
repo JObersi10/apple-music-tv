@@ -87,28 +87,29 @@ fun ArtistDetailScreenV2(
     }
 
     Box(modifier.fillMaxSize().background(AmTokens.Color.Background)) {
+        // Artist photo as a FIXED backdrop behind the scroll — it stays put while the songs scroll up
+        // over it and its gradient fades into the page, so the picture "fades in with the songs"
+        // instead of scrolling away. Nudged down a touch (we mostly see the top anyway).
+        if (state.artworkUrl != null) {
+            AsyncImage(
+                model = state.artworkUrl?.replace("{w}", "1600")?.replace("{h}", "1600")?.replace("{f}", "jpg"),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alignment = Alignment.TopCenter,
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(560.dp).offset(y = 40.dp),
+            )
+            Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(600.dp).background(
+                Brush.verticalGradient(listOf(Color(0x00000000), Color(0x55000000), AmTokens.Color.Background)),
+            ))
+        }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 80.dp),
     ) {
-        // Full-bleed hero with name + genres + Play/Shuffle overlaid at the bottom.
+        // Hero item is now transparent — the backdrop above shows through it; this just holds the
+        // name + genres + Play/Shuffle/Station controls at the bottom.
         item {
-            // Near-full-bleed hero, Apple iPad style: big artist name centred, then a row of centred
-            // circular controls — Shuffle · big Play · Station. A square source centre-cropped keeps
-            // the face in frame; the gradient fades into the page background.
             Box(Modifier.fillMaxWidth().height(480.dp)) {
-                if (state.artworkUrl != null) {
-                    AsyncImage(
-                        model = state.artworkUrl?.replace("{w}", "1600")?.replace("{h}", "1600")?.replace("{f}", "jpg"),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        alignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                Box(Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(listOf(Color(0x11000000), Color(0x88000000), AmTokens.Color.Background)),
-                ))
                 Column(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,

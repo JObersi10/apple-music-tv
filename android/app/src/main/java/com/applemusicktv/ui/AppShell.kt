@@ -647,8 +647,17 @@ fun AppShell(modifier: Modifier = Modifier) {
             // Return to Now Playing re-attaches video in place. Audio never stops.
             LaunchedEffect(isOnNowPlaying, videoActive) {
                 if (!videoActive) { surfaceMounted = false; return@LaunchedEffect }
-                surfaceMounted = true
-                if (isOnNowPlaying) mvVm.attachVideo() else mvVm.detachVideo()
+                if (isOnNowPlaying) { surfaceMounted = true; mvVm.attachVideo() }
+                else {
+                    // v4: off-screen alone didn't clear it (v3), destroy alone orphaned it (v2). Do BOTH
+                    // in order: rebuild audio-only so NO protected frame remains, wait for that to land,
+                    // THEN destroy the (already off-screen, content-free) SurfaceView. Nothing protected
+                    // is on the layer at destroy time, so there is nothing to latch onto other tabs.
+                    mvVm.detachVideo()
+                    mvVm.awaitDetach()
+                    kotlinx.coroutines.delay(140)
+                    surfaceMounted = false
+                }
             }
             Box(Modifier.fillMaxSize()) {
                 if (surfaceMounted) {
