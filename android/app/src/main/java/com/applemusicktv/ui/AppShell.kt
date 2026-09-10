@@ -723,6 +723,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                         showOnScreenControls = com.applemusicktv.util.TvDevice.needsOnScreenMenuToggle(appContext, playerVm.remoteOverride()),
                         queue = playerState.queue,
                         queueIndex = playerState.queueIndex,
+                        userQueue = playerState.userQueue,
                         onPickQueueItem = { playerVm.playFromQueue(it) },
                         focusRequester = videoFocus,
                     )

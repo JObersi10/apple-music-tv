@@ -55,6 +55,7 @@ fun MusicVideoScreen(
     showOnScreenControls: Boolean = false,   // Google TV remotes: draw prev/play/next on screen
     queue: List<com.applemusicktv.data.model.Song> = emptyList(),
     queueIndex: Int = 0,
+    userQueue: List<com.applemusicktv.data.model.Song> = emptyList(),
     onPickQueueItem: (Int) -> Unit = {},
     focusRequester: FocusRequester,
 ) {
@@ -289,10 +290,38 @@ fun MusicVideoScreen(
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             Box(Modifier.fillMaxHeight().padding(14.dp).width(360.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xF21C1C1E)).padding(vertical = 22.dp)) {
-                LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                val queueListState = androidx.compose.foundation.lazy.rememberLazyListState()
+                // LazyColumn rows before the base queue: "Up Next" header (1) + optional
+                // "Playing Next" section (label + userQueue rows) — so the cursor→item map is offset.
+                val headerRows = 1 + (if (userQueue.isNotEmpty()) userQueue.size + 2 else 0)
+                LaunchedEffect(queueCursor, showQueue) {
+                    if (showQueue) runCatching { queueListState.animateScrollToItem((queueCursor + headerRows).coerceAtLeast(0)) }
+                }
+                LazyColumn(state = queueListState, contentPadding = PaddingValues(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     item {
                         Text("Up Next", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                             letterSpacing = (-0.3).sp, modifier = Modifier.padding(bottom = 14.dp))
+                    }
+                    // Play Next / Add to Queue items — shown read-only so the user sees what they added.
+                    if (userQueue.isNotEmpty()) {
+                        item {
+                            Text("Playing Next", color = Color(0x99FFFFFF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.5.sp, modifier = Modifier.padding(bottom = 6.dp))
+                        }
+                        itemsIndexed(userQueue, key = { i, s -> "uq_${s.id}_$i" }) { _, song ->
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                if (song.isMusicVideo)
+                                    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 5.dp, vertical = 1.dp)) {
+                                        Text("MV", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                Column(Modifier.weight(1f)) {
+                                    Text(song.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                    Text(song.artistName, color = Color(0x99FFFFFF), fontSize = 11.sp, maxLines = 1)
+                                }
+                            }
+                        }
+                        item { Spacer(Modifier.height(8.dp)) }
                     }
                     itemsIndexed(queue) { i, song ->
                         val sel = i == queueCursor
