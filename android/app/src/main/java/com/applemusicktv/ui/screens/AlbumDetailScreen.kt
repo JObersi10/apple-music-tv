@@ -147,45 +147,22 @@ fun AlbumDetailScreen(
             }
         }
         val dismissMenu = { refocusId = menuSong?.id; menuSong = null }
-        Box(
-            Modifier.fillMaxSize()
-                .background(Color(0x88000000))
-                .onKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown &&
-                        (event.key == Key.Back || event.key == Key.Escape)) {
-                        dismissMenu(); true
-                    } else false
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            val firstFocus = remember { FocusRequester() }
-            var clickBlocked by remember(s.id) { mutableStateOf(true) }
-            LaunchedEffect(s.id) {
-                kotlinx.coroutines.delay(800)
-                clickBlocked = false
-                runCatching { firstFocus.requestFocus() }
-            }
-            Column(
-                Modifier.width(320.dp).heightIn(max = 340.dp).clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF1C1C1E))
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-                Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                AlbumContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                AlbumContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                AlbumContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
-                AlbumContextItem(Glyph.RADIO, "Create Station", { if (!clickBlocked) { playerVm.createSongStation(s); dismissMenu() } })
-                val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
-                val goAlbum  = s.albumId ?: album.id
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                if (goArtist != null) AlbumContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(goArtist); dismissMenu() } })
-                if (goAlbum  != null) AlbumContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(goAlbum);   dismissMenu() } })
-            }
-        }
+        val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
+        val goAlbum  = s.albumId ?: album.id
+        com.applemusicktv.ui.components.AmContextMenu(
+            title = s.title,
+            subtitle = s.artistName,
+            artworkUrl = s.artworkUrl,
+            onDismiss = dismissMenu,
+            actions = buildList {
+                add(com.applemusicktv.ui.components.AmMenuAction("Play Next") { playerVm.playNext(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue") { playerVm.addToQueue(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to…") { addToSong = s; dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Create Station") { playerVm.createSongStation(s); dismissMenu() })
+                if (goArtist != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist") { onArtistClick(goArtist); dismissMenu() })
+                if (goAlbum  != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Album") { onAlbumClick(goAlbum); dismissMenu() })
+            },
+        )
     }
 
     addToSong?.let { s ->

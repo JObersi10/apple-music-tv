@@ -315,26 +315,19 @@ fun ArtistDetailScreenV2(
         // Real Dialog so D-pad focus is trapped, matching Library/Playlist menus.
         menuSong?.let { s ->
             val dismiss = { menuSong = null }
-            val firstFocus = remember { FocusRequester() }
-            var clickBlocked by remember(s.id) { mutableStateOf(true) }
-            LaunchedEffect(s.id) { kotlinx.coroutines.delay(500); clickBlocked = false; runCatching { firstFocus.requestFocus() } }
-            androidx.compose.ui.window.Dialog(
-                onDismissRequest = dismiss,
-                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-            ) {
-                Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
-                    Column(
-                        Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(vertical = 6.dp),
-                    ) {
-                        Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                        ArtistMenuItem("Play Next", Modifier.focusRequester(firstFocus)) { if (!clickBlocked) { playerVm.playNext(s); dismiss() } }
-                        ArtistMenuItem("Add to Queue") { if (!clickBlocked) { playerVm.addToQueue(s); dismiss() } }
-                        ArtistMenuItem("Add to…") { if (!clickBlocked) { addToSong = s; dismiss() } }
-                        s.albumId?.let { alid -> ArtistMenuItem("Go to Album") { if (!clickBlocked) { onAlbumClick(alid); dismiss() } } }
-                    }
-                }
-            }
+            com.applemusicktv.ui.components.AmContextMenu(
+                title = s.title,
+                subtitle = s.artistName,
+                artworkUrl = s.artworkUrl,
+                onDismiss = dismiss,
+                actions = buildList {
+                    add(com.applemusicktv.ui.components.AmMenuAction("Play Next") { playerVm.playNext(s); dismiss() })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue") { playerVm.addToQueue(s); dismiss() })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Add to…") { addToSong = s; dismiss() })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Create Station") { playerVm.createSongStation(s); dismiss() })
+                    s.albumId?.let { alid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Album") { onAlbumClick(alid); dismiss() }) }
+                },
+            )
         }
         addToSong?.let { s ->
             com.applemusicktv.ui.components.AddToDialog(playerVm, s, onDismiss = { addToSong = null })

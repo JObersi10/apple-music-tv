@@ -266,6 +266,11 @@ class MusicRepository @Inject constructor(
         if (!useProxy) direct.librarySongs().map { it.songs.map(::songFromDto) }
         else apiCall { api.getLibrarySongs(limit, offset).songs.map(::songFromDto) }
 
+    /** Music videos in the user's library. Proxy-only (not on the standalone direct path yet). */
+    suspend fun getLibraryMusicVideos() =
+        if (!useProxy) Result.success(emptyList<Song>())
+        else apiCall { api.getLibraryMusicVideos().songs.map(::songFromDto) }
+
     suspend fun getLibraryAlbums(limit: Int = 25, offset: Int = 0) =
         if (!useProxy) direct.libraryAlbums().map { it.albums.map(::albumFromDto) }
         else apiCall { api.getLibraryAlbums(limit, offset).albums.map(::albumFromDto) }

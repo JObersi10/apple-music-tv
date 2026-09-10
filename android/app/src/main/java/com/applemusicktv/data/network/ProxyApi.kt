@@ -324,6 +324,9 @@ interface ProxyApi {
     @GET("api/library/songs")
     suspend fun getLibrarySongs(@Query("limit") limit: Int = 25, @Query("offset") offset: Int = 0): LibrarySongsResponse
 
+    @GET("api/library/music-videos")
+    suspend fun getLibraryMusicVideos(@Query("limit") limit: Int = 100): LibrarySongsResponse
+
     @GET("api/library/albums")
     suspend fun getLibraryAlbums(@Query("limit") limit: Int = 25, @Query("offset") offset: Int = 0): LibraryAlbumsResponse
 

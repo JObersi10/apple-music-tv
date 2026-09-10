@@ -194,43 +194,20 @@ fun PlaylistDetailScreen(
 
     // Fullscreen context menu overlay — no Dialog API, no focus/dismiss races
     menuSongState?.let { s ->
-        Box(
-            Modifier.fillMaxSize()
-                .background(Color(0x88000000))
-                .onKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown &&
-                        (event.key == Key.Back || event.key == Key.Escape)) {
-                        dismissMenu(); true
-                    } else false
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            val firstFocus = remember { FocusRequester() }
-            var clickBlocked by remember(s.id) { mutableStateOf(true) }
-            LaunchedEffect(s.id) {
-                kotlinx.coroutines.delay(800)
-                clickBlocked = false
-                runCatching { firstFocus.requestFocus() }
-            }
-            Column(
-                Modifier.width(320.dp).heightIn(max = 340.dp).clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF1C1C1E))
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-                Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                PlaylistContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                PlaylistContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                PlaylistContextItem(Glyph.RADIO, "Create Station", { if (!clickBlocked) { playerVm.createSongStation(s); dismissMenu() } })
-                PlaylistContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                s.artistId?.let { aid -> PlaylistContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(aid); dismissMenu() } }) }
-                s.albumId?.let  { alid -> PlaylistContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(alid);  dismissMenu() } }) }
-            }
-        }
+        com.applemusicktv.ui.components.AmContextMenu(
+            title = s.title,
+            subtitle = s.artistName,
+            artworkUrl = s.artworkUrl,
+            onDismiss = dismissMenu,
+            actions = buildList {
+                add(com.applemusicktv.ui.components.AmMenuAction("Play Next") { playerVm.playNext(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue") { playerVm.addToQueue(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Create Station") { playerVm.createSongStation(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to…") { addToSong = s; dismissMenu() })
+                s.artistId?.let { aid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist") { onArtistClick(aid); dismissMenu() }) }
+                s.albumId?.let  { alid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Album") { onAlbumClick(alid); dismissMenu() }) }
+            },
+        )
     }
 
     addToSong?.let { s ->

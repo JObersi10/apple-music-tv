@@ -36,7 +36,7 @@ import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import com.applemusicktv.ui.viewmodel.SortField
 
 private enum class LibrarySection(val label: String) {
-    Playlists("Playlists"), Albums("Albums"), Artists("Artists"), Songs("Songs"),
+    Playlists("Playlists"), Albums("Albums"), Artists("Artists"), Songs("Songs"), Videos("Videos"),
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -47,6 +47,7 @@ fun LibraryScreen(
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (id: String, name: String, artworkUrl: String?) -> Unit = { _, _, _ -> },
     onArtistClick: (String) -> Unit = {},
+    onMusicVideoClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // Survive navigation away/back (saved in the nav backstack), so returning to Library
@@ -89,6 +90,7 @@ fun LibraryScreen(
                             LibrarySection.Albums  -> AlbumGrid(vm.sortedAlbums(), onAlbumClick)
                             LibrarySection.Artists -> ArtistList(vm.sortedArtists(), onArtistClick)
                             LibrarySection.Songs   -> SongList(vm.sortedSongs(), playerVm, onArtistClick, onAlbumClick)
+                            LibrarySection.Videos  -> VideoGrid(state.videos, onMusicVideoClick)
                         }
                     }
                 }
@@ -163,6 +165,7 @@ private fun SortBar(
         LibrarySection.Albums    -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Name", SortField.ARTIST to "Artist")
         LibrarySection.Artists   -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Name")
         LibrarySection.Songs     -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Title", SortField.ARTIST to "Artist")
+        LibrarySection.Videos    -> listOf(SortField.DEFAULT to "Date Added", SortField.NAME to "Title", SortField.ARTIST to "Artist")
     }
     val curLabel = fields.firstOrNull { it.first == currentField }?.second ?: "Sort"
     val dirArrow = if (currentDir == com.applemusicktv.ui.viewmodel.SortDir.ASC) "↑" else "↓"
@@ -390,6 +393,34 @@ private fun AlbumGrid(albums: List<Album>, onAlbumClick: (String) -> Unit) {
     }
 }
 
+/** Library music videos — 16:9 thumbnails; click plays the video on Now Playing. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun VideoGrid(videos: List<Song>, onClick: (Song) -> Unit) {
+    if (videos.isEmpty()) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No music videos", color = Color(0xFF555555)) }; return }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        contentPadding = PaddingValues(start = 32.dp, end = 48.dp, top = 20.dp, bottom = 48.dp),
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(22.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(videos, key = { it.id }) { v ->
+            Surface(onClick = { onClick(v) }, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f)) {
+                Column {
+                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF2A2A2A))) {
+                        if (v.artworkUrl != null) AsyncImage(model = v.artworkUrl(600), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    }
+                    Text(v.title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.padding(top = 8.dp))
+                    Text(v.artistName, fontSize = 11.sp, color = Color(0xFF888888), maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun ArtistList(artists: List<Artist>, onArtistClick: (String) -> Unit) {
@@ -471,33 +502,22 @@ private fun SongContextMenu(
     onGoToArtist: (() -> Unit)? = null,
     onGoToAlbum:  (() -> Unit)? = null,
 ) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        val firstFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-        LaunchedEffect(Unit) { kotlinx.coroutines.delay(500); runCatching { firstFocus.requestFocus() } }
-        Column(
-            Modifier.width(320.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            // Header with artwork + song info
-            Row(Modifier.padding(horizontal = 8.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF2A2A2A))) {
-                    if (song.artworkUrl != null) AsyncImage(model = song.artworkUrl(88), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                }
-                Column {
-                    Text(song.title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    Text(song.artistName, fontSize = 11.sp, color = Color(0xFF888888), maxLines = 1)
-                }
-            }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF2A2A2A)))
-            Spacer(Modifier.height(2.dp))
-            ContextMenuItem("Play Next", onPlayNext, Modifier.focusRequester(firstFocus))
-            ContextMenuItem("Add to Queue", onAddToQueue)
-            if (onAddToLibrary  != null) ContextMenuItem("Add to Library",  onAddToLibrary)
-            if (onAddToPlaylist != null) ContextMenuItem("Add to Playlist", onAddToPlaylist)
-            if (onGoToArtist != null) ContextMenuItem("Go to Artist", onGoToArtist)
-            if (onGoToAlbum  != null) ContextMenuItem("Go to Album",  onGoToAlbum)
-        }
-    }
+    val isVideo = song.type.contains("music-video")
+    com.applemusicktv.ui.components.AmContextMenu(
+        title = song.title,
+        subtitle = song.artistName,
+        artworkUrl = song.artworkUrl?.let { song.artworkUrl(if (isVideo) 156 else 88) },
+        isVideoArt = isVideo,
+        onDismiss = onDismiss,
+        actions = buildList {
+            add(com.applemusicktv.ui.components.AmMenuAction("Play Next", onClick = onPlayNext))
+            add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", onClick = onAddToQueue))
+            if (onAddToLibrary  != null) add(com.applemusicktv.ui.components.AmMenuAction("Add to Library",  onClick = onAddToLibrary))
+            if (onAddToPlaylist != null) add(com.applemusicktv.ui.components.AmMenuAction("Add to Playlist", onClick = onAddToPlaylist))
+            if (onGoToArtist != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", onClick = onGoToArtist))
+            if (onGoToAlbum  != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Album",  onClick = onGoToAlbum))
+        },
+    )
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)

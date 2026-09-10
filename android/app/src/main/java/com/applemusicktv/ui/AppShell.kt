@@ -370,6 +370,11 @@ fun AppShell(modifier: Modifier = Modifier) {
                         navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl ?: ""))
                     },
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                    onMusicVideoClick = { s ->
+                        mvVm.show(s.id, s.title, s.artistName)
+                        selectedTab = TopNavTab.NowPlaying
+                        navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
+                    },
                 )
             }
             composable(Screen.Search.route) {

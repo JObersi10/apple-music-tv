@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
@@ -235,7 +236,7 @@ private fun SongCell(title: String, subtitle: String, artUrl: String?, onClick: 
 /** One row in a card context menu. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AmMenuItem(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun AmMenuItem(label: String, modifier: Modifier = Modifier, destructive: Boolean = false, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -243,15 +244,66 @@ fun AmMenuItem(label: String, modifier: Modifier = Modifier, onClick: () -> Unit
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
     ) {
-        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+        Text(label, fontSize = 14.sp, color = if (destructive) Color(0xFFFA233B) else Color.White,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+    }
+}
+
+/** One menu row for [AmContextMenu]. `destructive` tints the label red (e.g. Remove). */
+data class AmMenuAction(val label: String, val destructive: Boolean = false, val onClick: () -> Unit)
+
+/**
+ * THE canonical long-press context menu — one look for the whole app. Artwork header + subtitle,
+ * a hairline divider, then rows. Real Dialog so D-pad focus is trapped; the first row auto-focuses
+ * after a short delay and a `blocked` guard eats the OK-release that opened the menu.
+ * Every long-press menu (Library, Artist, Category, Browse, …) must route through this — do NOT
+ * hand-roll another menu Column. See design-language.md.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun AmContextMenu(
+    title: String,
+    subtitle: String?,
+    artworkUrl: String?,
+    actions: List<AmMenuAction>,
+    onDismiss: () -> Unit,
+    isVideoArt: Boolean = false,
+) {
+    val firstFocus = remember { FocusRequester() }
+    var blocked by remember(title) { mutableStateOf(true) }
+    LaunchedEffect(title) { kotlinx.coroutines.delay(450); blocked = false; runCatching { firstFocus.requestFocus() } }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
+            Column(Modifier.width(320.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(Modifier.padding(horizontal = 8.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val artSize = if (isVideoArt) DpSize(78.dp, 44.dp) else DpSize(44.dp, 44.dp)
+                    Box(Modifier.size(artSize).clip(RoundedCornerShape(6.dp)).background(Color(0xFF2A2A2A))) {
+                        if (artworkUrl != null) AsyncImage(model = artworkUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    }
+                    Column {
+                        Text(title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        if (!subtitle.isNullOrBlank()) Text(subtitle, fontSize = 11.sp, color = Color(0xFF888888), maxLines = 1)
+                    }
+                }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF2A2A2A)))
+                Spacer(Modifier.height(2.dp))
+                actions.forEachIndexed { i, a ->
+                    val m = if (i == 0) Modifier.focusRequester(firstFocus) else Modifier
+                    AmMenuItem(a.label, m, destructive = a.destructive) { if (!blocked) a.onClick() }
+                }
+            }
+        }
     }
 }
 
 /**
  * Shared long-press context menu for any card (album / playlist / song / music-video / artist).
- * Options adapt to [item].type. Real Dialog so D-pad focus is trapped. Hosts its own Add-to dialog.
+ * Options adapt to [item].type. Delegates to [AmContextMenu] so it matches every other menu.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun CardContextMenu(
     item: com.applemusicktv.data.model.Album,
@@ -268,33 +320,27 @@ fun CardContextMenu(
         previewUrl = null, artistId = item.artistId, type = item.type,
     )
     var addTo by remember { mutableStateOf(false) }
-    val firstFocus = remember { FocusRequester() }
-    var blocked by remember(item.id) { mutableStateOf(true) }
-    LaunchedEffect(item.id) { kotlinx.coroutines.delay(450); blocked = false; runCatching { firstFocus.requestFocus() } }
     if (addTo) { AddToDialog(playerVm, song, onDismiss = { addTo = false; onDismiss() }); return }
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
-            Column(Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(vertical = 6.dp)) {
-                Text(item.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                var first = true
-                fun fr(): Modifier { val m = if (first) Modifier.focusRequester(firstFocus) else Modifier; first = false; return m }
-                if (isSong || isVideo) {
-                    AmMenuItem("Play Next", fr()) { if (!blocked) { playerVm.playNext(song); onDismiss() } }
-                    AmMenuItem("Add to Queue", fr()) { if (!blocked) { playerVm.addToQueue(song); onDismiss() } }
-                    if (isSong) AmMenuItem("Add to…", fr()) { if (!blocked) { addTo = true } }
-                }
-                item.artistId?.takeIf { it.isNotBlank() }?.let { aid ->
-                    AmMenuItem("Go to Artist", fr()) { if (!blocked) { onArtist(aid); onDismiss() } }
-                }
-                if (isSong) AmMenuItem("Go to Album", fr()) { if (!blocked) { onAlbum(item.id); onDismiss() } }
-                if (!isSong && !isVideo) AmMenuItem("Open", fr()) { if (!blocked) { onAlbum(item.id); onDismiss() } }
-            }
+    val actions = buildList {
+        if (isSong || isVideo) {
+            add(AmMenuAction("Play Next") { playerVm.playNext(song); onDismiss() })
+            add(AmMenuAction("Add to Queue") { playerVm.addToQueue(song); onDismiss() })
+            if (isSong) add(AmMenuAction("Add to…") { addTo = true })
         }
+        item.artistId?.takeIf { it.isNotBlank() }?.let { aid ->
+            add(AmMenuAction("Go to Artist") { onArtist(aid); onDismiss() })
+        }
+        if (isSong) add(AmMenuAction("Go to Album") { onAlbum(item.id); onDismiss() })
+        if (!isSong && !isVideo) add(AmMenuAction("Open") { onAlbum(item.id); onDismiss() })
     }
+    AmContextMenu(
+        title = item.title,
+        subtitle = item.artistName.takeIf { it.isNotBlank() },
+        artworkUrl = item.artworkUrl,
+        actions = actions,
+        onDismiss = onDismiss,
+        isVideoArt = isVideo,
+    )
 }
 
 /**
