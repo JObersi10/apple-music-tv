@@ -86,23 +86,36 @@ fun ArtistDetailScreenV2(
         if (state.topSongs.isNotEmpty()) { kotlinx.coroutines.delay(120); runCatching { heroPlayFocus.requestFocus() } }
     }
 
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // Bright at the top, darker the more you scroll down. Driven by the first item's scroll offset
+    // (once past item 0 it's fully dark). 0 → no dim, 1 → full dim.
+    val darkFrac by remember {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) 1f
+            else (listState.firstVisibleItemScrollOffset / 700f).coerceIn(0f, 1f)
+        }
+    }
     Box(modifier.fillMaxSize().background(AmTokens.Color.Background)) {
-        // Artist photo as a FIXED backdrop behind the scroll — it stays put while the songs scroll up
-        // over it and its gradient fades into the page, so the picture "fades in with the songs"
-        // instead of scrolling away. Nudged down a touch (we mostly see the top anyway).
+        // Artist photo as a FIXED backdrop behind the scroll — flush to the very top (no black border),
+        // filling from y=0 so there is no gap. A base gradient fades it into the page; a scroll-driven
+        // black overlay dims it as you move down.
         if (state.artworkUrl != null) {
             AsyncImage(
                 model = state.artworkUrl?.replace("{w}", "1600")?.replace("{h}", "1600")?.replace("{f}", "jpg"),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 alignment = Alignment.TopCenter,
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(560.dp).offset(y = 40.dp),
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(560.dp),
             )
             Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(600.dp).background(
-                Brush.verticalGradient(listOf(Color(0x00000000), Color(0x55000000), AmTokens.Color.Background)),
+                Brush.verticalGradient(listOf(Color(0x00000000), Color(0x33000000), AmTokens.Color.Background)),
             ))
+            // Extra dim that grows with scroll — bright at top, darker going down.
+            Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(600.dp)
+                .background(Color.Black.copy(alpha = 0.7f * darkFrac)))
         }
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 80.dp),
     ) {
