@@ -873,3 +873,37 @@ Ground-truth tool: `server/ref_key.py <songId>`.
 - **Radio/Videos card-size + accent consistency** with Home/New (subjective; needs on-device eyeballing).
 - **MV audio-only rebuild is slow** — tied to the video-model recode (see video-surface-bleed memory).
 - **Video bleed across tabs** — still needs the recode.
+
+---
+
+## Session 2026-09-09 (part 7) — one context menu, MV audio/queue, Library videos, V2 default
+
+All committed + pushed to `origin/feat/radio-artist-shazam-v2`.
+
+### DONE
+- **Single context menu everywhere** (`AmContextMenu` in `AmComponents.kt`): artwork header +
+  subtitle + divider + icon/label rows. Library/Album/Playlist/Artist/Category/Browse/Search all
+  route through it. `AmMenuAction(label, glyph, destructive)`. See `DESIGN_LANGUAGE.md` +
+  memory `canonical-context-menu`.
+  - **Long-hold no longer auto-selects**: a held OK auto-repeats KeyDowns, so the menu now consumes
+    ALL key events until the first KeyUp (the long-press release), then arms. Robust at any hold length.
+  - Artwork resolves Apple's `{w}x{h}bb.{f}` template inside the menu (Library rows were blank before).
+  - Card menus (New/Browse/Category) resolve artist/album ids via `lookupSongIds` so **Go to Artist**
+    shows there too.
+  - Search menu gained Create Station + Go to Artist/Album (id resolution).
+- **MV audio quality**: pick highest-bitrate audio rendition, not the one tied to the 480p video tier
+  (`AppleDirectClient.buildMaster`). Skips atmos/binaural.
+- **MV Up-Next panel**: auto-scrolls to the cursor; shows current + upcoming only (drops played);
+  shows userQueue (Play Next / Add to Queue) as a "Playing Next" section.
+- **Library → Videos tab**: `/api/library/music-videos` + client wiring + 16:9 grid → plays on Now Playing.
+- **V2 UI is now the default** (`new_ui` pref defaults true); Dev toggle still flips to V1.
+- **Add-to-playlist type fix**, **lyrics translation** (proxy `/api/translate`).
+
+### STILL OPEN (tracked, not done — need real work, not wrap-up patches)
+- **Video bleed to Library/Videos** — NOT a z-order flag (already `setZOrderMediaOverlay(false)`).
+  It's `setSecure(true)` (needed for HD; without it → 480p) latching its last protected frame. The
+  real cure is the video-decoder-lifecycle recode (see memory `video-surface-bleed`). Do not rush.
+- **Lyrics translation on-device (no proxy)** — needs ML Kit Translate (`com.google.mlkit:translate`):
+  offline after a one-time per-language model download. Dependency + model-download UX; a real change.
+- **MV queue from a mixed playlist** already unifies (row onClick → `playAlbum(tracks, idx)`), so songs
+  DO show. The Videos-tab launch is videos-only by nature. Retest if songs seem missing.
