@@ -353,6 +353,16 @@ fun CardContextMenu(
         previewUrl = null, artistId = item.artistId, type = item.type,
     )
     var addTo by remember { mutableStateOf(false) }
+    // New/Browse cards arrive without an artist (or album) id → resolve it so Go to Artist/Album show.
+    var artistId by remember(item.id) { mutableStateOf(item.artistId) }
+    var albumId by remember(item.id) { mutableStateOf<String?>(null) }
+    if (isSong || isVideo) LaunchedEffect(item.id) {
+        if (artistId.isNullOrBlank() || albumId.isNullOrBlank()) {
+            val (aId, alId) = playerVm.lookupSongIds(item.id)
+            if (!aId.isNullOrBlank())  artistId = aId
+            if (!alId.isNullOrBlank()) albumId = alId
+        }
+    }
     if (addTo) { AddToDialog(playerVm, song, onDismiss = { addTo = false; onDismiss() }); return }
     val actions = buildList {
         if (isSong || isVideo) {
@@ -360,10 +370,10 @@ fun CardContextMenu(
             add(AmMenuAction("Add to Queue", Glyph.QUEUE_ADD) { playerVm.addToQueue(song); onDismiss() })
             if (isSong) add(AmMenuAction("Add to…", Glyph.ADD_TO) { addTo = true })
         }
-        if (showGoToArtist) item.artistId?.takeIf { it.isNotBlank() }?.let { aid ->
+        if (showGoToArtist) artistId?.takeIf { it.isNotBlank() }?.let { aid ->
             add(AmMenuAction("Go to Artist", Glyph.ARTIST) { onArtist(aid); onDismiss() })
         }
-        if (isSong) add(AmMenuAction("Go to Album", Glyph.ALBUM) { onAlbum(item.id); onDismiss() })
+        if (isSong) add(AmMenuAction("Go to Album", Glyph.ALBUM) { onAlbum(albumId ?: item.id); onDismiss() })
         if (!isSong && !isVideo) add(AmMenuAction("Open", Glyph.ALBUM) { onAlbum(item.id); onDismiss() })
     }
     AmContextMenu(

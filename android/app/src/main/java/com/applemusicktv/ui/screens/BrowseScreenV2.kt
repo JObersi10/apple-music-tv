@@ -104,7 +104,7 @@ fun BrowseScreenV2(
         menuItem?.let { mi ->
             com.applemusicktv.ui.components.CardContextMenu(
                 item = mi, playerVm = playerVm, onArtist = onArtistClick, onAlbum = onAlbumClick,
-                onDismiss = { menuItem = null }, showGoToArtist = false,
+                onDismiss = { menuItem = null },
             )
         }
     }
