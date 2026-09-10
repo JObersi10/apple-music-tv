@@ -637,19 +637,18 @@ fun AppShell(modifier: Modifier = Modifier) {
             // /Browse). The old seamless path (keep the decoder alive, shrink to 1px behind the window)
             // let the video show through the new Videos tab. Costs ~0.5s codec re-acquire on return;
             // worth it to kill the bleed for good. Audio never stops (detachVideo rebuilds audio-only).
-            LaunchedEffect(isOnNowPlaying) {
-                if (isOnNowPlaying) { surfaceMounted = true; mvVm.attachVideo() }
-                else {
-                    // Clear the output surface + rebuild audio-only, then destroy the SurfaceView ONLY
-                    // after the rebuild has actually released the secure decoder. The rebuild is async;
-                    // a fixed delay raced it and destroying the view with a protected frame still latched
-                    // orphaned the secure plane onto Library/Videos (the bleed). awaitDetach() joins the
-                    // rebuild so the teardown is deterministic, not timing-luck.
-                    mvVm.detachVideo()
-                    mvVm.awaitDetach()
-                    kotlinx.coroutines.delay(48)   // one frame for clearVideoSurface to land
-                    surfaceMounted = false
-                }
+            // Bleed fix v3 — the two earlier strategies both failed: (a) 1px-BEHIND-the-window kept the
+            // secure layer compositing and it bled through the Videos tab; (b) DESTROY-on-leave orphaned
+            // the secure SurfaceFlinger layer (Fire TV keeps the last protected buffer latched). This
+            // path does neither: while a video is active the PlayerView stays MOUNTED (never destroyed →
+            // no orphan), but off Now Playing we (1) rebuild audio-only so the secure video decoder is
+            // released — there is NO protected frame left to latch — and (2) move the whole surface far
+            // OFF-SCREEN (not 1px at the origin), so its compositor hole is nowhere on the visible screen.
+            // Return to Now Playing re-attaches video in place. Audio never stops.
+            LaunchedEffect(isOnNowPlaying, videoActive) {
+                if (!videoActive) { surfaceMounted = false; return@LaunchedEffect }
+                surfaceMounted = true
+                if (isOnNowPlaying) mvVm.attachVideo() else mvVm.detachVideo()
             }
             Box(Modifier.fillMaxSize()) {
                 if (surfaceMounted) {
@@ -694,9 +693,10 @@ fun AppShell(modifier: Modifier = Modifier) {
                             if (lowPower && isOnNowPlaying) mvVm.attachVideo()
                         },
                         onRelease = { it.setKeepContentOnPlayerReset(false); it.player = null },
-                        // Seamless mode off Now Playing: 1px behind the window (decoder keeps running,
-                        // invisible). Everywhere else: fullscreen.
-                        modifier = if (!isOnNowPlaying && !lowPower) Modifier.size(1.dp)
+                        // Off Now Playing: shove the (audio-only, no protected frame) surface FAR off the
+                        // visible screen instead of leaving a 1px hole at the origin that bled onto the
+                        // Videos tab. On Now Playing: fullscreen.
+                        modifier = if (!isOnNowPlaying) Modifier.absoluteOffset(x = 6000.dp).size(1.dp)
                                    else Modifier.fillMaxSize(),
                     )
                 }
