@@ -236,7 +236,7 @@ private fun SongCell(title: String, subtitle: String, artUrl: String?, onClick: 
 /** One row in a card context menu. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AmMenuItem(label: String, modifier: Modifier = Modifier, destructive: Boolean = false, onClick: () -> Unit) {
+fun AmMenuItem(label: String, modifier: Modifier = Modifier, destructive: Boolean = false, glyph: Glyph? = null, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -244,20 +244,26 @@ fun AmMenuItem(label: String, modifier: Modifier = Modifier, destructive: Boolea
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
     ) {
-        Text(label, fontSize = 14.sp, color = if (destructive) Color(0xFFFA233B) else Color.White,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (glyph != null) Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
+                Icon(glyph, size = 17.dp, color = if (destructive) Color(0xFFFA233B) else Color(0xFFB0B0B4))
+            }
+            Text(label, fontSize = 15.sp, color = if (destructive) Color(0xFFFA233B) else Color.White)
+        }
     }
 }
 
-/** One menu row for [AmContextMenu]. `destructive` tints the label red (e.g. Remove). */
-data class AmMenuAction(val label: String, val destructive: Boolean = false, val onClick: () -> Unit)
+/** One menu row for [AmContextMenu]. `glyph` shows a leading icon; `destructive` tints it red. */
+data class AmMenuAction(val label: String, val glyph: Glyph? = null, val destructive: Boolean = false, val onClick: () -> Unit)
 
 /**
- * THE canonical long-press context menu — one look for the whole app. Artwork header + subtitle,
- * a hairline divider, then rows. Real Dialog so D-pad focus is trapped; the first row auto-focuses
- * after a short delay and a `blocked` guard eats the OK-release that opened the menu.
- * Every long-press menu (Library, Artist, Category, Browse, …) must route through this — do NOT
- * hand-roll another menu Column. See design-language.md.
+ * THE canonical long-press context menu — the ONE menu for the whole app. Artwork header + subtitle,
+ * a hairline divider, then icon+label rows. Real Dialog so D-pad focus is trapped. The first row
+ * focuses immediately (snappy — no visible delay); a brief `blocked` window only swallows the
+ * OK key-up that opened the menu so it doesn't instantly fire row 1.
+ * Every long-press menu (Library, Album, Playlist, Artist, Category, Browse, MV) routes through
+ * this — do NOT hand-roll another menu Column. See DESIGN_LANGUAGE.md.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -271,7 +277,8 @@ fun AmContextMenu(
 ) {
     val firstFocus = remember { FocusRequester() }
     var blocked by remember(title) { mutableStateOf(true) }
-    LaunchedEffect(title) { kotlinx.coroutines.delay(450); blocked = false; runCatching { firstFocus.requestFocus() } }
+    // Focus row 1 right away so the menu feels instant; only guard the opening OK-release (~220ms).
+    LaunchedEffect(title) { runCatching { firstFocus.requestFocus() }; kotlinx.coroutines.delay(220); blocked = false }
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
@@ -293,7 +300,7 @@ fun AmContextMenu(
                 Spacer(Modifier.height(2.dp))
                 actions.forEachIndexed { i, a ->
                     val m = if (i == 0) Modifier.focusRequester(firstFocus) else Modifier
-                    AmMenuItem(a.label, m, destructive = a.destructive) { if (!blocked) a.onClick() }
+                    AmMenuItem(a.label, m, destructive = a.destructive, glyph = a.glyph) { if (!blocked) a.onClick() }
                 }
             }
         }
@@ -323,15 +330,15 @@ fun CardContextMenu(
     if (addTo) { AddToDialog(playerVm, song, onDismiss = { addTo = false; onDismiss() }); return }
     val actions = buildList {
         if (isSong || isVideo) {
-            add(AmMenuAction("Play Next") { playerVm.playNext(song); onDismiss() })
-            add(AmMenuAction("Add to Queue") { playerVm.addToQueue(song); onDismiss() })
-            if (isSong) add(AmMenuAction("Add to…") { addTo = true })
+            add(AmMenuAction("Play Next", Glyph.PLAY_NEXT) { playerVm.playNext(song); onDismiss() })
+            add(AmMenuAction("Add to Queue", Glyph.QUEUE_ADD) { playerVm.addToQueue(song); onDismiss() })
+            if (isSong) add(AmMenuAction("Add to…", Glyph.ADD_TO) { addTo = true })
         }
         item.artistId?.takeIf { it.isNotBlank() }?.let { aid ->
-            add(AmMenuAction("Go to Artist") { onArtist(aid); onDismiss() })
+            add(AmMenuAction("Go to Artist", Glyph.ARTIST) { onArtist(aid); onDismiss() })
         }
-        if (isSong) add(AmMenuAction("Go to Album") { onAlbum(item.id); onDismiss() })
-        if (!isSong && !isVideo) add(AmMenuAction("Open") { onAlbum(item.id); onDismiss() })
+        if (isSong) add(AmMenuAction("Go to Album", Glyph.ALBUM) { onAlbum(item.id); onDismiss() })
+        if (!isSong && !isVideo) add(AmMenuAction("Open", Glyph.ALBUM) { onAlbum(item.id); onDismiss() })
     }
     AmContextMenu(
         title = item.title,

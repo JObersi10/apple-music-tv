@@ -321,11 +321,11 @@ fun ArtistDetailScreenV2(
                 artworkUrl = s.artworkUrl,
                 onDismiss = dismiss,
                 actions = buildList {
-                    add(com.applemusicktv.ui.components.AmMenuAction("Play Next") { playerVm.playNext(s); dismiss() })
-                    add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue") { playerVm.addToQueue(s); dismiss() })
-                    add(com.applemusicktv.ui.components.AmMenuAction("Add to…") { addToSong = s; dismiss() })
-                    add(com.applemusicktv.ui.components.AmMenuAction("Create Station") { playerVm.createSongStation(s); dismiss() })
-                    s.albumId?.let { alid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Album") { onAlbumClick(alid); dismiss() }) }
+                    add(com.applemusicktv.ui.components.AmMenuAction("Play Next", com.applemusicktv.ui.components.Glyph.PLAY_NEXT) { playerVm.playNext(s); dismiss() })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", com.applemusicktv.ui.components.Glyph.QUEUE_ADD) { playerVm.addToQueue(s); dismiss() })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Add to…", com.applemusicktv.ui.components.Glyph.ADD_TO) { addToSong = s; dismiss() })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Create Station", com.applemusicktv.ui.components.Glyph.RADIO) { playerVm.createSongStation(s); dismiss() })
+                    s.albumId?.let { alid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Album", com.applemusicktv.ui.components.Glyph.ALBUM) { onAlbumClick(alid); dismiss() }) }
                 },
             )
         }

@@ -510,12 +510,12 @@ private fun SongContextMenu(
         isVideoArt = isVideo,
         onDismiss = onDismiss,
         actions = buildList {
-            add(com.applemusicktv.ui.components.AmMenuAction("Play Next", onClick = onPlayNext))
-            add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", onClick = onAddToQueue))
-            if (onAddToLibrary  != null) add(com.applemusicktv.ui.components.AmMenuAction("Add to Library",  onClick = onAddToLibrary))
-            if (onAddToPlaylist != null) add(com.applemusicktv.ui.components.AmMenuAction("Add to Playlist", onClick = onAddToPlaylist))
-            if (onGoToArtist != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", onClick = onGoToArtist))
-            if (onGoToAlbum  != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Album",  onClick = onGoToAlbum))
+            add(com.applemusicktv.ui.components.AmMenuAction("Play Next", com.applemusicktv.ui.components.Glyph.PLAY_NEXT, onClick = onPlayNext))
+            add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", com.applemusicktv.ui.components.Glyph.QUEUE_ADD, onClick = onAddToQueue))
+            if (onAddToLibrary  != null) add(com.applemusicktv.ui.components.AmMenuAction("Add to Library",  com.applemusicktv.ui.components.Glyph.PLUS, onClick = onAddToLibrary))
+            if (onAddToPlaylist != null) add(com.applemusicktv.ui.components.AmMenuAction("Add to Playlist", com.applemusicktv.ui.components.Glyph.ADD_TO, onClick = onAddToPlaylist))
+            if (onGoToArtist != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", com.applemusicktv.ui.components.Glyph.ARTIST, onClick = onGoToArtist))
+            if (onGoToAlbum  != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Album",  com.applemusicktv.ui.components.Glyph.ALBUM, onClick = onGoToAlbum))
         },
     )
 }
