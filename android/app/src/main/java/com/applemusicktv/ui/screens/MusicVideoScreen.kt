@@ -127,7 +127,7 @@ fun MusicVideoScreen(
                 if (showQueue) {
                     when (ev.key) {
                         Key.Back, Key.Menu -> { vm.hideQueue(); poke(); true }
-                        Key.DirectionUp -> { if (queueCursor > 0) queueCursor--; true }
+                        Key.DirectionUp -> { if (queueCursor > queueIndex) queueCursor--; true }
                         Key.DirectionDown -> { if (queueCursor < queue.size - 1) queueCursor++; true }
                         Key.DirectionCenter, Key.Enter -> { onPickQueueItem(queueCursor); vm.hideQueue(); poke(); true }
                         else -> true
@@ -295,7 +295,7 @@ fun MusicVideoScreen(
                 // "Playing Next" section (label + userQueue rows) — so the cursor→item map is offset.
                 val headerRows = 1 + (if (userQueue.isNotEmpty()) userQueue.size + 2 else 0)
                 LaunchedEffect(queueCursor, showQueue) {
-                    if (showQueue) runCatching { queueListState.animateScrollToItem((queueCursor + headerRows).coerceAtLeast(0)) }
+                    if (showQueue) runCatching { queueListState.animateScrollToItem((headerRows + (queueCursor - queueIndex)).coerceAtLeast(0)) }
                 }
                 LazyColumn(state = queueListState, contentPadding = PaddingValues(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     item {
@@ -323,7 +323,12 @@ fun MusicVideoScreen(
                         }
                         item { Spacer(Modifier.height(8.dp)) }
                     }
-                    itemsIndexed(queue) { i, song ->
+                    // Only the current track + what's upcoming (drop already-played), matching the
+                    // audio Now Playing panel. userQueue above already shows Play-Next items, which
+                    // genuinely play before these (next() drains userQueue first).
+                    items(queue.size - queueIndex) { rel ->
+                        val i = queueIndex + rel
+                        val song = queue[i]
                         val sel = i == queueCursor
                         val nowPlaying = i == queueIndex
                         Row(

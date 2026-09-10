@@ -164,25 +164,19 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
 
         val ms = menuSong
         if (ms != null) {
-            val firstFocus = remember { FocusRequester() }
-            LaunchedEffect(ms) {
-                kotlinx.coroutines.delay(800)
-                clickBlocked = false
-                runCatching { firstFocus.requestFocus() }
-            }
-            androidx.compose.ui.window.Dialog(onDismissRequest = { menuSong = null }) {
-                Column(
-                    Modifier.width(320.dp).clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF1C1C1E)).padding(vertical = 4.dp),
-                ) {
-                    Text(ms.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium,
-                        maxLines = 1, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                    SearchContextItem("▶", "Play Next", { if (!clickBlocked) { playerVm.playNext(ms); menuSong = null } }, Modifier.focusRequester(firstFocus))
-                    SearchContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(ms); menuSong = null } })
-                    if (ms.artistId != null) SearchContextItem("♪", "Go to Artist", { if (!clickBlocked) { onArtistClick(ms.artistId); menuSong = null } })
-                    if (ms.albumId != null) SearchContextItem("◉", "Go to Album", { if (!clickBlocked) { onAlbumClick(ms.albumId); menuSong = null } })
-                }
-            }
+            com.applemusicktv.ui.components.AmContextMenu(
+                title = ms.title,
+                subtitle = ms.artistName,
+                artworkUrl = ms.artworkUrl,
+                isVideoArt = ms.type.contains("music-video"),
+                onDismiss = { menuSong = null },
+                actions = buildList {
+                    add(com.applemusicktv.ui.components.AmMenuAction("Play Next", com.applemusicktv.ui.components.Glyph.PLAY_NEXT) { playerVm.playNext(ms); menuSong = null })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", com.applemusicktv.ui.components.Glyph.QUEUE_ADD) { playerVm.addToQueue(ms); menuSong = null })
+                    ms.artistId?.let { aid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", com.applemusicktv.ui.components.Glyph.ARTIST) { onArtistClick(aid); menuSong = null }) }
+                    ms.albumId?.let { alid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Album", com.applemusicktv.ui.components.Glyph.ALBUM) { onAlbumClick(alid); menuSong = null }) }
+                },
+            )
         }
 
         Spacer(Modifier.height(16.dp))

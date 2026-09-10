@@ -21,6 +21,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -276,20 +281,40 @@ fun AmContextMenu(
     isVideoArt: Boolean = false,
 ) {
     val firstFocus = remember { FocusRequester() }
-    var blocked by remember(title) { mutableStateOf(true) }
-    // Focus row 1 right away so the menu feels instant; only guard the opening OK-release (~220ms).
-    LaunchedEffect(title) { runCatching { firstFocus.requestFocus() }; kotlinx.coroutines.delay(220); blocked = false }
+    // Long-press opens the menu while OK is still held. We must eat exactly that opening OK-release
+    // no matter HOW LONG it's held (a timer can't — a slow release lands after the timer and fires
+    // row 1). So: focus row 1 instantly, then gate on key events. `armed` stays false until we see the
+    // opening OK key-UP (which has no matching key-DOWN inside this dialog, since the DOWN happened on
+    // the card before the dialog existed) — we consume that UP. A deliberate later press has both a
+    // DOWN and UP here, so it passes through. Any directional/Back press also arms (user has moved on).
+    var armed by remember(title) { mutableStateOf(false) }
+    var sawOkDown by remember(title) { mutableStateOf(false) }
+    LaunchedEffect(title) { runCatching { firstFocus.requestFocus() } }
+    fun isOk(k: Key) = k == Key.DirectionCenter || k == Key.Enter || k == Key.NumPadEnter
+    // Resolve Apple's {w}x{h}bb.{f} template so the header art shows on every path (library rows
+    // carry the raw template; catalog cards arrive pre-resolved — the replace is a no-op there).
+    val art = artworkUrl?.replace("{w}", "200")?.replace("{h}", "200")?.replace("{f}", "jpg")
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
-            Column(Modifier.width(320.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF1C1C1E)).padding(8.dp),
+            Column(Modifier.width(320.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF1C1C1E)).padding(8.dp)
+                .onPreviewKeyEvent { e ->
+                    when {
+                        armed -> false
+                        isOk(e.key) && e.type == KeyEventType.KeyDown -> { sawOkDown = true; true }
+                        isOk(e.key) && e.type == KeyEventType.KeyUp && !sawOkDown -> { armed = true; true }
+                        isOk(e.key) && e.type == KeyEventType.KeyUp -> { armed = true; false }
+                        e.type == KeyEventType.KeyDown -> { armed = true; false }
+                        else -> false
+                    }
+                },
                 verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(Modifier.padding(horizontal = 8.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     val artSize = if (isVideoArt) DpSize(78.dp, 44.dp) else DpSize(44.dp, 44.dp)
                     Box(Modifier.size(artSize).clip(RoundedCornerShape(6.dp)).background(Color(0xFF2A2A2A))) {
-                        if (artworkUrl != null) AsyncImage(model = artworkUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        if (art != null) AsyncImage(model = art, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                     }
                     Column {
                         Text(title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
@@ -300,7 +325,7 @@ fun AmContextMenu(
                 Spacer(Modifier.height(2.dp))
                 actions.forEachIndexed { i, a ->
                     val m = if (i == 0) Modifier.focusRequester(firstFocus) else Modifier
-                    AmMenuItem(a.label, m, destructive = a.destructive, glyph = a.glyph) { if (!blocked) a.onClick() }
+                    AmMenuItem(a.label, m, destructive = a.destructive, glyph = a.glyph) { if (armed) a.onClick() }
                 }
             }
         }
@@ -318,6 +343,7 @@ fun CardContextMenu(
     onArtist: (String) -> Unit,
     onAlbum: (String) -> Unit,
     onDismiss: () -> Unit,
+    showGoToArtist: Boolean = true,
 ) {
     val isSong = item.type == "songs"
     val isVideo = item.type.contains("music-video")
@@ -334,7 +360,7 @@ fun CardContextMenu(
             add(AmMenuAction("Add to Queue", Glyph.QUEUE_ADD) { playerVm.addToQueue(song); onDismiss() })
             if (isSong) add(AmMenuAction("Add to…", Glyph.ADD_TO) { addTo = true })
         }
-        item.artistId?.takeIf { it.isNotBlank() }?.let { aid ->
+        if (showGoToArtist) item.artistId?.takeIf { it.isNotBlank() }?.let { aid ->
             add(AmMenuAction("Go to Artist", Glyph.ARTIST) { onArtist(aid); onDismiss() })
         }
         if (isSong) add(AmMenuAction("Go to Album", Glyph.ALBUM) { onAlbum(item.id); onDismiss() })
