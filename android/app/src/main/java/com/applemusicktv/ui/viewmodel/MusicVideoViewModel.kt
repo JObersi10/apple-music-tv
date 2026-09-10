@@ -518,8 +518,9 @@ class MusicVideoViewModel @Inject constructor(
         // Only navigate with a NON-BLANK id. A blank id builds a malformed ArtistDetail route and the
         // NavController silently falls back to the start destination — that was the "Go to Artist
         // jumps to Home" bug. Blank → resolve on demand instead of navigating to nothing.
-        _state.value.artistId?.takeIf { it.isNotBlank() }?.let { navigate(it); return }
+        _state.value.artistId?.takeIf { it.isNotBlank() }?.let { Log.i("AMMV", "openArtist -> navigate(cached) id=$it"); navigate(it); return }
         val id = curAdamId ?: curMvId ?: return
+        Log.i("AMMV", "openArtist -> resolving from mv id=$id")
         viewModelScope.launch {
             val bearer = appleClient.getBearer(); val mut = mutPrefs.getMUT()
             if (bearer.isEmpty() || mut.isEmpty()) return@launch
@@ -563,21 +564,54 @@ class MusicVideoViewModel @Inject constructor(
         if (videoDetached) return
         videoDetached = true
         val exo = player ?: return
-        Log.i("AMMV", "detachVideo: clearVideoSurface + disable video track (keep player+audio+DRM)")
-        // Detach the output surface FIRST so no protected frame stays latched, THEN disable the video
-        // renderer to free the secure codec. AppShell then destroys the (now content-free) SurfaceView.
+        val mv = curMv; val b = curBearer; val m = curMut
+        val pos = exo.currentPosition
+        // Track-disable alone does NOT reap the secure SurfaceView's latched frame — it bleeds onto
+        // other tabs (see memory video-surface-bleed). The reliable teardown is a full AUDIO-ONLY
+        // REBUILD: it releases the secure decoder + surface so AppShell can destroy a content-free
+        // view with nothing to orphan. Clear the surface first, then rebuild.
         exo.clearVideoSurface()
-        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
+        if (mv != null && b != null && m != null) {
+            Log.i("AMMV", "detachVideo: audio-only REBUILD at ${pos}ms (frees secure decoder+surface)")
+            pendingSeekMs = pos
+            // The rebuild is ASYNC — the old secure decoder isn't released until it finishes. AppShell
+            // must NOT destroy the SurfaceView until then, or it reaps a view with a protected frame
+            // still latched → orphaned secure plane = the Library/Videos bleed. Publish a completion
+            // signal AppShell can await instead of racing a fixed delay.
+            detachDone.value = false
+            detachJob = viewModelScope.launch {
+                buildAndPlay(mv, b, m, disableVideo = true, seekMs = pos, playWhenReady = !userPaused)
+                pendingSeekMs = 0
+                detachDone.value = true
+            }
+        } else {
+            exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
+            detachDone.value = true
+        }
     }
+    private var detachJob: kotlinx.coroutines.Job? = null
+    /** Flips true only when detachVideo's audio-only rebuild has actually released the secure decoder. */
+    val detachDone = kotlinx.coroutines.flow.MutableStateFlow(true)
+    /** Await the in-flight audio-only rebuild so the SurfaceView is destroyed only after the secure
+     *  decoder is gone (nothing latched to orphan). */
+    suspend fun awaitDetach() { detachJob?.join() }
     @OptIn(UnstableApi::class)
     fun attachVideo() {
         if (!videoDetached) return
         videoDetached = false
         val exo = player ?: return
-        Log.i("AMMV", "attachVideo: re-enable video track (remounted PlayerView reattaches surface)")
-        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
+        val mv = curMv; val b = curBearer; val m = curMut
+        val pos = exo.currentPosition
+        // Rebuild WITH video (a remounted PlayerView will attach the fresh surface). ~0.5s blip.
+        if (mv != null && b != null && m != null) {
+            Log.i("AMMV", "attachVideo: rebuild WITH video at ${pos}ms")
+            pendingSeekMs = pos
+            viewModelScope.launch { buildAndPlay(mv, b, m, disableVideo = false, seekMs = pos, playWhenReady = !userPaused); pendingSeekMs = 0 }
+        } else {
+            exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
+        }
     }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }

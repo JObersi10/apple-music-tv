@@ -60,17 +60,13 @@ fun RadioScreen(
         // No horizontal padding here — each shelf owns start=24/end=0 so the first card sits at the
         // margin and the row bleeds off the right edge, exactly like Home/New (fixes the cutoff).
         modifier = modifier.fillMaxSize().background(Color(0xFF0A0A0A)),
-        contentPadding = PaddingValues(top = 32.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(top = 28.dp, bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        item {
-            Text("Radio", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                modifier = Modifier.padding(start = 24.dp))
-        }
-
+        // No page title — the top nav bar already labels this "Radio".
         // ── Apple Music Radio shelves ───────────────────────────────────────────
         if (state.appleLoading && state.appleSections.isEmpty()) {
-            item { Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { CircularProgressIndicator(color = Color(0xFFFA233B)) } }
+            item { com.applemusicktv.ui.components.ShelfSkeleton(rows = 5) }
         }
         items(state.appleSections, key = { "ap-" + it.title }) { section ->
             AppleShelf(section, playerVm, onAlbumClick, onPlaylistClick, onCuratorClick, onArtistClick)
@@ -139,7 +135,7 @@ fun RadioScreen(
             item { Box(Modifier.fillMaxWidth().height(80.dp), Alignment.Center) { Text("No stations found", color = Color(0xFF666666), fontSize = 14.sp) } }
         } else {
             items(state.stations, key = { "ir-" + it.id }) { st ->
-                StationRow(st) { playerVm.playInternetRadio(st.name, st.streamUrl, st.tags.ifBlank { st.country }) }
+                StationRow(st) { playerVm.playInternetRadio(st.name, st.streamUrl, st.tags.ifBlank { st.country }, st.faviconUrl) }
             }
         }
     }

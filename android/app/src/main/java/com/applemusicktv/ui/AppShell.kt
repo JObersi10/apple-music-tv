@@ -44,6 +44,12 @@ import androidx.compose.material3.Text
 fun AppShell(modifier: Modifier = Modifier) {
     val navController = rememberNavController()
     var selectedTab   by remember { mutableStateOf(TopNavTab.ListenNow) }
+    // When we navigate away from the fullscreen video to a pushed screen (Go to Artist), the new
+    // screen shows a non-focusable spinner for a beat, so D-pad focus escapes UP to the nav bar and
+    // the SAME OK press that opened the artist bleeds a click onto the leftmost tab (Listen Now) →
+    // navigate(Home). That's the "MV → Go to Artist jumps to Home" bug. Swallow a nav-bar select that
+    // lands within this window of such a navigation.
+    var lastVideoNavAwayMs by remember { mutableStateOf(0L) }
     val playerVm: PlayerViewModel  = hiltViewModel()
     val navVm: NavigationViewModel = hiltViewModel()
     // Hoisted so the video survives navigation: fullscreen on Now Playing, in-app PiP elsewhere.
@@ -201,6 +207,7 @@ fun AppShell(modifier: Modifier = Modifier) {
     val goToNowPlaying by navVm.goToNowPlaying.collectAsState()
     LaunchedEffect(goToNowPlaying) {
         if (goToNowPlaying) {
+            android.util.Log.i("AMHome", "goToNowPlaying effect FIRED (route=$currentRoute) — may popUpTo(home)")
             selectedTab = TopNavTab.NowPlaying
             // If we got here *from* Now Playing (e.g. Now Playing → Artist, then
             // Menu), pop back to that instance so it keeps its state instead of
@@ -227,6 +234,15 @@ fun AppShell(modifier: Modifier = Modifier) {
     // Exit confirmation on back from root
     var showExitDialog by remember { mutableStateOf(false) }
     BackHandler(enabled = showExitDialog) { showExitDialog = false }
+    // TEMP trace: log every destination change to find the MV→artist "jumps to Home" path.
+    DisposableEffect(navController) {
+        android.util.Log.i("AMNav", "listener ATTACHED to nav#${System.identityHashCode(navController)}")
+        val l = androidx.navigation.NavController.OnDestinationChangedListener { c, dest, _ ->
+            android.util.Log.i("AMNav", "-> ${dest.route}  (videoActive=$videoActive) nav#${System.identityHashCode(c)}")
+        }
+        navController.addOnDestinationChangedListener(l)
+        onDispose { navController.removeOnDestinationChangedListener(l) }
+    }
     BackHandler(enabled = !showExitDialog && currentRoute == Screen.Home.route) {
         showExitDialog = true
     }
@@ -308,6 +324,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                         playerVm = playerVm,
                         onAlbumClick = onAlbum, onPlaylistClick = onPlaylist,
                         onCuratorClick = onCurator, onSeeAll = onSeeAll,
+                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     )
                 } else {
                     BrowseScreen(
@@ -422,6 +439,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                 if (newUi) {
                     com.applemusicktv.ui.screens.ArtistDetailScreenV2(
                         playerVm = playerVm, onAlbumClick = onAlbum, onArtistClick = onArtist,
+                        onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
                     )
                 } else {
                     ArtistDetailScreen(
@@ -617,12 +635,14 @@ fun AppShell(modifier: Modifier = Modifier) {
             LaunchedEffect(isOnNowPlaying) {
                 if (isOnNowPlaying) { surfaceMounted = true; mvVm.attachVideo() }
                 else {
-                    // Clear the output surface FIRST, then wait a beat so ExoPlayer actually processes
-                    // clearVideoSurface() on its playback thread BEFORE we destroy the SurfaceView.
-                    // Unmounting in the same frame destroyed the surface with a protected frame still
-                    // latched — that orphaned frame is the bleed onto Library/Videos.
+                    // Clear the output surface + rebuild audio-only, then destroy the SurfaceView ONLY
+                    // after the rebuild has actually released the secure decoder. The rebuild is async;
+                    // a fixed delay raced it and destroying the view with a protected frame still latched
+                    // orphaned the secure plane onto Library/Videos (the bleed). awaitDetach() joins the
+                    // rebuild so the teardown is deterministic, not timing-luck.
                     mvVm.detachVideo()
-                    kotlinx.coroutines.delay(120)
+                    mvVm.awaitDetach()
+                    kotlinx.coroutines.delay(48)   // one frame for clearVideoSurface to land
                     surfaceMounted = false
                 }
             }
@@ -659,9 +679,16 @@ fun AppShell(modifier: Modifier = Modifier) {
                         update = { pv ->
                             pv.player = mvPlayer
                             pv.visibility = android.view.View.VISIBLE
+                            // Keep the last frame ONLY on Now Playing (bridges a quality-change reload).
+                            // Off Now Playing we must NOT retain it: the audio-only rebuild swaps in a
+                            // player with no video, and a retained PROTECTED frame stays latched on the
+                            // secure SurfaceView. (Forcing the SurfaceView GONE here was tried — it did
+                            // NOT reap the plane and risked faulting the live secure decoder. The real
+                            // cure is the video-model recode; see HANDOFF / video-surface-bleed memory.)
+                            pv.setKeepContentOnPlayerReset(isOnNowPlaying)
                             if (lowPower && isOnNowPlaying) mvVm.attachVideo()
                         },
-                        onRelease = { it.player = null },
+                        onRelease = { it.setKeepContentOnPlayerReset(false); it.player = null },
                         // Seamless mode off Now Playing: 1px behind the window (decoder keeps running,
                         // invisible). Everywhere else: fullscreen.
                         modifier = if (!isOnNowPlaying && !lowPower) Modifier.size(1.dp)
@@ -674,9 +701,19 @@ fun AppShell(modifier: Modifier = Modifier) {
                         // Back leaves the SCREEN but KEEPS the video playing — pop to the previous
                         // route (e.g. the playlist). The video is hidden while its audio continues,
                         // and reappears on return. It closes only on a regular song / queue end.
-                        onExit = { if (!navController.popBackStack()) { selectedTab = TopNavTab.ListenNow; navController.navigate(Screen.Home.route) { launchSingleTop = true } } },
+                        onExit = {
+                            // Only pop when we're STILL on Now Playing. navigate(artist) from the video's
+                            // "Go to Artist" flips the route async — for a frame this screen is still
+                            // composed and focused, and a Back arriving in that window would pop the just-
+                            // opened artist back past Now Playing to Home. currentRoute is the freshest
+                            // read, so ignore a Back that lands after we've already navigated away.
+                            android.util.Log.i("AMHome", "onExit route=$currentRoute (pop=${currentRoute == Screen.NowPlaying.route})")
+                            if (currentRoute == Screen.NowPlaying.route) {
+                                if (!navController.popBackStack()) { selectedTab = TopNavTab.ListenNow; navController.navigate(Screen.Home.route) { launchSingleTop = true } }
+                            }
+                        },
                         onFocusUp = { runCatching { navBarFocus.requestFocus() } },
-                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                        onArtistClick = { lastVideoNavAwayMs = System.currentTimeMillis(); navController.navigate(Screen.ArtistDetail.route(it)) },
                         // Google TV remotes lack media keys → draw prev/play/next on screen.
                         showOnScreenControls = com.applemusicktv.util.TvDevice.needsOnScreenMenuToggle(appContext, playerVm.remoteOverride()),
                         queue = playerState.queue,
@@ -700,7 +737,14 @@ fun AppShell(modifier: Modifier = Modifier) {
                 updateAvailable = pendingUpdate != null,
                 beatAnalyzer = playerVm.beatAnalyzer,
                 newUi = playerState.newUiEnabled,
-                onSelect = { tab ->
+                onSelect = onSelect@ { tab ->
+                    // Swallow a stray click bled onto the nav bar right after a video→pushed-screen
+                    // navigation (focus escaped here while the new screen was still loading). Without
+                    // this, "Go to Artist" from a video lands on Listen Now → Home.
+                    if (System.currentTimeMillis() - lastVideoNavAwayMs < 700) {
+                        android.util.Log.i("AMHome", "nav-bar select($tab) swallowed (stray click after video nav-away)")
+                        return@onSelect
+                    }
                     selectedTab = tab
                     val route = when (tab) {
                         TopNavTab.ListenNow  -> Screen.Home.route

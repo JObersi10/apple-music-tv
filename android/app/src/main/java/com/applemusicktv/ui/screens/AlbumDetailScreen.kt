@@ -56,6 +56,15 @@ fun AlbumDetailScreen(
     val album = state.album ?: return
     var menuSong by remember { mutableStateOf<Song?>(null) }
     var addToSong by remember { mutableStateOf<Song?>(null) }
+    // Per-row focus requesters → closing the context menu returns focus to the long-pressed row.
+    val rowFocus = remember { mutableMapOf<String, FocusRequester>() }
+    var refocusId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(refocusId) {
+        val id = refocusId ?: return@LaunchedEffect
+        kotlinx.coroutines.delay(60)
+        runCatching { rowFocus[id]?.requestFocus() }
+        refocusId = null
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
     Row(modifier = Modifier.fillMaxSize().padding(48.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
@@ -122,6 +131,7 @@ fun AlbumDetailScreen(
                     index       = index + 1,
                     onClick     = { playerVm.playAlbum(state.tracks, index) },
                     onLongClick = { menuSong = track },
+                    focusRequester = rowFocus.getOrPut(track.id) { FocusRequester() },
                 )
             }
         }
@@ -136,7 +146,7 @@ fun AlbumDetailScreen(
                     menuSong = s.copy(artistId = aId ?: s.artistId, albumId = alId ?: s.albumId)
             }
         }
-        val dismissMenu = { menuSong = null }
+        val dismissMenu = { refocusId = menuSong?.id; menuSong = null }
         Box(
             Modifier.fillMaxSize()
                 .background(Color(0x88000000))
@@ -209,11 +219,11 @@ private fun AlbumContextItem(icon: Glyph, label: String, onClick: () -> Unit, mo
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TrackRow(track: Song, index: Int, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
+private fun TrackRow(track: Song, index: Int, onClick: () -> Unit, onLongClick: () -> Unit = {}, focusRequester: FocusRequester? = null) {
     Surface(
         onClick     = onClick,
         onLongClick = onLongClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).fillMaxWidth(),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
         colors   = ClickableSurfaceDefaults.colors(
             containerColor        = Color.Transparent,

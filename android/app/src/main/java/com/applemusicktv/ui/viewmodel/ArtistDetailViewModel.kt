@@ -28,6 +28,7 @@ data class ArtistDetailUiState(
     val latestRelease:  Album? = null,
     val albums:         List<Album> = emptyList(),
     val featuredAlbums: List<Album> = emptyList(),
+    val playlists:      List<Album> = emptyList(),
     val similarArtists: List<SimilarArtistDto> = emptyList(),
     val error:          String? = null,
 )
@@ -61,6 +62,7 @@ class ArtistDetailViewModel @Inject constructor(
                     latestRelease  = d.latestRelease?.let(repo::albumFromDto),
                     albums         = d.albums.map(repo::albumFromDto),
                     featuredAlbums = d.featuredAlbums.map(repo::albumFromDto),
+                    playlists      = d.playlists.map(repo::albumFromDto),
                     similarArtists = d.similarArtists,
                 )
             }

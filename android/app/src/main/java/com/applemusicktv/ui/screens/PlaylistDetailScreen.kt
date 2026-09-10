@@ -88,8 +88,20 @@ fun PlaylistDetailScreen(
     var menuSongState by remember { mutableStateOf<Song?>(null) }
     var addToSong by remember { mutableStateOf<Song?>(null) }
     var lastDismissMs by remember { mutableStateOf(0L) }
+    // Per-row focus requesters so closing the context menu lands focus back on the song the
+    // user long-pressed (not the top of the list). Keyed by song id, created lazily per row.
+    val rowFocus = remember { mutableMapOf<String, FocusRequester>() }
+    var refocusId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(refocusId) {
+        val id = refocusId ?: return@LaunchedEffect
+        // Wait a frame for the overlay to leave composition and the row to be focusable again.
+        kotlinx.coroutines.delay(60)
+        runCatching { rowFocus[id]?.requestFocus() }
+        refocusId = null
+    }
     val dismissMenu: () -> Unit = {
         lastDismissMs = System.currentTimeMillis()
+        refocusId = menuSongState?.id
         menuSongState = null
     }
     menuSongState?.let { s ->
@@ -166,10 +178,14 @@ fun PlaylistDetailScreen(
                             SortCircleButton(onClick = { showSortDialog = true })
                         }
                     }
-                    trackItems(sortedTracks, playerVm) { song ->
-                        val now = System.currentTimeMillis()
-                        if (menuSongState == null && now - lastDismissMs > 600) menuSongState = song
-                    }
+                    trackItems(
+                        sortedTracks, playerVm,
+                        focusFor = { id -> rowFocus.getOrPut(id) { FocusRequester() } },
+                        onLongPress = { song ->
+                            val now = System.currentTimeMillis()
+                            if (menuSongState == null && now - lastDismissMs > 600) menuSongState = song
+                        },
+                    )
                 }
                 }  // end else block
             }
@@ -304,9 +320,10 @@ private fun PlaylistSortRow(label: String, selected: Boolean, modifier: Modifier
     }
 }
 
-private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onMusicVideoClick: (Song) -> Unit = {}, onLongPress: (Song) -> Unit = {}) {
+private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onMusicVideoClick: (Song) -> Unit = {}, focusFor: (String) -> FocusRequester? = { null }, onLongPress: (Song) -> Unit = {}) {
     items(tracks.size) { idx ->
         val song = tracks[idx]
+        val fr = focusFor(song.id)
         @OptIn(ExperimentalTvMaterial3Api::class)
         Surface(
             onClick     = {
@@ -315,7 +332,8 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
                 playerVm.playAlbum(tracks, idx)
             },
             onLongClick = { onLongPress(song) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
+            modifier = (if (fr != null) Modifier.focusRequester(fr) else Modifier)
+                .fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.Transparent,

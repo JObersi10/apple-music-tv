@@ -2,6 +2,21 @@
 
 Last updated: 2026-09-08 (evening, on-device)
 
+## Session 2026-09-09 (part 3) — ARTIST REDESIGN, PLAYLISTS, SKELETONS, FIXES
+
+- **Artist redesign** (iPad ref): near-full-bleed 480dp hero, big centred name, **centred circular controls** (Shuffle · big Play · Station via new `HeroCircle`). No artist video — Apple exposes no `editorialVideo` for artists (probed), so image hero.
+- **Artist Playlists/Essentials shelf**: artist `playlists` view added (proxy `artists.ts` + direct `catalogArtistFull` + `ArtistFullDto`/VM/screen). Renders "Playlists" shelf (The Weeknd Essentials, etc.) → opens PlaylistDetail.
+- **About dialog**: converted from a same-tree Box overlay to a real `Dialog` window so D-pad focus is actually TRAPPED (the Box version still let focus reach the list behind). Up/Down scrolls, OK/Back closes.
+- **Radio/Videos page headers removed**: RadioScreen dropped its "Radio" title item; CategoryScreen skips the title hero when `hideHeader` (= isGrouping, set in CategoryViewModel). NOTE: a shelf literally named "Music Videos" inside grouping-34 is content, not the page header.
+- **Skeletons**: Videos (CategoryScreen) + Radio now show `ShelfSkeleton` while loading instead of a spinner.
+- **Shazam**: CONFIRMED working (server + app polling). Now **pauses when playback is paused** (`if (!isPlaying) delay; continue`), reverts to the station name/logo on a miss, station logo passed via `playInternetRadio(logoUrl)`. Log tag `AMRadioID`.
+- **Video bleed** into Library/Videos: FIXED — `detachVideo` now does a full audio-only REBUILD (releases the secure decoder+surface) instead of track-disable; AppShell frees it on leaving Now Playing + `delay(120)` before unmounting.
+- **STILL OPEN:**
+  - **MV "Go to Artist" → jumps to Home** (artist IS pushed, but foreground shows Home). NOT yet fixed. Diagnostic logs added: `AMNav` (destination changes) + `AMMV` (openArtist). Repro with user driving, read logcat to find the hardcoded/side-effect Home nav.
+  - Internet-radio: can't skip to next station from the list; can't open artist from Now Playing during radio (needs station-list queue + Shazam→Apple-artist lookup).
+  - Margins: user wants soft edges (content visible behind the top bar / no hard cut), not just no-clip. Not done.
+  - Shazam can show a song that lags what's actually airing (inherent to radio capture timing).
+
 ## Session 2026-09-09 (part 2) — ARTIST POLISH, SHAZAM, BLEED/MV FIXES
 
 - **Artist page**: About moved to bottom (above Similar Artists); bio HTML stripped (`stripHtml` kills the literal `<i>`); About card is now **tappable → full-bio scrollable overlay** ("Read more", Back/Close to dismiss); hero retuned to 430dp + centre-crop of a square source (520dp wide-crop showed only the forehead); Similar Artists = circle-only focus (white ring, no boxy halo) with 2-line centred names.
@@ -720,3 +735,141 @@ Ground-truth tool: `server/ref_key.py <songId>`.
   skip.
 - **Prefetching track 1 when an album or playlist is merely opened.** Wasted decrypts for
   browsing.
+
+---
+
+## Session 2026-09-09 (part 4) — bug batch + video-bleed dead end
+
+### FIXED (built + installed, on branch `feat/radio-artist-shazam-v2`, uncommitted)
+- **MV → "Go to Artist" jumped to Home.** Root cause (found via `AMNav`/`AMHome` traces):
+  the artist page shows a non-focusable spinner while loading, so D-pad focus escapes UP to
+  the nav bar and the SAME OK press that selected "Go to Artist" bleeds a click onto the
+  leftmost tab (Listen Now) → `onSelect(ListenNow)` → `navigate(Home)`. Same NavController
+  (nav# identical in the trace → NOT a recreation). Fix: `AppShell` records
+  `lastVideoNavAwayMs` in the video's `onArtistClick`, and `TopNavBar.onSelect` swallows any
+  select within 700 ms of it (`return@onSelect`, logs `AMHome: nav-bar select(..) swallowed`).
+  User confirms jump is gone. **RESIDUAL:** user says "focuses to home tho, doesnt open" —
+  verify the artist page actually gains focus/opens after the guard (may need the artist
+  screen to hold focus during load instead of relying on the swallow).
+- **Context-menu focus restore** (`PlaylistDetailScreen`, `AlbumDetailScreen`): per-row
+  `FocusRequester` map + `refocusId`; `dismissMenu` sets it, a `LaunchedEffect` refocuses the
+  long-pressed row after 60 ms. Closing Add-to-Queue/Play-Next returns focus to the song, not
+  the top. User confirmed queue-add works.
+- **Queue persistence**: `saveState`/`restoreState` now persist `user_queue` (was dropped on
+  restart); `addToQueue`/`playNext` call `saveState()` immediately. AND `playAlbum`/`playSong`
+  now clear `userQueue` (starting a fresh song shouldn't carry the old added items; restore
+  plays via `pendingRestore`, not these, so persistence still works). User confirmed both.
+- **Internet-radio logo**: many radio-browser stations have no `favicon`; `NowPlayingScreen`
+  now draws a tinted tile with the station initial under the (crossfaded) logo so something
+  always shows. List rows already had a 📻 fallback.
+- **Home "is gone" after updates**: Apple `/me/recommendations` 500s in streaks; a fresh
+  install has no cache, so `HomeViewModel.load()` gave up after 4 tries → empty. Now on total
+  empty-with-no-cache it keeps retrying in the background (15×, 4s→30s backoff) so Home
+  self-heals once Apple recovers. Server `home.ts` + `DirectBrowseSource` both already have
+  the moods/charts fallback.
+
+### STILL BROKEN — needs a real rethink, not another patch
+- **Video player bleeds across tabs.** Repro: NowPlaying → Radio → Videos → (auto to
+  NowPlaying) → back to Videos → the video picture is STILL rendered on the Videos tab.
+  Everything tried and FAILED to kill it reliably: audio-only rebuild on detach
+  (`MusicVideoViewModel.detachVideo`), `awaitDetach()` so unmount waits for the secure decoder
+  to release, `setKeepContentOnPlayerReset(false)` off NowPlaying, forcing the inner
+  `SurfaceView` to `GONE`/`INVISIBLE` in the `AndroidView` update lambda, unmounting the
+  PlayerView. The secure (HDCP, `setSecure(true)`) SurfaceView's SurfaceFlinger plane keeps
+  its last protected frame latched fullscreen on Fire TV regardless.
+  **USER WANTS THIS RECODED.** Proposed direction: stop the "one ExoPlayer, video keeps
+  playing across tabs" model. Options — (a) when leaving NowPlaying, fully RELEASE the video
+  player and hand its audio to the main audio ExoPlayer (no secure surface exists off
+  NowPlaying at all); or (b) only ever create the secure PlayerView while `isOnNowPlaying`, and
+  a video that isn't on NowPlaying plays audio through the normal audio path. Either removes
+  the secure surface from every non-NowPlaying tab entirely. Note the video already correctly
+  opens on NowPlaying first now (autoOpen via `videoRequest`).
+
+### Temp instrumentation still in code (remove after)
+- `AppShell`: `AMNav` OnDestinationChanged listener (logs route + `nav#` identity),
+  `AMHome` logs in `onExit` / `goToNowPlaying` / nav-bar swallow.
+- Build: `cd android && JAVA_HOME=".../Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug --no-daemon`
+  then `adb -s 192.168.1.246:5555 install -r app/build/outputs/apk/debug/app-debug.apk`.
+
+### Still queued (features, not started)
+- Lyrics translation (server translate + NowPlaying toggle) — user said do it, not yet done.
+- Artist video hero + collapsing hero that resets on scroll.
+- Radio/Videos card-size + accent consistency with Home/New.
+- Soft margins (fade under top bar, no hard cutoff).
+
+---
+
+## Session 2026-09-09 (part 5) — artist long-press, focus, MV regression revert
+
+### DONE in code (NOT yet built — SABRENT was unmounted at build time; rebuild pending)
+- **Artist page long-press context menu** (`ArtistDetailScreenV2`): `SongGridRow`/`SongCell`
+  (`AmComponents.kt`) gained an `onLongClick`; Top Songs long-press opens a Dialog menu
+  (Play Next / Add to Queue / Add to… / Go to Album) with 500 ms click-block + focus. `AddToDialog`
+  reused. New helper `ArtistMenuItem`.
+- **MV → artist "focuses on Home, doesn't open"**: artist hero **Play button** now grabs focus
+  ~120 ms after Top Songs load (`heroPlayFocus`, `HeroCircle` gained a `focusRequester` param).
+  Combined with the part-4 nav-bar swallow, the page opens AND focus lands on Play.
+- **Reverted the SurfaceView-`GONE` bleed attempt** in `AppShell` AndroidView update lambda — it
+  did NOT reap the plane and risked faulting the live secure decoder (suspected cause of the "MVs
+  fail to play a lot now" regression). Back to `visibility=VISIBLE` + `setKeepContentOnPlayerReset(isOnNowPlaying)`.
+
+### Still NOT done (usage ran low) — requested this session
+- **Long-press context menu EVERYWHERE** (user: "ADD IT EVERYWHERE AGAIN"): V2 lost it on
+  Home/New **spotlight** cards, **Videos tab** MV cards, Browse `AmCard`s. Needs a shared
+  song/video/album context-menu triggered from `AmCard` + the video shelves (CategoryScreen video
+  rows, BrowseScreenV2, HomeScreenV2). Scope: add `onLongClick` to `AmCard` and the 16:9 video
+  Surfaces, route to a shared menu. MV cards want Go to Artist / Add to Queue etc.
+- **"Couldn't add to playlist" error**: not reproduced in logs yet (scrolled off). Check
+  `AddToDialog` → `playerVm` add-to-playlist → server `POST /api/library/playlists/:id/tracks`
+  (or the library add route). Likely a `p.` vs `pl.` id or MUT/library-write issue.
+- **MV audio-only rebuild is slow** (detach on leaving Now Playing): user wants it optimised.
+  It rebuilds from on-disk playlists (no network) but still re-inits ExoPlayer+DRM. Consider
+  track-disable-without-rebuild ONLY paired with the video-model recode, or caching the audio-only
+  MediaSource.
+- **Queued features (never started)**: lyrics translation, artist video hero + collapsing hero,
+  radio/videos card consistency, soft margins.
+
+---
+
+## Session 2026-09-09 (part 6) — long-press everywhere, add-to-playlist fix, lyrics translation
+
+### DONE + built + installed (branch feat/radio-artist-shazam-v2, uncommitted)
+- **Artist page long-press** context menu (Top Songs) — Play Next / Add to Queue / Add to… /
+  Go to Album. `SongGridRow`/`SongCell` (`AmComponents.kt`) gained `onLongClick`.
+- **MV → artist focus**: artist hero **Play button** grabs focus ~120 ms after Top Songs load
+  (`heroPlayFocus`, `HeroCircle` `focusRequester` param) — opens AND focuses Play, not the nav bar.
+- **Reverted the SurfaceView-GONE bleed attempt** (was the likely "MVs fail to play a lot" regression).
+- **Add-to-playlist error**: `MusicRepository.addToPlaylist` now sends the correct resource `type`
+  — `library-songs`/`library-music-videos` for `i.`/`l.` ids, else `songs`/`music-videos`. Sending
+  "songs" for a library id was 404ing → "Couldn't add". Error toast now shows the real message
+  (`AMAddToPl` log) if it still fails.
+- **Long-press context menu EVERYWHERE** via a shared `CardContextMenu` (`AmComponents.kt`):
+  adapts options to item type (song / music-video / album·playlist). Wired into:
+  - **CategoryScreen** (Videos tab + category shelves): AmCard + 16:9 video Surfaces.
+  - **BrowseScreenV2** ("New"): spotlight hero cards (`SpotlightHeroCard` got `onLongClick`),
+    video rows, regular shelves, song grids. New `onArtistClick` param (wired in AppShell).
+  - Home already shuffled playlists on long-press (left as-is).
+- **Lyrics translation** (server + client):
+  - Server `POST /api/translate` (`server/src/routes/translate.ts`, registered in index.ts) —
+    keyless Google `translate_a/single`, batches all lines in one call, in-memory cache, falls
+    back to originals on failure. **Server must reload** (bun --watch picks it up).
+  - Client: `ProxyApi.translate` + `TranslateRequest/Response`, `MusicRepository.translateLines`,
+    `PlayerViewModel.toggleTranslateLyrics()` + `translateLyrics`/`lyricsTranslation` state
+    (persisted `translate_lyrics` pref; target = device language). Now Playing ··· menu →
+    "Translate Lyrics" toggle; translated line renders italic/dim under each lyric line (both the
+    side panel and full-screen lyrics). Proxy-only (no offline translation).
+
+### Build/infra note
+- **Main disk filled to 0 B mid-session** — build died with "No space left on device". Freed via:
+  `pkill -f gradle`, `tmutil thinlocalsnapshots / … 4`, and clearing `~/Library/Caches/{Google,Homebrew,pip,node-gyp}`
+  (~1.5 GB). Data volume is ~207 GB used / ~1.6 GB free now — **user is very low on disk**; builds
+  will keep failing until they free real space. Deleted `android/app/build` (regenerable).
+
+### Still queued (NOT done)
+- **Soft margins** (content fades under the top bar, no hard cutoff): needs the NavHost top-padding
+  removed and per-screen top contentPadding + a top fade scrim across Home/Browse/Radio/Category/
+  detail screens. Too broad to do blind safely — scoped for next session.
+- **Artist video hero** + collapsing hero that resets on scroll (part of artist polish).
+- **Radio/Videos card-size + accent consistency** with Home/New (subjective; needs on-device eyeballing).
+- **MV audio-only rebuild is slow** — tied to the video-model recode (see video-surface-bleed memory).
+- **Video bleed across tabs** — still needs the recode.

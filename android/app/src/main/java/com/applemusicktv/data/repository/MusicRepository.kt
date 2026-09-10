@@ -286,10 +286,25 @@ class MusicRepository @Inject constructor(
 
     /** Append a song to one of the user's editable library playlists. */
     suspend fun addToPlaylist(playlistId: String, song: Song): Result<Unit> {
-        val type = if (song.isMusicVideo) "music-videos" else "songs"
+        // Apple's add-to-library-playlist body needs the RIGHT resource type for the id. A library id
+        // (`i.`/`l.`) is a library-songs / library-music-videos row; a catalog (numeric) id is
+        // songs / music-videos. Sending "songs" for an `i.` id 404s → "Couldn't add to playlist".
+        val lib = song.id.startsWith("i.") || song.id.startsWith("l.")
+        val type = when {
+            song.isMusicVideo && lib -> "library-music-videos"
+            song.isMusicVideo        -> "music-videos"
+            lib                      -> "library-songs"
+            else                     -> "songs"
+        }
         return if (!useProxy) direct.addToPlaylist(playlistId, song.id, type)
         else runCatching { api.addTrackToPlaylist(playlistId, mapOf("id" to song.id, "type" to type)); Unit }
     }
+
+    /** Translate lyric lines to [to] (ISO code). Proxy-only (uses the server's keyless translator);
+     *  returns empty on failure so callers just show the originals. */
+    suspend fun translateLines(lines: List<String>, to: String): List<String> = runCatching {
+        api.translate(com.applemusicktv.data.network.TranslateRequest(lines, to)).lines
+    }.getOrDefault(emptyList())
 
     suspend fun getPlaylistTracks(id: String) =
         if (!useProxy) direct.playlistTracks(id).map { it.songs.map(::songFromDto) }

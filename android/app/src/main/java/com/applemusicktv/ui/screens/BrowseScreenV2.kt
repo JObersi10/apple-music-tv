@@ -44,10 +44,13 @@ fun BrowseScreenV2(
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
     onCuratorClick: (id: String) -> Unit = {},
     onSeeAll: (roomId: String) -> Unit = {},
+    onArtistClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val vm: BrowseViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
+    var menuItem by remember { mutableStateOf<Album?>(null) }
+    val onLong: (Album) -> Unit = { menuItem = it }
 
     if (state.isLoading && state.shelves.isEmpty()) {
         Box(modifier.fillMaxSize()) { com.applemusicktv.ui.components.ShelfSkeleton() }
@@ -73,16 +76,17 @@ fun BrowseScreenV2(
         return
     }
 
+    Box(modifier.fillMaxSize()) {
     LazyColumn(
-        modifier = modifier.fillMaxSize().background(AmTokens.Color.Background),
+        modifier = Modifier.fillMaxSize().background(AmTokens.Color.Background),
         contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(AmTokens.Space.shelfGap),
     ) {
         items(state.shelves, key = { it.title }) { shelf ->
             when {
                 shelf.style == "spotlight" && shelf.albums.isNotEmpty() ->
-                    SpotlightRowV2(shelf.title, shelf.albums, onAlbumClick, onPlaylistClick, onCuratorClick, playerVm)
-                shelf.videos.isNotEmpty() -> VideoRowV2(shelf.title, shelf.videos, playerVm)
+                    SpotlightRowV2(shelf.title, shelf.albums, onAlbumClick, onPlaylistClick, onCuratorClick, playerVm, onLong)
+                shelf.videos.isNotEmpty() -> VideoRowV2(shelf.title, shelf.videos, playerVm, onLong)
                 shelf.albums.isNotEmpty() && shelf.albums.first().type == "songs" ->
                     com.applemusicktv.ui.components.SongGridRow(
                         title = shelf.title,
@@ -91,9 +95,17 @@ fun BrowseScreenV2(
                         subtitle = { it.artistName },
                         artUrl = { it.artworkUrl(96) },
                         onClick = { idx -> playerVm.playSong(shelf.albums[idx]) },
+                        onLongClick = { idx -> shelf.albums.getOrNull(idx)?.let(onLong) },
                     )
-                else -> ShelfRowV2(shelf, playerVm, onAlbumClick, onPlaylistClick, onCuratorClick, onSeeAll)
+                else -> ShelfRowV2(shelf, playerVm, onAlbumClick, onPlaylistClick, onCuratorClick, onSeeAll, onLong)
             }
+        }
+    }
+        menuItem?.let { mi ->
+            com.applemusicktv.ui.components.CardContextMenu(
+                item = mi, playerVm = playerVm, onArtist = onArtistClick, onAlbum = onAlbumClick,
+                onDismiss = { menuItem = null },
+            )
         }
     }
 }
@@ -106,6 +118,7 @@ private fun ShelfRowV2(
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
     onCuratorClick: (id: String) -> Unit,
     onSeeAll: (roomId: String) -> Unit,
+    onLong: (Album) -> Unit,
 ) {
     val open: (Album) -> Unit = { album ->
         val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
@@ -133,9 +146,7 @@ private fun ShelfRowV2(
                     artworkUrl = album.artworkUrl(312),
                     width = 156,
                     onClick = { open(album) },
-                    onLongClick = {
-                        if (album.id.startsWith("pl.") || album.id.startsWith("p.")) playerVm.shufflePlayPlaylist(album.id)
-                    },
+                    onLongClick = { onLong(album) },
                 )
             }
         }
@@ -151,6 +162,7 @@ private fun SpotlightRowV2(
     onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit,
     onCuratorClick: (id: String) -> Unit,
     playerVm: PlayerViewModel,
+    onLong: (Album) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(title, modifier = Modifier.padding(start = 24.dp, end = 24.dp))
@@ -163,7 +175,7 @@ private fun SpotlightRowV2(
                 val isStation = album.id.startsWith("ra.")
                 val isCurator = album.id.startsWith("ac-") || album.id.startsWith("c-") || album.id.startsWith("mr-")
                 val isSong = album.type == "songs"
-                SpotlightHeroCard(album = album, width = 360, onClick = {
+                SpotlightHeroCard(album = album, width = 360, onLongClick = { onLong(album) }, onClick = {
                     when {
                         isCurator -> onCuratorClick(album.id)
                         isStation -> playerVm.playStation(album.id, album.artworkUrl(600))
@@ -179,7 +191,7 @@ private fun SpotlightRowV2(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun VideoRowV2(title: String, videos: List<Song>, playerVm: PlayerViewModel) {
+private fun VideoRowV2(title: String, videos: List<Song>, playerVm: PlayerViewModel, onLong: (Album) -> Unit) {
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(title, modifier = Modifier.padding(start = 24.dp, end = 24.dp))
         LazyRow(
@@ -190,6 +202,7 @@ private fun VideoRowV2(title: String, videos: List<Song>, playerVm: PlayerViewMo
                 val v = videos[idx]
                 Surface(
                     onClick = { playerVm.playAlbum(videos, idx) },
+                    onLongClick = { onLong(Album(id = v.id, title = v.title, artistName = v.artistName, artistId = v.artistId, artworkUrl = v.artworkUrl, type = "music-videos")) },
                     shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                     scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                     colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),

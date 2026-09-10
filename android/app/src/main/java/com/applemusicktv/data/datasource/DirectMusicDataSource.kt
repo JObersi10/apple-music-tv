@@ -557,6 +557,7 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
             latestRelease = albums("latest-release").firstOrNull(),
             albums = albums("full-albums"),
             featuredAlbums = albums("featured-albums"),
+            playlists = albums("playlists"),
             similarArtists = similar,
         )
     }

@@ -84,6 +84,7 @@ data class ArtistFullDto(
     val latestRelease:  AlbumDto?             = null,
     val albums:         List<AlbumDto>        = emptyList(),
     val featuredAlbums: List<AlbumDto>        = emptyList(),
+    val playlists:      List<AlbumDto>        = emptyList(),
     val similarArtists: List<SimilarArtistDto> = emptyList(),
 )
 
@@ -174,6 +175,12 @@ data class LyricLine(
 
 @JsonClass(generateAdapter = true)
 data class LyricsResponse(val lines: List<LyricLine> = emptyList(), val source: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class TranslateRequest(val lines: List<String>, val to: String)
+
+@JsonClass(generateAdapter = true)
+data class TranslateResponse(val lines: List<String> = emptyList(), val to: String? = null)
 
 @JsonClass(generateAdapter = true)
 data class MotionResponse(val video: String? = null)
@@ -334,6 +341,9 @@ interface ProxyApi {
 
     @POST("api/library/playlists/{id}/tracks/add")
     suspend fun addTrackToPlaylist(@Path("id") id: String, @Body body: Map<String, String>): Map<String, Any>
+
+    @POST("api/translate")
+    suspend fun translate(@Body body: TranslateRequest): TranslateResponse
 
     // ── Auth ──────────────────────────────────────────────────────────────
     @GET("auth/status")

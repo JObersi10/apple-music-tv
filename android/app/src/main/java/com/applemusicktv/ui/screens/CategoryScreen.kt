@@ -42,12 +42,11 @@ fun CategoryScreen(
 ) {
     val vm: CategoryViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
+    var menuItem by remember { mutableStateOf<Album?>(null) }
 
     Box(modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
         when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFFFA233B))
-            }
+            state.isLoading -> com.applemusicktv.ui.components.ShelfSkeleton()
             state.error != null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Text("Couldn't load this category.", color = Color(0xFF888888), fontSize = 15.sp)
             }
@@ -60,7 +59,7 @@ fun CategoryScreen(
                 contentPadding = PaddingValues(top = 40.dp, bottom = 40.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                item {
+                if (!state.hideHeader) item {
                     Column(Modifier.padding(start = 32.dp, end = 24.dp)) {
                         // Editorial hero — a wide banner with a scrim, title overlaid bottom-left.
                         state.artworkUrl?.takeIf { it.isNotBlank() }?.let { art ->
@@ -121,6 +120,10 @@ fun CategoryScreen(
                                     val art = (v.artworkUrl ?: "").replace("{w}", "480").replace("{h}", "270").replace("{f}", "jpg")
                                     Surface(
                                         onClick = { playerVm.playVideos(section.videos, idx) },
+                                        onLongClick = {
+                                            menuItem = Album(id = v.id, title = v.title, artistName = v.artistName,
+                                                artistId = v.artistId, artworkUrl = v.artworkUrl, type = "music-videos")
+                                        },
                                         // RectangleShape so the surface never clips the title/artist
                                         // text below the thumbnail (a rounded surface rounded them off).
                                         shape = ClickableSurfaceDefaults.shape(androidx.compose.ui.graphics.RectangleShape),
@@ -155,6 +158,10 @@ fun CategoryScreen(
                                     subtitle = dto.artistName.ifBlank { null },
                                     artworkUrl = dto.artworkUrl?.let { (it).replace("{w}", "312").replace("{h}", "312").replace("{f}", "jpg") },
                                     width = 156,
+                                    onLongClick = {
+                                        menuItem = Album(id = dto.id, title = dto.title, artistName = dto.artistName,
+                                            artworkUrl = dto.artworkUrl, artworkBgColor = dto.artworkBgColor, type = dto.type)
+                                    },
                                     onClick = {
                                         when {
                                             isCurator  -> onCuratorClick(dto.id)
@@ -172,6 +179,12 @@ fun CategoryScreen(
                 }
                 item { Spacer(Modifier.height(20.dp)) }
             }
+        }
+        menuItem?.let { mi ->
+            if (playerVm != null) com.applemusicktv.ui.components.CardContextMenu(
+                item = mi, playerVm = playerVm,
+                onArtist = onArtistClick, onAlbum = onAlbumClick, onDismiss = { menuItem = null },
+            )
         }
     }
 }

@@ -7,13 +7,22 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import com.applemusicktv.ui.theme.AmTokens
@@ -179,6 +188,7 @@ fun <T> SongGridRow(
     onClick: (Int) -> Unit,
     rows: Int = 3,
     columnWidth: Int = 360,
+    onLongClick: (Int) -> Unit = {},
 ) {
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(title, modifier = Modifier.padding(start = 24.dp, end = 24.dp))
@@ -191,7 +201,7 @@ fun <T> SongGridRow(
                 Column(Modifier.width(columnWidth.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     col.forEach { item ->
                         val idx = items.indexOf(item)
-                        SongCell(title2(item), subtitle(item), artUrl(item)) { onClick(idx) }
+                        SongCell(title2(item), subtitle(item), artUrl(item), onClick = { onClick(idx) }, onLongClick = { onLongClick(idx) })
                     }
                 }
             }
@@ -201,9 +211,10 @@ fun <T> SongGridRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SongCell(title: String, subtitle: String, artUrl: String?, onClick: () -> Unit) {
+private fun SongCell(title: String, subtitle: String, artUrl: String?, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
     Surface(
         onClick = onClick,
+        onLongClick = onLongClick,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(AmTokens.Radius.Tile)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = AmTokens.Color.SurfaceGlass),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
@@ -216,6 +227,71 @@ private fun SongCell(title: String, subtitle: String, artUrl: String?, onClick: 
             Column(Modifier.weight(1f)) {
                 Text(title, color = AmTokens.Color.TextPrimary, fontSize = AmTokens.Type.TitleSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(subtitle, color = AmTokens.Color.TextSecondary, fontSize = AmTokens.Type.SubtitleSize, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/** One row in a card context menu. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun AmMenuItem(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+    ) {
+        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+    }
+}
+
+/**
+ * Shared long-press context menu for any card (album / playlist / song / music-video / artist).
+ * Options adapt to [item].type. Real Dialog so D-pad focus is trapped. Hosts its own Add-to dialog.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+fun CardContextMenu(
+    item: com.applemusicktv.data.model.Album,
+    playerVm: com.applemusicktv.ui.viewmodel.PlayerViewModel,
+    onArtist: (String) -> Unit,
+    onAlbum: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val isSong = item.type == "songs"
+    val isVideo = item.type.contains("music-video")
+    val song = com.applemusicktv.data.model.Song(
+        id = item.id, title = item.title, artistName = item.artistName, albumName = "",
+        durationMs = 0, artworkUrl = item.artworkUrl, artworkBgColor = item.artworkBgColor,
+        previewUrl = null, artistId = item.artistId, type = item.type,
+    )
+    var addTo by remember { mutableStateOf(false) }
+    val firstFocus = remember { FocusRequester() }
+    var blocked by remember(item.id) { mutableStateOf(true) }
+    LaunchedEffect(item.id) { kotlinx.coroutines.delay(450); blocked = false; runCatching { firstFocus.requestFocus() } }
+    if (addTo) { AddToDialog(playerVm, song, onDismiss = { addTo = false; onDismiss() }); return }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
+            Column(Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(vertical = 6.dp)) {
+                Text(item.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                var first = true
+                fun fr(): Modifier { val m = if (first) Modifier.focusRequester(firstFocus) else Modifier; first = false; return m }
+                if (isSong || isVideo) {
+                    AmMenuItem("Play Next", fr()) { if (!blocked) { playerVm.playNext(song); onDismiss() } }
+                    AmMenuItem("Add to Queue", fr()) { if (!blocked) { playerVm.addToQueue(song); onDismiss() } }
+                    if (isSong) AmMenuItem("Add to…", fr()) { if (!blocked) { addTo = true } }
+                }
+                item.artistId?.takeIf { it.isNotBlank() }?.let { aid ->
+                    AmMenuItem("Go to Artist", fr()) { if (!blocked) { onArtist(aid); onDismiss() } }
+                }
+                if (isSong) AmMenuItem("Go to Album", fr()) { if (!blocked) { onAlbum(item.id); onDismiss() } }
+                if (!isSong && !isVideo) AmMenuItem("Open", fr()) { if (!blocked) { onAlbum(item.id); onDismiss() } }
             }
         }
     }

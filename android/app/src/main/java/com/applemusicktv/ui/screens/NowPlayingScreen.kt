@@ -243,6 +243,7 @@ fun NowPlayingScreen(
                 onPrev = playerVm::prev,
                 onPlayPause = playerVm::togglePlayPause,
                 onNext = playerVm::next,
+                translations = state.lyricsTranslation,
                 lyricsScale = state.lyricsScale,
             )
             else -> {
@@ -303,6 +304,18 @@ fun NowPlayingScreen(
                     // paused → show the station's own cover (there's no "current track" while paused).
                     val coverUrl = if (state.isLiveRadio && !state.isPlaying && state.radioStationArt != null)
                         state.radioStationArt else song.artworkUrl(600)
+                    // Fallback FIRST (drawn under the image): many internet-radio stations have no
+                    // favicon in the directory, so guarantee something branded shows — the station's
+                    // initial on a tinted tile. The real logo crossfades in on top when it exists.
+                    if (state.isLiveRadio) {
+                        val letter = (song.albumName.ifBlank { song.artistName }.ifBlank { song.title })
+                            .trim().firstOrNull()?.uppercaseChar()?.toString() ?: "♪"
+                        Box(Modifier.fillMaxSize().background(
+                            Brush.linearGradient(listOf(Color(0xFF2A2A3E), Color(0xFF14141F)))),
+                            contentAlignment = Alignment.Center) {
+                            Text(letter, fontSize = 96.sp, fontWeight = FontWeight.Bold, color = Color(0x55FFFFFF))
+                        }
+                    }
                     if (coverUrl != null) {
                         androidx.compose.animation.Crossfade(
                             targetState = coverUrl,
@@ -441,6 +454,7 @@ fun NowPlayingScreen(
                                 val repeatLabel = when (state.repeatMode) { RepeatMode.Off -> "Repeat: Off"; RepeatMode.All -> "Repeat: All"; RepeatMode.One -> "Repeat: One" }
                                 NpMenuItem(repeatLabel, icon = if (state.repeatMode == RepeatMode.One) Glyph.REPEAT_ONE else Glyph.REPEAT, checked = state.repeatMode != RepeatMode.Off) { playerVm.toggleRepeat() }
                                 if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics", icon = Glyph.LYRICS) { fullScreenLyrics = true; showOptionsMenu = false }
+                                if (state.lyrics.isNotEmpty()) NpMenuItem("Translate Lyrics", icon = Glyph.LYRICS, checked = state.translateLyrics) { playerVm.toggleTranslateLyrics() }
                                 NpMenuItem("Add to…", icon = Glyph.ADD_TO) { showAddTo = true; showOptionsMenu = false }
                                 NpMenuItem("Start Screensaver", icon = Glyph.STAR) { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
                                 if (song.artistId != null) NpMenuItem("Go to Artist", icon = Glyph.ARTIST) { onArtistClick(song.artistId); showOptionsMenu = false }
@@ -508,6 +522,7 @@ fun NowPlayingScreen(
                             onSeek = { ms -> playerVm.player.seekTo(ms) },
                             playFocus = playFocus,
                             fontScale = state.lyricsScale,
+                            translations = state.lyricsTranslation,
                         )
                     } else {
                         QueuePanel(
@@ -622,6 +637,7 @@ private fun FullScreenLyrics(
     onPrev: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    translations: List<String> = emptyList(),
     lyricsScale: Float = 1f,
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
@@ -657,6 +673,7 @@ private fun FullScreenLyrics(
                 playFocus = playFocus,
                 fontScale = 1.3f * lyricsScale,
                 autoReturnMs = 5_000L,
+                translations = translations,
             )
         }
         // Now-playing chip, bottom-left — same placement as the screensaver.
@@ -1289,6 +1306,7 @@ private fun LyricsPanel(
     playFocus: FocusRequester? = null,
     fontScale: Float = 1f,
     autoReturnMs: Long = 7000L,
+    translations: List<String> = emptyList(),
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -1486,6 +1504,17 @@ private fun LyricsPanel(
                     fontScale = fontScale,
                     focusRequester = if (isActive) activeLineFocus else null,
                     onSeek = { onSeek(line.startMs) },
+                )
+            }
+            // Translated text under the line (only when it differs from the original — skip
+            // instrumentals / untranslatable lines). Dimmer + italic so it reads as a gloss.
+            translations.getOrNull(idx)?.takeIf { it.isNotBlank() && !it.equals(line.text, ignoreCase = true) }?.let { tr ->
+                Text(
+                    tr,
+                    style = TextStyle(fontSize = (15f * fontScale).sp, lineHeight = (20f * fontScale).sp,
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                        color = if (isActive) Color(0xCCFFFFFF) else Color(0x55FFFFFF)),
+                    modifier = Modifier.fillMaxWidth().padding(end = 16.dp, top = 1.dp, bottom = 2.dp),
                 )
             }
         }

@@ -1,9 +1,19 @@
 package com.applemusicktv.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -46,6 +56,7 @@ fun ArtistDetailScreenV2(
     playerVm: PlayerViewModel,
     onAlbumClick: (String) -> Unit,
     onArtistClick: (String) -> Unit,
+    onPlaylistClick: (id: String, name: String, artworkUrl: String) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val vm: ArtistDetailViewModel = hiltViewModel()
@@ -65,6 +76,15 @@ fun ArtistDetailScreenV2(
     }
 
     var showAbout by remember { mutableStateOf(false) }
+    var menuSong by remember { mutableStateOf<Song?>(null) }
+    var addToSong by remember { mutableStateOf<Song?>(null) }
+    // Focus the hero Play button once songs arrive. When opened from a music video the artist page
+    // loads behind the video and, with nothing focusable, D-pad focus escaped to the nav bar (looked
+    // like "focuses on Home"). Grabbing the Play button keeps focus on this page.
+    val heroPlayFocus = remember { FocusRequester() }
+    LaunchedEffect(state.topSongs.isNotEmpty()) {
+        if (state.topSongs.isNotEmpty()) { kotlinx.coroutines.delay(120); runCatching { heroPlayFocus.requestFocus() } }
+    }
 
     Box(modifier.fillMaxSize().background(AmTokens.Color.Background)) {
     LazyColumn(
@@ -73,13 +93,13 @@ fun ArtistDetailScreenV2(
     ) {
         // Full-bleed hero with name + genres + Play/Shuffle overlaid at the bottom.
         item {
-            // Hero: tall enough to feel full-bleed but sized so the whole block (art + name + pills)
-            // fits the viewport — otherwise focusing the pills scrolls the art off the top. A SQUARE
-            // source centre-cropped keeps the face in frame (a wide crop showed only the forehead).
-            Box(Modifier.fillMaxWidth().height(430.dp)) {
+            // Near-full-bleed hero, Apple iPad style: big artist name centred, then a row of centred
+            // circular controls — Shuffle · big Play · Station. A square source centre-cropped keeps
+            // the face in frame; the gradient fades into the page background.
+            Box(Modifier.fillMaxWidth().height(480.dp)) {
                 if (state.artworkUrl != null) {
                     AsyncImage(
-                        model = state.artworkUrl?.replace("{w}", "1400")?.replace("{h}", "1400")?.replace("{f}", "jpg"),
+                        model = state.artworkUrl?.replace("{w}", "1600")?.replace("{h}", "1600")?.replace("{f}", "jpg"),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         alignment = Alignment.Center,
@@ -87,19 +107,24 @@ fun ArtistDetailScreenV2(
                     )
                 }
                 Box(Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(listOf(Color(0x22000000), Color(0xCC000000), AmTokens.Color.Background)),
+                    Brush.verticalGradient(listOf(Color(0x11000000), Color(0x88000000), AmTokens.Color.Background)),
                 ))
-                Column(Modifier.align(Alignment.BottomStart).padding(start = 24.dp, end = 24.dp, bottom = 18.dp)) {
-                    Text(state.name, fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 2)
+                Column(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(state.name, fontSize = 44.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp))
                     if (state.genres.isNotEmpty())
                         Text(state.genres.joinToString(" · "), fontSize = 12.sp, color = Color(0xFFCCCCCC),
-                            modifier = Modifier.padding(top = 2.dp))
+                            modifier = Modifier.padding(top = 4.dp))
                     if (state.topSongs.isNotEmpty()) {
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            HeroPill(com.applemusicktv.ui.components.Glyph.PLAY, "Play", AmTokens.Color.Accent) { playerVm.playAlbum(state.topSongs, 0) }
-                            HeroPill(com.applemusicktv.ui.components.Glyph.SHUFFLE, "Shuffle", Color(0x33FFFFFF)) { playerVm.playAlbum(state.topSongs.shuffled(), 0) }
-                            HeroPill(com.applemusicktv.ui.components.Glyph.RADIO, "Station", Color(0x33FFFFFF)) { vm.playStation { songs -> playerVm.playAlbum(songs, 0) } }
+                        Spacer(Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                            HeroCircle(com.applemusicktv.ui.components.Glyph.SHUFFLE, size = 52, bg = Color(0x33FFFFFF)) { playerVm.playAlbum(state.topSongs.shuffled(), 0) }
+                            HeroCircle(com.applemusicktv.ui.components.Glyph.PLAY, size = 72, bg = AmTokens.Color.Accent, iconSize = 26, focusRequester = heroPlayFocus) { playerVm.playAlbum(state.topSongs, 0) }
+                            HeroCircle(com.applemusicktv.ui.components.Glyph.RADIO, size = 52, bg = Color(0x33FFFFFF)) { vm.playStation { songs -> playerVm.playAlbum(songs, 0) } }
                         }
                     }
                 }
@@ -115,6 +140,7 @@ fun ArtistDetailScreenV2(
                     subtitle = { it.artistName },
                     artUrl = { it.artworkUrl(96) },
                     onClick = { idx -> playerVm.playAlbum(state.topSongs, idx) },
+                    onLongClick = { idx -> menuSong = state.topSongs.getOrNull(idx) },
                 )
             }
         }
@@ -160,6 +186,19 @@ fun ArtistDetailScreenV2(
         if (state.featuredAlbums.isNotEmpty()) {
             item { HeaderV2("Featured") }
             item { AlbumRowV2(state.featuredAlbums, onAlbumClick) }
+        }
+        // Artist playlists (Essentials, Deep Cuts, etc.).
+        if (state.playlists.isNotEmpty()) {
+            item { HeaderV2("Playlists") }
+            item {
+                LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 0.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(AmTokens.Space.md)) {
+                    items(state.playlists, key = { it.id }) { pl ->
+                        AmCard(title = pl.title, subtitle = pl.artistName.ifBlank { null },
+                            artworkUrl = pl.artworkUrl(312), width = 156,
+                            onClick = { onPlaylistClick(pl.id, pl.title, pl.artworkUrl(500) ?: "") })
+                    }
+                }
+            }
         }
 
         // About sits at the bottom (Apple order), just above Similar Artists.
@@ -232,33 +271,88 @@ fun ArtistDetailScreenV2(
         }
     }
 
-        // Full-bio scrollable overlay (opened by tapping the About card).
+        // Full-bio dialog. A real Dialog window traps D-pad focus (a same-tree Box overlay couldn't —
+        // focus still reached the list behind it). Its focusable content consumes Up/Down to scroll.
         if (showAbout) {
-            val fullBio = (state.fullBio ?: state.bio)?.let(::stripHtml)
-            androidx.activity.compose.BackHandler(enabled = true) { showAbout = false }
-            Box(Modifier.fillMaxSize().background(Color(0xE6000000))) {
-                Column(
-                    Modifier.align(Alignment.Center).fillMaxWidth(0.72f).fillMaxHeight(0.8f)
-                        .clip(RoundedCornerShape(20.dp)).background(AmTokens.Color.SurfaceGlassHi).padding(32.dp),
-                ) {
-                    Text("About ${state.name}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Spacer(Modifier.height(16.dp))
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                        Text(fullBio ?: "", fontSize = 15.sp, color = AmTokens.Color.TextSecondary, lineHeight = 24.sp)
-                    }
-                    Spacer(Modifier.height(16.dp))
-                    Surface(
-                        onClick = { showAbout = false },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = AmTokens.Color.Accent, focusedContainerColor = AmTokens.Color.Accent),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+            val fullBio = (state.fullBio ?: state.bio)?.let(::stripHtml) ?: ""
+            val scroll = rememberScrollState()
+            val overlayFocus = remember { FocusRequester() }
+            val scope = rememberCoroutineScope()
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { showAbout = false },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                LaunchedEffect(Unit) { runCatching { overlayFocus.requestFocus() } }
+                Box(Modifier.fillMaxSize().background(Color(0xF2000000)), contentAlignment = Alignment.Center) {
+                    Column(
+                        Modifier.fillMaxWidth(0.72f).fillMaxHeight(0.82f)
+                            .clip(RoundedCornerShape(20.dp)).background(AmTokens.Color.SurfaceGlassHi).padding(32.dp)
+                            .focusRequester(overlayFocus)
+                            .focusable()
+                            .onPreviewKeyEvent { ev ->
+                                if (ev.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                when (ev.key) {
+                                    androidx.compose.ui.input.key.Key.DirectionDown -> { scope.launch { scroll.animateScrollBy(320f) }; true }
+                                    androidx.compose.ui.input.key.Key.DirectionUp -> { scope.launch { scroll.animateScrollBy(-320f) }; true }
+                                    androidx.compose.ui.input.key.Key.Back, androidx.compose.ui.input.key.Key.DirectionCenter,
+                                    androidx.compose.ui.input.key.Key.Enter -> { showAbout = false; true }
+                                    else -> true
+                                }
+                            },
                     ) {
-                        Text("Close", color = Color.White, fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 28.dp, vertical = 10.dp))
+                        Text("About ${state.name}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Spacer(Modifier.height(16.dp))
+                        Text(fullBio, fontSize = 15.sp, color = AmTokens.Color.TextSecondary, lineHeight = 24.sp,
+                            modifier = Modifier.weight(1f).verticalScroll(scroll))
+                        Spacer(Modifier.height(14.dp))
+                        Text("Press OK or Back to close  ·  Up/Down to scroll", fontSize = 11.sp, color = Color(0xFF8A8A8E))
                     }
                 }
             }
         }
+
+        // Long-press a Top Song → context menu (Play Next / Add to Queue / Add to… / Go to Album).
+        // Real Dialog so D-pad focus is trapped, matching Library/Playlist menus.
+        menuSong?.let { s ->
+            val dismiss = { menuSong = null }
+            val firstFocus = remember { FocusRequester() }
+            var clickBlocked by remember(s.id) { mutableStateOf(true) }
+            LaunchedEffect(s.id) { kotlinx.coroutines.delay(500); clickBlocked = false; runCatching { firstFocus.requestFocus() } }
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = dismiss,
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
+                    Column(
+                        Modifier.width(320.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1C1C1E)).padding(vertical = 6.dp),
+                    ) {
+                        Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                        ArtistMenuItem("Play Next", Modifier.focusRequester(firstFocus)) { if (!clickBlocked) { playerVm.playNext(s); dismiss() } }
+                        ArtistMenuItem("Add to Queue") { if (!clickBlocked) { playerVm.addToQueue(s); dismiss() } }
+                        ArtistMenuItem("Add to…") { if (!clickBlocked) { addToSong = s; dismiss() } }
+                        s.albumId?.let { alid -> ArtistMenuItem("Go to Album") { if (!clickBlocked) { onAlbumClick(alid); dismiss() } } }
+                    }
+                }
+            }
+        }
+        addToSong?.let { s ->
+            com.applemusicktv.ui.components.AddToDialog(playerVm, s, onDismiss = { addToSong = null })
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun ArtistMenuItem(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+    ) {
+        Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
     }
 }
 
@@ -297,6 +391,24 @@ private fun HeroPill(glyph: com.applemusicktv.ui.components.Glyph, label: String
         Row(Modifier.padding(horizontal = 18.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             com.applemusicktv.ui.components.Icon(glyph, size = 14.dp, color = Color.White)
             Text(label, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+/** Circular hero transport button (Apple iPad artist layout: Shuffle · Play · Station). */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun HeroCircle(glyph: com.applemusicktv.ui.components.Glyph, size: Int, bg: Color, iconSize: Int = 18, focusRequester: FocusRequester? = null, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(CircleShape),
+        colors = ClickableSurfaceDefaults.colors(containerColor = bg,
+            focusedContainerColor = if (bg == AmTokens.Color.Accent) Color(0xFFFF3B54) else Color(0x66FFFFFF)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.12f),
+        modifier = (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).size(size.dp),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            com.applemusicktv.ui.components.Icon(glyph, size = iconSize.dp, color = Color.White)
         }
     }
 }
