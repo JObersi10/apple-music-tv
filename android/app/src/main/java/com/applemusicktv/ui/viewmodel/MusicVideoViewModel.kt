@@ -564,31 +564,18 @@ class MusicVideoViewModel @Inject constructor(
         if (videoDetached) return
         videoDetached = true
         val exo = player ?: return
-        val mv = curMv; val b = curBearer; val m = curMut
         val pos = exo.currentPosition
-        // Track-disable alone does NOT reap the secure SurfaceView's latched frame — it bleeds onto
-        // other tabs (see memory video-surface-bleed). The reliable teardown is a full AUDIO-ONLY
-        // REBUILD: it releases the secure decoder + surface so AppShell can destroy a content-free
-        // view with nothing to orphan. Clear the surface first, then rebuild.
+        // TRACK-DISABLE, not a rebuild. The v2 "audio-only rebuild" released and re-created the whole
+        // player on every tab leave/return — that is the ~0.5s audio cut the user heard, and it STILL
+        // bled anyway. Disabling the video track on the SAME live player releases the secure video
+        // codec (ExoPlayer frees the disabled renderer's decoder) while the audio renderer keeps
+        // running uninterrupted — no blip. The bleed is handled in AppShell by moving the surface
+        // off-screen (it is a compositor/plane issue, not something the VM can reap).
+        Log.i("AMMV", "detachVideo: disable video track at ${pos}ms (audio keeps playing, no rebuild)")
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
         exo.clearVideoSurface()
-        if (mv != null && b != null && m != null) {
-            Log.i("AMMV", "detachVideo: audio-only REBUILD at ${pos}ms (frees secure decoder+surface)")
-            pendingSeekMs = pos
-            // The rebuild is ASYNC — the old secure decoder isn't released until it finishes. AppShell
-            // must NOT destroy the SurfaceView until then, or it reaps a view with a protected frame
-            // still latched → orphaned secure plane = the Library/Videos bleed. Publish a completion
-            // signal AppShell can await instead of racing a fixed delay.
-            detachDone.value = false
-            detachJob = viewModelScope.launch {
-                buildAndPlay(mv, b, m, disableVideo = true, seekMs = pos, playWhenReady = !userPaused)
-                pendingSeekMs = 0
-                detachDone.value = true
-            }
-        } else {
-            exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
-            detachDone.value = true
-        }
+        detachDone.value = true
     }
     private var detachJob: kotlinx.coroutines.Job? = null
     /** Flips true only when detachVideo's audio-only rebuild has actually released the secure decoder. */
@@ -601,17 +588,11 @@ class MusicVideoViewModel @Inject constructor(
         if (!videoDetached) return
         videoDetached = false
         val exo = player ?: return
-        val mv = curMv; val b = curBearer; val m = curMut
-        val pos = exo.currentPosition
-        // Rebuild WITH video (a remounted PlayerView will attach the fresh surface). ~0.5s blip.
-        if (mv != null && b != null && m != null) {
-            Log.i("AMMV", "attachVideo: rebuild WITH video at ${pos}ms")
-            pendingSeekMs = pos
-            viewModelScope.launch { buildAndPlay(mv, b, m, disableVideo = false, seekMs = pos, playWhenReady = !userPaused); pendingSeekMs = 0 }
-        } else {
-            exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
-        }
+        // Re-enable the video track on the SAME player. The recomposed PlayerView re-attaches the
+        // surface (in AppShell's update lambda). No rebuild, no license re-fetch, no blip.
+        Log.i("AMMV", "attachVideo: re-enable video track")
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
     }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }

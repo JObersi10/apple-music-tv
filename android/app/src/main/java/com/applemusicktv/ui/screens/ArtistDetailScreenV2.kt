@@ -86,6 +86,7 @@ fun ArtistDetailScreenV2(
         if (state.topSongs.isNotEmpty()) { kotlinx.coroutines.delay(120); runCatching { heroPlayFocus.requestFocus() } }
     }
 
+    val scope = rememberCoroutineScope()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     // Bright at the top, darker the more you scroll down. Driven by the first item's scroll offset
     // (once past item 0 it's fully dark). 0 → no dim, 1 → full dim.
@@ -116,7 +117,22 @@ fun ArtistDetailScreenV2(
         }
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize()
+            // Focus-up trap fix: once you scroll down far enough, the hero (item 0, with the
+            // Play/Shuffle/Station controls) is DISPOSED by the LazyColumn, so there is no focusable
+            // target above and D-pad Up did nothing — focus was stuck in the lower shelves. When the
+            // hero is fully off-screen (firstVisibleItemIndex > 0), intercept Up: scroll back to the
+            // top and put focus on the hero Play button. While the hero is still on-screen, Up falls
+            // through to normal stepwise focus movement between shelves.
+            .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionUp && listState.firstVisibleItemIndex > 0) {
+                    scope.launch {
+                        listState.animateScrollToItem(0)
+                        runCatching { heroPlayFocus.requestFocus() }
+                    }
+                    true
+                } else false
+            },
         contentPadding = PaddingValues(bottom = 80.dp),
     ) {
         // Hero item is now transparent — the backdrop above shows through it; this just holds the
