@@ -147,7 +147,10 @@ fun MusicVideoScreen(
                         else -> true
                     }
                 } else when (ev.key) {
-                    Key.Back -> if (controls) { controls = false; true } else { onExit(); true }
+                    // Back always leaves in one press. (It used to hide the transport controls first
+                    // and only exit on a second Back — but the controls show on any remote input, so
+                    // it always felt like a double-back to leave the video.)
+                    Key.Back -> { onExit(); true }
                     Key.DirectionUp -> { poke(); scrub = null; moveRow(-1) }
                     Key.DirectionDown -> { poke(); scrub = null; moveRow(1) }
                     Key.DirectionLeft -> {

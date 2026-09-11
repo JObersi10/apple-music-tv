@@ -370,11 +370,11 @@ fun AppShell(modifier: Modifier = Modifier) {
                         navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl ?: ""))
                     },
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
-                    onMusicVideoClick = { s ->
-                        mvVm.show(s.id, s.title, s.artistName)
-                        selectedTab = TopNavTab.NowPlaying
-                        navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
-                    },
+                    // Route videos through the SHARED PlayerViewModel queue (not mvVm.show directly) —
+                    // otherwise playerState.queue stays the stale audio queue and the MV Up-Next panel
+                    // shows no current video, no reg songs, and never updates. playAlbum sees the video,
+                    // sets the queue, and emits the videoRequest that auto-opens Now Playing.
+                    onMusicVideoClick = { s -> playerVm.playAlbum(listOf(s)) },
                 )
             }
             composable(Screen.Search.route) {
@@ -471,11 +471,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                     onBack        = { navController.popBackStack() },
                     onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
                     onAlbumClick  = { navController.navigate(Screen.AlbumDetail.route(it)) },
-                    onMusicVideoClick = { s ->
-                        mvVm.show(s.id, s.title, s.artistName)
-                        selectedTab = TopNavTab.NowPlaying
-                        navController.navigate(Screen.NowPlaying.route) { launchSingleTop = true }
-                    },
+                    onMusicVideoClick = { s -> playerVm.playAlbum(listOf(s)) },
                 )
             }
         }

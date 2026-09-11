@@ -187,11 +187,15 @@ fun ArtistDetailScreenV2(
                             colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
                             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                         ) {
-                            Column(Modifier.width(250.dp)) {
+                            Column(Modifier.width(250.dp).padding(bottom = 8.dp)) {
                                 Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(AmTokens.Color.Surface)) {
                                     if (v.artworkUrl != null) AsyncImage(model = v.artworkUrl(600), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                                 }
-                                Text(v.title, fontSize = AmTokens.Type.TitleSize, color = AmTokens.Color.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+                                // Safe margins: title was clipping on the last line. Allow 2 lines with
+                                // ellipsis and give it horizontal + top breathing room inside the card.
+                                Text(v.title, fontSize = AmTokens.Type.TitleSize, color = AmTokens.Color.TextPrimary,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp,
+                                    modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 6.dp))
                             }
                         }
                     }
