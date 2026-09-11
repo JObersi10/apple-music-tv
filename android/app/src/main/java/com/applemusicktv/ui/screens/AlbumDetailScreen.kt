@@ -134,6 +134,43 @@ fun AlbumDetailScreen(
                     focusRequester = rowFocus.getOrPut(track.id) { FocusRequester() },
                 )
             }
+            // Music Videos shelf — the album's own MVs (or the artist's related ones), at the bottom.
+            if (state.musicVideos.isNotEmpty()) {
+                item {
+                    Text("Music Videos", color = androidx.compose.ui.graphics.Color.White,
+                        fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp, top = 20.dp, bottom = 8.dp))
+                }
+                item {
+                    androidx.compose.foundation.lazy.LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(end = 24.dp, top = 4.dp, bottom = 10.dp),
+                    ) {
+                        androidx.compose.foundation.lazy.items(state.musicVideos.size) { i ->
+                            val v = state.musicVideos[i]
+                            androidx.tv.material3.Surface(
+                                onClick = { playerVm.playAlbum(state.musicVideos, i) },
+                                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                                scale = androidx.tv.material3.ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent, focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent),
+                            ) {
+                                Column(Modifier.width(220.dp).padding(bottom = 6.dp)) {
+                                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(androidx.compose.ui.graphics.Color(0xFF1A1A1A))) {
+                                        v.artworkUrl?.let {
+                                            coil.compose.AsyncImage(model = v.artworkUrl(480), contentDescription = null,
+                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                        }
+                                    }
+                                    Text(v.title, color = androidx.compose.ui.graphics.Color.White, fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold, maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 6.dp, end = 4.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     } // Row
 

@@ -294,8 +294,23 @@ class MusicVideoViewModel @Inject constructor(
             java.io.File(context.cacheDir, com.applemusicktv.media.MV_MASTER_FILE)).toString()
         run {
                 val drmCallback = AppleMusicDrmCallback(mv.adamId, mv.keyUri, bearer, mut, mv.keyMap)
+                // Force Widevine L3. THE bleed root cause: at L1 the session reports
+                // requiresSecureDecoder=true, so ExoPlayer picks the ".secure" MediaCodec
+                // (OMX.MTK.VIDEO.DECODER.AVC.secure) which renders to a PROTECTED hardware plane —
+                // that plane is what bled onto Library/Videos, and it ignores our TextureView. This
+                // display has no HDCP so L1 was capped to SD (~432p) anyway. L3 = software decrypt +
+                // NON-secure output → a normal decoder that renders into the TextureView, confined to
+                // Now Playing. Same SD quality, no bleed. Falls back to the default provider if the
+                // device rejects the L3 property.
+                val l3DrmProvider = androidx.media3.exoplayer.drm.ExoMediaDrm.Provider { uuid ->
+                    runCatching {
+                        FrameworkMediaDrm.newInstance(uuid).apply {
+                            runCatching { setPropertyString("securityLevel", "L3") }
+                        }
+                    }.getOrElse { FrameworkMediaDrm.DEFAULT_PROVIDER.acquireExoMediaDrm(uuid) }
+                }
                 val drmManager = DefaultDrmSessionManager.Builder()
-                    .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                    .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, l3DrmProvider)
                     // MV HLS carries SEPARATE key ids for the audio and video tracks.
                     // multiSession=true opens one Widevine session per KID so both the
                     // audio key and the video key load — with a single session only one
