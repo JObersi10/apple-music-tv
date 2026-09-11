@@ -63,17 +63,28 @@ data class SimilarArtistDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class IdentifyDto(
+    val title:   String? = null,
+    val artist:  String? = null,
+    val artwork: String? = null,
+)
+
+@JsonClass(generateAdapter = true)
 data class ArtistFullDto(
     val id:             String,
     val name:           String,
     val artworkUrl:     String?,
     val genreNames:     List<String>          = emptyList(),
     val editorialNotes: String?               = null,
+    val origin:         String?               = null,
+    val bornOrFormed:   String?               = null,
+    val artistBio:      String?               = null,
     val topSongs:       List<SongDto>         = emptyList(),
     val musicVideos:    List<SongDto>         = emptyList(),
     val latestRelease:  AlbumDto?             = null,
     val albums:         List<AlbumDto>        = emptyList(),
     val featuredAlbums: List<AlbumDto>        = emptyList(),
+    val playlists:      List<AlbumDto>        = emptyList(),
     val similarArtists: List<SimilarArtistDto> = emptyList(),
 )
 
@@ -164,6 +175,12 @@ data class LyricLine(
 
 @JsonClass(generateAdapter = true)
 data class LyricsResponse(val lines: List<LyricLine> = emptyList(), val source: String? = null)
+
+@JsonClass(generateAdapter = true)
+data class TranslateRequest(val lines: List<String>, val to: String)
+
+@JsonClass(generateAdapter = true)
+data class TranslateResponse(val lines: List<String> = emptyList(), val to: String? = null)
 
 @JsonClass(generateAdapter = true)
 data class MotionResponse(val video: String? = null)
@@ -272,6 +289,10 @@ interface ProxyApi {
     @GET("api/browse/grouping/{id}")
     suspend fun getGrouping(@Path("id") id: String): MultiRoomDto
 
+    /** Shazam song-ID for an internet-radio stream. Returns nulls on a miss. */
+    @GET("api/identify")
+    suspend fun identifyStream(@Query("url") url: String): IdentifyDto
+
     @GET("api/browse/categories")
     suspend fun getCategories(): CategoriesResponse
 
@@ -303,6 +324,9 @@ interface ProxyApi {
     @GET("api/library/songs")
     suspend fun getLibrarySongs(@Query("limit") limit: Int = 25, @Query("offset") offset: Int = 0): LibrarySongsResponse
 
+    @GET("api/library/music-videos")
+    suspend fun getLibraryMusicVideos(@Query("limit") limit: Int = 100): LibrarySongsResponse
+
     @GET("api/library/albums")
     suspend fun getLibraryAlbums(@Query("limit") limit: Int = 25, @Query("offset") offset: Int = 0): LibraryAlbumsResponse
 
@@ -320,6 +344,9 @@ interface ProxyApi {
 
     @POST("api/library/playlists/{id}/tracks/add")
     suspend fun addTrackToPlaylist(@Path("id") id: String, @Body body: Map<String, String>): Map<String, Any>
+
+    @POST("api/translate")
+    suspend fun translate(@Body body: TranslateRequest): TranslateResponse
 
     // ── Auth ──────────────────────────────────────────────────────────────
     @GET("auth/status")

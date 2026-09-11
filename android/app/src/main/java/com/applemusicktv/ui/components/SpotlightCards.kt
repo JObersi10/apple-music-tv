@@ -48,10 +48,11 @@ private fun spotlightLabel(album: Album): String = when {
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit) {
+fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
     val tint = bgColor(album.artworkBgColor)
     Card(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = Modifier.width(width.dp),
         scale = CardDefaults.scale(focusedScale = 1.05f, pressedScale = 0.97f),
         glow = CardDefaults.glow(focusedGlow = Glow(Color.White.copy(alpha = 0.28f), 22.dp)),

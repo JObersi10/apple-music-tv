@@ -113,6 +113,9 @@ data class PlayerState(
     val queue:            List<Song>      = emptyList(),
     val queueIndex:       Int             = 0,
     val lyrics:           List<LyricLine> = emptyList(),
+    /** Translated text per lyric line, aligned by index to [lyrics]. Empty = not translated. */
+    val lyricsTranslation: List<String>   = emptyList(),
+    val translateLyrics:  Boolean         = false,
     val isFullStream:     Boolean         = false,
     val motionUrl:        String?         = null,
     /** A/V-sync EXTRA the user dials on top of everything. 0 normally; the only value shown in the UI. */
@@ -158,6 +161,8 @@ data class PlayerState(
     val reduceMotion: Boolean = false,
     /** Low Power Mode: cheaper background rendering (also forces motion art off). */
     val lowPowerMode: Boolean = false,
+    /** v2 UI overhaul flag: when on, screens rebuilt on the AmCard/Shelf kit are shown. Default off. */
+    val newUiEnabled: Boolean = true,
     /** Volume leveling (loudness AGC) on the audio path. */
     val volumeLeveling: Boolean = false,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
@@ -194,6 +199,7 @@ class PlayerViewModel @Inject constructor(
     private val crossfadePrefs: com.applemusicktv.data.CrossfadePreferences,
     private val onboardingPrefs: com.applemusicktv.data.OnboardingPreferences,
     private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
+    private val cachePrefs: com.applemusicktv.data.CachePreferences,
     private val webServer: InAppWebServer,
     val beatAnalyzer: BeatAnalyzer,
 ) : ViewModel() {
@@ -830,6 +836,9 @@ class PlayerViewModel @Inject constructor(
             reduceMotion = prefs.getBoolean("reduce_motion", false),
             lowPowerMode = prefs.getBoolean("low_power", false),
             volumeLeveling = prefs.getBoolean("volume_leveling", false),
+            isShuffled = prefs.getBoolean("shuffle_on", false),
+            repeatMode = repeatFromPrefs(),
+            newUiEnabled = prefs.getBoolean("new_ui", true),
         ) }
         player.addListener(playerListener)
         mediaSession = buildMediaSession(player)
@@ -963,6 +972,9 @@ class PlayerViewModel @Inject constructor(
         prefs.edit {
             putString("song",  adapter.toJson(song))
             putString("queue", listAdapter.toJson(s.queue))
+            // User-added songs (Play Next / Add to Queue) live in userQueue — persist them too,
+            // else they vanish on restart while the prebuilt queue survives.
+            putString("user_queue", listAdapter.toJson(s.userQueue))
             putInt("queue_index", s.queueIndex)
             putLong("position_ms", player.currentPosition)
             putBoolean("full_stream", s.isFullStream)
@@ -993,6 +1005,7 @@ class PlayerViewModel @Inject constructor(
             val listAdapter = moshi.adapter<List<Song>>(listType)
             val song  = adapter.fromJson(songJson) ?: return@launch
             val queue = listAdapter.fromJson(prefs.getString("queue", "[]") ?: "[]") ?: listOf(song)
+            val userQueue = listAdapter.fromJson(prefs.getString("user_queue", "[]") ?: "[]") ?: emptyList()
             val idx   = prefs.getInt("queue_index", 0).coerceIn(0, queue.lastIndex)
             val posMs = prefs.getLong("position_ms", 0L)
             val full  = hasMUT()
@@ -1005,8 +1018,8 @@ class PlayerViewModel @Inject constructor(
             val npInfo = prefs.getBoolean("np_info", true)
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
-            _state.update { it.copy(currentSong = song, song = song, queue = queue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), progressMs = posMs) }
+            _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), newUiEnabled = prefs.getBoolean("new_ui", true), translateLyrics = prefs.getBoolean("translate_lyrics", false), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {
@@ -1110,6 +1123,8 @@ class PlayerViewModel @Inject constructor(
                 s.copy(isShuffled = true, originalQueue = s.queue, queue = before + after)
             }
         }
+        // Remembered globally: the next album/playlist/video list starts in this shuffle state too.
+        prefs.edit { putBoolean("shuffle_on", _state.value.isShuffled) }
     }
     fun toggleRepeat() {
         _state.update { it.copy(repeatMode = when (it.repeatMode) {
@@ -1117,6 +1132,33 @@ class PlayerViewModel @Inject constructor(
             RepeatMode.All -> RepeatMode.One
             RepeatMode.One -> RepeatMode.Off
         })}
+        // Remembered globally across playlists, albums and music videos.
+        prefs.edit { putString("repeat_mode", _state.value.repeatMode.name) }
+    }
+
+    /** The persisted global repeat mode; defaults Off. Applied at startup and to every new list. */
+    private fun repeatFromPrefs(): RepeatMode = when (prefs.getString("repeat_mode", null)) {
+        "All" -> RepeatMode.All
+        "One" -> RepeatMode.One
+        else  -> RepeatMode.Off
+    }
+
+    fun toggleNewUi() {
+        val next = !_state.value.newUiEnabled
+        _state.update { it.copy(newUiEnabled = next) }
+        prefs.edit { putBoolean("new_ui", next) }
+    }
+
+    // ── Downloaded-media cache cap (Dev → Storage) ──────────────────────────
+    val cacheCapBytes: kotlinx.coroutines.flow.StateFlow<Long> = cachePrefs.capBytes
+    fun currentCacheBytes(): Long = com.applemusicktv.util.MediaCacheManager.currentBytes(context)
+    fun stepCacheCap(dir: Int) {
+        val opts = com.applemusicktv.data.CachePreferences.OPTIONS
+        val cur = opts.indexOfFirst { it == cachePrefs.getCap() }.let { if (it < 0) 3 else it }
+        val next = opts[(cur + dir).coerceIn(0, opts.lastIndex)]
+        cachePrefs.setCap(next)
+        // Apply now so lowering the cap frees space immediately, not at the next decrypt.
+        com.applemusicktv.util.MediaCacheManager.trim(context, next)
     }
     fun setSleepTimer(minutes: Int) { _state.update { it.copy(sleepTimerEndsAt = System.currentTimeMillis() + minutes * 60_000L, sleepAfterSong = false) } }
     fun setSleepAfterSong() { _state.update { it.copy(sleepAfterSong = true, sleepTimerEndsAt = null) } }
@@ -1378,7 +1420,7 @@ class PlayerViewModel @Inject constructor(
         usingStandalone = false
         lastErrorKey = null
         hasPlayedSomething = true
-        _state.update { it.copy(currentSong = song, song = song, queue = listOf(song), queueIndex = 0, lyrics = emptyList(), isFullStream = useFullStream, motionUrl = null) }
+        _state.update { it.copy(currentSong = song, song = song, queue = listOf(song), userQueue = emptyList(), queueIndex = 0, lyrics = emptyList(), isFullStream = useFullStream, motionUrl = null) }
         val uri = if (useFullStream) repo.streamUrl(song.id) else (song.previewUrl ?: repo.streamUrl(song.id))
         player.setMediaItem(buildMediaItem(song, uri))
         player.prepare()
@@ -1392,7 +1434,9 @@ class PlayerViewModel @Inject constructor(
     fun playVideos(dtos: List<com.applemusicktv.data.network.SongDto>, startIndex: Int = 0) =
         playAlbum(dtos.map(repo::songFromDto), startIndex)
 
-    fun playAlbum(songs: List<Song>, startIndex: Int = 0, useFullStream: Boolean = hasMUT(), shuffle: Boolean = false) {
+    // shuffle defaults to the remembered global toggle, so opening any album / playlist / video list
+    // honours the last shuffle choice. Callers that force it (e.g. Shuffle-play) still pass true.
+    fun playAlbum(songs: List<Song>, startIndex: Int = 0, useFullStream: Boolean = hasMUT(), shuffle: Boolean = _state.value.isShuffled) {
         if (songs.isEmpty()) return
         val stack = Thread.currentThread().stackTrace
         val callers = (3..7).mapNotNull { stack.getOrNull(it) }.joinToString(" ← ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
@@ -1406,7 +1450,10 @@ class PlayerViewModel @Inject constructor(
             listOf(first) + songs.filterIndexed { i, _ -> i != idx }.shuffled()
         } else songs
         val queueIdx = if (shuffle) 0 else idx
-        _state.update { it.copy(queue = queue, isFullStream = useFullStream, isShuffled = shuffle, originalQueue = if (shuffle) songs else emptyList()) }
+        // Starting a fresh list clears any Play Next / Add to Queue items — they belonged to the
+        // previous session. (A cold-start RESTORE plays via pendingRestore, not here, so the
+        // persisted userQueue still survives an app reopen.)
+        _state.update { it.copy(queue = queue, userQueue = emptyList(), isFullStream = useFullStream, isShuffled = shuffle, originalQueue = if (shuffle) songs else emptyList()) }
         // User explicitly started this list → a video here should open fullscreen Now Playing.
         playQueueItem(queueIdx, userOpened = true)
     }
@@ -1432,7 +1479,7 @@ class PlayerViewModel @Inject constructor(
     fun addToPlaylist(playlistId: String, playlistName: String, song: com.applemusicktv.data.model.Song) = viewModelScope.launch {
         repo.addToPlaylist(playlistId, song)
             .onSuccess { toast("Added to \"$playlistName\"") }
-            .onFailure { toast("Couldn't add to playlist") }
+            .onFailure { e -> android.util.Log.w("AMAddToPl", "add failed", e); toast("Couldn't add: ${e.message?.take(80) ?: "unknown"}") }
     }
 
     fun playStation(stationId: String, stationArt: String? = null) {
@@ -1441,10 +1488,12 @@ class PlayerViewModel @Inject constructor(
         if (stationId in LIVE_STATION_IDS) { playLiveStation(stationId, stationArt); return }
         viewModelScope.launch {
             val songs = repo.getStationTracks(stationId).getOrDefault(emptyList())
-            if (songs.isNotEmpty()) playAlbum(songs)
-            // Radio-SHOW episodes are `stations` too, but they have no next-tracks song queue — they
-            // stream as a live-style HLS feed. Fall back to the live path so radio shows actually play.
-            else playLiveStation(stationId, stationArt)
+            if (songs.isNotEmpty()) { playAlbum(songs); return@launch }
+            // Radio-SHOW episodes / talk shows are `stations` too but have no next-tracks queue, and
+            // their on-demand asset needs the live Widevine license that currently 500s (errorCode
+            // -1003, see LiveRadioDrmCallback). Routing them to the live path just failed and showed
+            // the track as "Apple Music Radio" — so surface an honest message instead of a dead play.
+            toast("This radio show can't be played yet")
         }
     }
 
@@ -1468,13 +1517,13 @@ class PlayerViewModel @Inject constructor(
     /** Plain internet-radio stream player. Radio UI is currently hidden — kept only so
      *  RadioScreen still compiles. No ICY song-identification. */
     @OptIn(UnstableApi::class)
-    fun playInternetRadio(name: String, streamUrl: String, subtitle: String = "Internet Radio") {
+    fun playInternetRadio(name: String, streamUrl: String, subtitle: String = "Internet Radio", logoUrl: String? = null) {
         usingStandalone = false
         lastErrorKey = null
         prefetchJob?.cancel()
         val fakeSong = com.applemusicktv.data.model.Song(
             id = "radio:$streamUrl", title = name, artistName = subtitle,
-            albumName = "", durationMs = 0L, artworkUrl = null, artworkBgColor = null,
+            albumName = "", durationMs = 0L, artworkUrl = logoUrl, artworkBgColor = null,
             previewUrl = null, hasLyrics = false,
         )
         _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null, isLiveRadio = true, userQueue = emptyList()) }
@@ -1482,6 +1531,40 @@ class PlayerViewModel @Inject constructor(
         player.prepare()
         player.volume = 1f
         player.play()
+        startRadioIdentify(streamUrl, name, subtitle, logoUrl)
+    }
+
+    private var radioIdentifyJob: kotlinx.coroutines.Job? = null
+    /** Continuously poll Shazam (proxy) for the song on an internet-radio stream. On a hit, fold the
+     *  song into Now Playing; on a miss (ads/talk/quiet), fall back to showing the station itself.
+     *  Keyed on the stream id so switching stations cancels the old loop. */
+    private fun startRadioIdentify(streamUrl: String, stationName: String, stationSub: String, stationArt: String?) {
+        radioIdentifyJob?.cancel()
+        val baseId = "radio:$streamUrl"
+        radioIdentifyJob = viewModelScope.launch {
+            var lastShownTitle: String? = null
+            while (_state.value.isLiveRadio && _state.value.currentSong?.id == baseId) {
+                // Only identify while actually playing — pausing the radio pauses the search too.
+                if (!_state.value.isPlaying) { kotlinx.coroutines.delay(2_000); continue }
+                val id = runCatching { repo.identifyStream(streamUrl) }.getOrNull()
+                if (_state.value.currentSong?.id != baseId) break
+                val title = id?.title?.takeIf { it.isNotBlank() }
+                android.util.Log.i("AMRadioID", "identify '$stationName' -> ${title ?: "(none)"} / ${id?.artist ?: ""}")
+                val cur = _state.value.currentSong ?: break
+                val updated = if (title != null) {
+                    cur.copy(title = title, artistName = id?.artist?.takeIf { it.isNotBlank() } ?: stationName,
+                        albumName = stationName, artworkUrl = id?.artwork ?: stationArt)
+                } else {
+                    // Nothing found → show the station (name/logo), not a stale song.
+                    cur.copy(title = stationName, artistName = stationSub, albumName = "", artworkUrl = stationArt)
+                }
+                if (title != lastShownTitle || title == null) {
+                    _state.update { it.copy(currentSong = updated, song = updated, queue = listOf(updated)) }
+                    lastShownTitle = title
+                }
+                kotlinx.coroutines.delay(if (title != null) 20_000 else 8_000)
+            }
+        }
     }
 
     /** In-band timed metadata from the live radio stream. Apple ships the current track as ID3
@@ -1743,6 +1826,8 @@ class PlayerViewModel @Inject constructor(
                     val tmp = java.io.File(context.cacheDir, "${out.name}.tmp")
                     tmp.writeBytes(dec.decryptWhole(encrypted))
                     tmp.renameTo(out)   // atomic — a half-written file is never played
+                    // Bound the decrypt scratch to the user's cap (LRU, keeps the just-written file).
+                    com.applemusicktv.util.MediaCacheManager.trim(context, cachePrefs.getCap())
                     webServer.addLog("AMCENC", "song=${song.id} in=${encrypted.size} out=${out.length()} ${System.currentTimeMillis() - t0}ms ${if (foreground) "fg" else "bg"}")
                     out
                 } finally { decryptMutex.unlock() }
@@ -1756,10 +1841,61 @@ class PlayerViewModel @Inject constructor(
         return job.await()
     }
 
-    fun pause() { player.pause() }
+    /**
+     * Fold an in-progress crossfade down to the INCOMING track at once, optionally left paused.
+     *
+     * A crossfade is two players: `player` (outgoing, fading out) and `crossfadeExo` (incoming,
+     * already audible and fading in). pause() used to pause only `player`, so the incoming track
+     * kept playing and the music didn't stop. Promoting the incoming player and applying the
+     * play/pause intent to IT stops all audio and leaves a single-player state to resume from.
+     * Mirrors the STATE_ENDED snap in [playerListener], but here it can leave playback paused.
+     */
+    private fun collapseCrossfade(resumePlaying: Boolean) {
+        if (!crossfadeInProgress) return
+        fadeJob?.cancel()
+        val cfExo = crossfadeExo
+        crossfadeExo = null
+        crossfadeInProgress = false
+        val oldP = player
+        try { oldP.removeListener(playerListener); oldP.volume = 0f; oldP.stop(); oldP.release() } catch (_: Exception) {}
+        if (cfExo != null && (cfExo.playbackState == Player.STATE_READY || cfExo.playbackState == Player.STATE_BUFFERING)) {
+            cfExo.volume = 1f
+            cfExo.playWhenReady = resumePlaying
+            player = cfExo
+            promoteCrossfadeBeat()
+            cfExoErrListener?.let { cfExo.removeListener(it) }; cfExoErrListener = null
+            cfExo.addListener(playerListener)
+            _state.update { it.copy(isPlaying = cfExo.isPlaying) }
+            // Rebuilding the MediaSession reinits the audio pipeline — defer so it doesn't gap audio.
+            viewModelScope.launch {
+                delay(500)
+                mediaSession?.release()
+                mediaSession = buildMediaSession(player)
+            }
+        } else {
+            try { cfExo?.stop(); cfExo?.release() } catch (_: Exception) {}
+            player = buildExoPlayer().also { it.addListener(playerListener) }
+            mediaSession?.release()
+            mediaSession = buildMediaSession(player)
+            _state.update { it.copy(isPlaying = false) }
+        }
+    }
+
+    fun pause() {
+        if (crossfadeInProgress) collapseCrossfade(resumePlaying = false)
+        player.pause()
+    }
     fun togglePlayPause() {
         // First play after a restore actually LOADS the stashed track (deferred so nothing auto-starts).
         if (pendingRestore != null) { startPendingRestore(); return }
+        // Mid-crossfade there are two players; fold to the incoming one first so pause/resume act on
+        // a single player and the audio actually stops. Preserve intent from either player's state.
+        if (crossfadeInProgress) {
+            val wasPlaying = player.playWhenReady || (crossfadeExo?.playWhenReady == true)
+            collapseCrossfade(resumePlaying = !wasPlaying)
+            if (wasPlaying) saveState()
+            return
+        }
         // Gate on playWhenReady, NOT isPlaying: while a cold track is still buffering isPlaying is
         // false even though the user intends to play, so pressing pause used to (wrongly) start it.
         if (player.playWhenReady) {
@@ -1864,10 +2000,10 @@ class PlayerViewModel @Inject constructor(
     }
 
     // Add to end of user priority queue (plays before rest of playlist)
-    fun addToQueue(song: Song) { _state.update { it.copy(userQueue = it.userQueue + song) }; prefetchSong(song) }
+    fun addToQueue(song: Song) { _state.update { it.copy(userQueue = it.userQueue + song) }; prefetchSong(song); saveState() }
 
     // Insert at front of user priority queue (plays immediately next)
-    fun playNext(song: Song) { _state.update { it.copy(userQueue = listOf(song) + it.userQueue) }; prefetchSong(song) }
+    fun playNext(song: Song) { _state.update { it.copy(userQueue = listOf(song) + it.userQueue) }; prefetchSong(song); saveState() }
 
     // Play a specific userQueue item immediately, removing it from the queue
     fun playFromUserQueue(idx: Int) {
@@ -1903,15 +2039,45 @@ class PlayerViewModel @Inject constructor(
 
     private fun loadLyrics(songId: String) {
         lyricsJob?.cancel()
+        // New song → drop any stale translation until re-fetched for these lines.
+        _state.update { it.copy(lyricsTranslation = emptyList()) }
         lyricsCache[songId]?.let { cached ->
-            if (_state.value.currentSong?.id == songId) _state.update { it.copy(lyrics = cached) }
+            if (_state.value.currentSong?.id == songId) { _state.update { it.copy(lyrics = cached) }; if (_state.value.translateLyrics) fetchTranslation(songId) }
             return
         }
         val song = _state.value.currentSong?.takeIf { it.id == songId }
         lyricsJob = viewModelScope.launch {
             val lines = fetchLyricsShared(songId, song?.title ?: "", song?.artistName ?: "", (song?.durationMs ?: 0L) / 1000).await()
-            if (lines.isNotEmpty() && _state.value.currentSong?.id == songId)
+            if (lines.isNotEmpty() && _state.value.currentSong?.id == songId) {
                 _state.update { it.copy(lyrics = lines) }
+                if (_state.value.translateLyrics) fetchTranslation(songId)
+            }
+        }
+    }
+
+    /** Preferred translation language — the device language, falling back to English. */
+    private val translateLang: String get() = java.util.Locale.getDefault().language.ifBlank { "en" }
+    private var translateJob: kotlinx.coroutines.Job? = null
+
+    /** Toggle the Now Playing lyrics translation (··· menu). Persisted so it stays on across songs. */
+    fun toggleTranslateLyrics() {
+        val on = !_state.value.translateLyrics
+        _state.update { it.copy(translateLyrics = on) }
+        prefs.edit { putBoolean("translate_lyrics", on) }
+        val id = _state.value.currentSong?.id
+        if (on && id != null) fetchTranslation(id) else _state.update { it.copy(lyricsTranslation = emptyList()) }
+    }
+
+    private fun fetchTranslation(songId: String) {
+        translateJob?.cancel()
+        val lines = _state.value.lyrics.map { it.text }
+        if (lines.isEmpty()) return
+        translateJob = viewModelScope.launch {
+            val translated = repo.translateLines(lines, translateLang)
+            android.util.Log.i("AMtr", "translate lang=$translateLang in=${lines.size} out=${translated.size} sample='${translated.firstOrNull()?.take(30)}'")
+            webServer.addLog("TR", "translate lang=$translateLang in=${lines.size} out=${translated.size}")
+            if (translated.isNotEmpty() && _state.value.currentSong?.id == songId && _state.value.translateLyrics)
+                _state.update { it.copy(lyricsTranslation = translated) }
         }
     }
 

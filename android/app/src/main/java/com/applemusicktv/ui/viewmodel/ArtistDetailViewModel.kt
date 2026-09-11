@@ -17,12 +17,18 @@ data class ArtistDetailUiState(
     val name:           String = "",
     val artworkUrl:     String? = null,
     val bio:            String? = null,
+    /** Richer long-form artist bio (Apple `artistBio`); falls back to editorial notes. */
+    val fullBio:        String? = null,
+    /** About-box facts. origin = hometown ("Toronto, ON, Canada"), born = "February 16, 1990". */
+    val origin:         String? = null,
+    val born:           String? = null,
     val genres:         List<String> = emptyList(),
     val topSongs:       List<Song> = emptyList(),
     val musicVideos:    List<Song> = emptyList(),
     val latestRelease:  Album? = null,
     val albums:         List<Album> = emptyList(),
     val featuredAlbums: List<Album> = emptyList(),
+    val playlists:      List<Album> = emptyList(),
     val similarArtists: List<SimilarArtistDto> = emptyList(),
     val error:          String? = null,
 )
@@ -47,12 +53,16 @@ class ArtistDetailViewModel @Inject constructor(
                     name           = d.name,
                     artworkUrl     = d.artworkUrl,
                     bio            = d.editorialNotes,
+                    fullBio        = d.artistBio ?: d.editorialNotes,
+                    origin         = d.origin,
+                    born           = d.bornOrFormed,
                     genres         = d.genreNames,
                     topSongs       = d.topSongs.map(repo::songFromDto),
                     musicVideos    = d.musicVideos.map(repo::songFromDto),
                     latestRelease  = d.latestRelease?.let(repo::albumFromDto),
                     albums         = d.albums.map(repo::albumFromDto),
                     featuredAlbums = d.featuredAlbums.map(repo::albumFromDto),
+                    playlists      = d.playlists.map(repo::albumFromDto),
                     similarArtists = d.similarArtists,
                 )
             }

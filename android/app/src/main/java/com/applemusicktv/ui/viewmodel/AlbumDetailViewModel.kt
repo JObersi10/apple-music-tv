@@ -22,6 +22,7 @@ data class AlbumDetailUiState(
     val album:         Album?      = null,
     val tracks:        List<Song>  = emptyList(),
     val relatedAlbums: List<Album> = emptyList(),
+    val musicVideos:   List<Song>  = emptyList(),
     val motionUrl:     String?     = null,
     val error:         String?     = null,
 )
@@ -58,11 +59,26 @@ class AlbumDetailViewModel @Inject constructor(
                 val relatedD = async { repo.getRelatedAlbums(albumId) }
                 val tracks = tracksD.await().getOrDefault(emptyList())
                 val motionUrl = tracks.firstOrNull()?.id?.let { repo.getMotion(it).getOrNull() }
+                val album = albumD.await().getOrNull()
+                // Albums rarely list MVs in the tracklist, but the artist usually has related ones.
+                // Pull the artist feed and prefer videos whose title/album matches this album; fall back
+                // to the artist's videos so the shelf isn't empty. Best-effort — never fails the page.
+                // album.artistId is often null (the album feed omits it) — fall back to a track's artist.
+                val artistIdForVideos = album?.artistId?.takeIf { it.isNotBlank() }
+                    ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
+                val videos = artistIdForVideos?.takeIf { it.isNotBlank() }?.let { aid ->
+                    runCatching { repo.getArtistFull(aid).getOrNull()?.musicVideos?.map(repo::songFromDto).orEmpty() }.getOrDefault(emptyList())
+                }.orEmpty().let { all ->
+                    val name = album?.title?.lowercase().orEmpty()
+                    val matched = all.filter { it.albumName.lowercase() == name || it.title.lowercase().contains(name) }
+                    (if (matched.isNotEmpty()) matched else all).take(12)
+                }
                 val newState = AlbumDetailUiState(
                     isLoading     = false,
-                    album         = albumD.await().getOrNull(),
+                    album         = album,
                     tracks        = tracks,
                     relatedAlbums = relatedD.await().getOrDefault(emptyList()),
+                    musicVideos   = videos,
                     motionUrl     = motionUrl,
                 )
                 _state.value = newState

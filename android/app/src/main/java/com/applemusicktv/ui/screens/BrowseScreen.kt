@@ -146,8 +146,8 @@ private fun SpotlightRow(
 ) {
     Column(Modifier.fillMaxWidth()) {
         Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
-            modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
+            modifier = Modifier.padding(start = 24.dp, bottom = 14.dp))
+        LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 0.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(albums, key = { it.id }, contentType = { "spotlight" }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
@@ -174,8 +174,8 @@ private fun SpotlightRow(
 private fun BrowseVideoRow(title: String, videos: List<com.applemusicktv.data.model.Song>, playerVm: PlayerViewModel) {
     Column(Modifier.fillMaxWidth()) {
         Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
-            modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            modifier = Modifier.padding(start = 24.dp, bottom = 14.dp))
+        LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 8.dp, end = 0.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(videos.size) { idx ->
                 val v = videos[idx]
                 Surface(
@@ -219,10 +219,10 @@ private fun BrowseRow(
             fontSize   = 18.sp,
             fontWeight = FontWeight.SemiBold,
             color      = Color.White,
-            modifier   = Modifier.padding(start = 48.dp, bottom = 14.dp),
+            modifier   = Modifier.padding(start = 24.dp, bottom = 14.dp),
         )
         LazyRow(
-            contentPadding        = PaddingValues(horizontal = 48.dp, vertical = 8.dp),
+            contentPadding        = PaddingValues(start = 24.dp, top = 8.dp, end = 0.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             items(albums, key = { it.id }) { album ->

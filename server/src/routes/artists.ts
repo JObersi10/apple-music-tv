@@ -36,10 +36,10 @@ artistRoutes.get("/:id/full", async (c) => {
   }
 
   try {
-    const views = "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos"
+    const views = "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos,playlists"
     const url = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/artists/${id}` +
-      `?views=${views}&extend=editorialNotes` +
-      `&limit[artists:top-songs]=20&limit[artists:full-albums]=30&limit[artists:top-music-videos]=20`
+      `?views=${views}&extend=editorialNotes,artistBio,bornOrFormed,origin` +
+      `&limit[artists:top-songs]=20&limit[artists:full-albums]=30&limit[artists:top-music-videos]=20&limit[artists:playlists]=15`
     const res = await axios.get(url, { headers })
     const artist = res.data?.data?.[0]
     if (!artist) return c.json({ error: "Artist not found" }, 404)
@@ -56,6 +56,15 @@ artistRoutes.get("/:id/full", async (c) => {
       name: s.attributes?.name ?? "Unknown",
       artworkUrl: s.attributes?.artwork?.url ?? null,
     }))
+    // Artist playlists (Essentials, Deep Cuts, etc.) — mapped like albums so the client renders a shelf.
+    const playlists = (v["playlists"]?.data ?? []).map((p: any) => ({
+      id: p.id,
+      title: p.attributes?.name ?? "Unknown",
+      artistName: p.attributes?.curatorName ?? attr.name ?? "",
+      artworkUrl: p.attributes?.artwork?.url ?? null,
+      artworkBgColor: p.attributes?.artwork?.bgColor ?? null,
+      type: "playlists",
+    }))
 
     return c.json({
       id: artist.id,
@@ -63,11 +72,17 @@ artistRoutes.get("/:id/full", async (c) => {
       artworkUrl: attr.artwork?.url ?? null,
       genreNames: attr.genreNames ?? [],
       editorialNotes: attr.editorialNotes?.standard ?? attr.editorialNotes?.short ?? null,
+      // Artist "About" facts (The Weeknd → origin "Toronto, ON, Canada", born "February 16, 1990").
+      // Apple only returns these when explicitly extended; artistBio is the richer long-form note.
+      origin: attr.origin ?? null,
+      bornOrFormed: attr.bornOrFormed ?? null,
+      artistBio: attr.artistBio ?? null,
       topSongs,
       musicVideos,
       latestRelease: latest[0] ?? null,
       albums: full,
       featuredAlbums: featured,
+      playlists,
       similarArtists: similar,
     })
   } catch (e: any) {
