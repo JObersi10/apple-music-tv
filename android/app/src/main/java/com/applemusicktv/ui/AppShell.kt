@@ -653,84 +653,33 @@ fun AppShell(modifier: Modifier = Modifier) {
             }
             Box(Modifier.fillMaxSize()) {
                 if (surfaceMounted) {
+                    // BLEED FIX — render the video to a TextureView, not a (secure) SurfaceView.
+                    // This display has no HDCP link, so Widevine already falls back to L3 (software
+                    // decrypt → non-secure output buffers). A TextureView draws entirely inside the
+                    // Android view hierarchy, so it physically CANNOT punch a hole through the UI or
+                    // latch a frame on a SurfaceFlinger overlay — the whole class of "bleed onto other
+                    // tabs" goes away. Controls are drawn in Compose (MusicVideoScreen), so no
+                    // Media3 PlayerView is needed; a raw TextureView + setVideoTextureView is enough.
                     androidx.compose.ui.viewinterop.AndroidView(
                         factory = { ctx ->
-                            androidx.media3.ui.PlayerView(ctx).apply {
-                                useController = false
-                                setShutterBackgroundColor(android.graphics.Color.BLACK)
-                                setKeepScreenOn(true)
-                                // Quality change rebuilds the player (single-variant master). Without this
-                                // the view blanks to BLACK the instant the old player detaches and only
-                                // repaints when the new decoder emits its first frame — that black flash is
-                                // the "480p→1080p glitch". Keeping the last frame up bridges the reload.
-                                setKeepContentOnPlayerReset(true)
-                                // DO NOT setZOrderMediaOverlay/OnTop(true). That puts the secure SurfaceView
-                                // on a hardware plane ABOVE the window, which bleeds over Library and can't be
-                                // reaped by any View teardown. DEFAULT z-order sits it BEHIND the window,
-                                // punching a hole only where mounted — off Now Playing we either unmount it
-                                // (low power) or shrink it to 1px behind the opaque tab (seamless).
-                                (videoSurfaceView as? android.view.SurfaceView)?.apply {
-                                    setZOrderMediaOverlay(false)
-                                    // setSecure was TRUE to get HDCP-protected HD — but the on-device log
-                                    // proved this HDMI chain has NO active HDCP link
-                                    // ("CryptoException: Required output protections are not active"), so
-                                    // the video was capped to ~432p ANYWAY and the only thing the secure
-                                    // surface did was latch its last protected frame on the SurfaceFlinger
-                                    // plane → the Library/Videos "bleed" that nothing at the View layer
-                                    // could reap. On a display that can't do protected HD, a secure
-                                    // surface is pure downside: same SD quality, plus the bleed + the
-                                    // crypto error. A NORMAL surface plays the same SD tier, tears down
-                                    // cleanly (no bleed), and doesn't hit the crypto error.
-                                    // TODO: if a genuinely HDCP-capable display shows up, gate this on a
-                                    // detected-HDCP flag instead of hard-false.
-                                    setSecure(false)
-                                }
-                                player = mvPlayer
+                            android.view.TextureView(ctx).apply {
+                                layoutParams = android.widget.FrameLayout.LayoutParams(
+                                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                )
+                                keepScreenOn = true
                             }
                         },
-                        update = { pv ->
-                            // detachVideo() calls clearVideoSurface(), which unbinds the surface from
-                            // the player. Setting the SAME player reference again is a no-op and would
-                            // NOT re-attach it — so on return to Now Playing, bounce player through null
-                            // to force PlayerView to re-bind its SurfaceView to the (re-enabled) video.
-                            if (isOnNowPlaying && pv.player === mvPlayer) pv.player = null
-                            pv.player = mvPlayer
-                            pv.visibility = android.view.View.VISIBLE
-                            // Keep the last frame ONLY on Now Playing (bridges a quality-change reload).
-                            // Off Now Playing we must NOT retain it: the audio-only rebuild swaps in a
-                            // player with no video, and a retained PROTECTED frame stays latched on the
-                            // secure SurfaceView. (Forcing the SurfaceView GONE here was tried — it did
-                            // NOT reap the plane and risked faulting the live secure decoder. The real
-                            // cure is the video-model recode; see HANDOFF / video-surface-bleed memory.)
-                            pv.setKeepContentOnPlayerReset(isOnNowPlaying)
-                            if (lowPower && isOnNowPlaying) mvVm.attachVideo()
+                        update = { tv ->
+                            // Bind the current player (rebuilt by detach/attach) to this TextureView.
+                            runCatching { mvPlayer?.setVideoTextureView(tv) }
                         },
-                        onRelease = { pv ->
-                            // Bleed fix — Approach A. Before the SurfaceView is destroyed, un-latch the
-                            // protected buffer stuck on the SurfaceFlinger plane:
-                            //  1. detach the player from the surface (stop it re-locking),
-                            //  2. clear the SECURE flag FIRST — a secure surface refuses lockCanvas
-                            //     (no CPU access to protected buffers), so this must come before the draw,
-                            //  3. overwrite the latched frame with an opaque BLACK canvas,
-                            //  4. then release.
-                            pv.setKeepContentOnPlayerReset(false)
-                            (pv.videoSurfaceView as? android.view.SurfaceView)?.let { sv ->
-                                runCatching { pv.player?.clearVideoSurfaceView(sv) }
-                                runCatching { sv.setSecure(false) }
-                                runCatching {
-                                    val holder = sv.holder
-                                    val canvas = holder.lockCanvas()
-                                    if (canvas != null) {
-                                        canvas.drawColor(android.graphics.Color.BLACK)
-                                        holder.unlockCanvasAndPost(canvas)
-                                    }
-                                }
-                            }
-                            pv.player = null
+                        onRelease = { tv ->
+                            runCatching { mvPlayer?.clearVideoTextureView(tv) }
                         },
-                        // Off Now Playing: shove the (audio-only, no protected frame) surface FAR off the
-                        // visible screen instead of leaving a 1px hole at the origin that bled onto the
-                        // Videos tab. On Now Playing: fullscreen.
+                        // Off Now Playing: move it off-screen so the picture isn't visible on other
+                        // tabs (a TextureView can't bleed, but it's still a live view — keep it out of
+                        // the way). On Now Playing: fullscreen.
                         modifier = if (!isOnNowPlaying) Modifier.absoluteOffset(x = 6000.dp).size(1.dp)
                                    else Modifier.fillMaxSize(),
                     )
