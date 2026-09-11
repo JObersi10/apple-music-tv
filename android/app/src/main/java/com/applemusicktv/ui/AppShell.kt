@@ -671,12 +671,19 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 // (low power) or shrink it to 1px behind the opaque tab (seamless).
                                 (videoSurfaceView as? android.view.SurfaceView)?.apply {
                                     setZOrderMediaOverlay(false)
-                                    // Mark the surface SECURE so the compositor grants HDCP-protected HD
-                                    // output. Without it the OS lets SD through but blocks HD with
-                                    // "Required output protections are not active" (Netflix marks its
-                                    // surface secure — that's why it does 1080p here and we were stuck at
-                                    // 480p). A secure surface also reads back BLACK in screenshots.
-                                    setSecure(true)
+                                    // setSecure was TRUE to get HDCP-protected HD — but the on-device log
+                                    // proved this HDMI chain has NO active HDCP link
+                                    // ("CryptoException: Required output protections are not active"), so
+                                    // the video was capped to ~432p ANYWAY and the only thing the secure
+                                    // surface did was latch its last protected frame on the SurfaceFlinger
+                                    // plane → the Library/Videos "bleed" that nothing at the View layer
+                                    // could reap. On a display that can't do protected HD, a secure
+                                    // surface is pure downside: same SD quality, plus the bleed + the
+                                    // crypto error. A NORMAL surface plays the same SD tier, tears down
+                                    // cleanly (no bleed), and doesn't hit the crypto error.
+                                    // TODO: if a genuinely HDCP-capable display shows up, gate this on a
+                                    // detected-HDCP flag instead of hard-false.
+                                    setSecure(false)
                                 }
                                 player = mvPlayer
                             }

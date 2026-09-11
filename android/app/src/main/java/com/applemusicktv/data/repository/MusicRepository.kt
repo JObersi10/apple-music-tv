@@ -307,9 +307,16 @@ class MusicRepository @Inject constructor(
 
     /** Translate lyric lines to [to] (ISO code). Proxy-only (uses the server's keyless translator);
      *  returns empty on failure so callers just show the originals. */
-    suspend fun translateLines(lines: List<String>, to: String): List<String> = runCatching {
-        api.translate(com.applemusicktv.data.network.TranslateRequest(lines, to)).lines
-    }.getOrDefault(emptyList())
+    suspend fun translateLines(lines: List<String>, to: String): List<String> {
+        // On-device FIRST: hit the keyless Google endpoint directly from the app so translation works
+        // with no proxy dependency (the user wants it on-device). Fall back to the proxy route only if
+        // the direct call comes back empty (e.g. the device can't reach Google but the proxy can).
+        val direct = directLyrics.translate(lines, to)
+        if (direct.isNotEmpty()) return direct
+        return runCatching {
+            api.translate(com.applemusicktv.data.network.TranslateRequest(lines, to)).lines
+        }.getOrDefault(emptyList())
+    }
 
     suspend fun getPlaylistTracks(id: String) =
         if (!useProxy) direct.playlistTracks(id).map { it.songs.map(::songFromDto) }
