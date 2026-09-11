@@ -22,15 +22,15 @@ proxy. To drop the server dependence, move the call **into the app** — either:
 
 Kept the working proxy version for now (per "use an API … else remove it for now, add to roadmap").
 
-## Music-video picture bleed — full recode (if v3 doesn't hold)
-Three teardown strategies tried against the secure (`setSecure(true)`, needed for HD) SurfaceView:
+## Music-video picture bleed — ACCEPTED HARDWARE LIMIT (closed)
+Exhausted on-device on this MTK Fire TV; none cleared the latched protected buffer:
 1. 1px behind the window — bled through the Videos tab.
-2. Destroy on leave — orphaned the SurfaceFlinger layer (Fire TV latches the last protected buffer).
-3. **(current)** Keep mounted, drop to audio-only (no protected frame), move far off-screen.
+2. Destroy on leave — orphaned the SurfaceFlinger layer (latches the last protected buffer).
+3. Audio-only rebuild, surface far off-screen — still bled.
+4. `setSecure(false)` / lockCanvas black frame / TextureView (MTK GRALLOC rejects protected fmt 0x23) / L3 (firmware forces `.secure` codec anyway).
+5. **(current) Avenue 4 — hard-stop:** fully release the secure codec on leave (`hardStopVideo`, confirmed `ComponentDeInit`), unmount surface, toast "Video paused — audio still playing", rebuild on return. Kills the live decoder (stops the residual bleed's power source + BT underflow) but the compositor's latched frame is a firmware wall.
 
-If v3 still bleeds, the real cure is a video-model recode: render the MV in its own dedicated
-window/`Presentation` (or a separate secure surface with explicit `SurfaceHolder` destroy/recreate),
-fully dismissed when leaving Now Playing. See memory `video-surface-bleed`.
+Only guaranteed cure = audio-only MVs (never build a secure decoder) — declined, keeps the picture. Do NOT re-attempt surface/track/DRM tricks; all proven dead here. See memory `video-surface-bleed` / `mv-restore-secure-surface`.
 
 ## Music-video: ~1s video reload when returning to Now Playing
 Leaving Now Playing disables the video track (frees the secure decoder so BT audio doesn't stutter);

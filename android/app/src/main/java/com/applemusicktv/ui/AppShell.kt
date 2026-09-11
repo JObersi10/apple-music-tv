@@ -649,7 +649,14 @@ fun AppShell(modifier: Modifier = Modifier) {
                 // surface; returning rebuilds at the saved position (~1s). No live secure decoder off
                 // Now Playing = no bleed, no Bluetooth stutter.
                 if (isOnNowPlaying) { surfaceMounted = true; mvVm.resumeVideo() }
-                else { mvVm.hardStopVideo(); surfaceMounted = false }
+                else {
+                    mvVm.hardStopVideo(); surfaceMounted = false
+                    // MTK secure decoder can't be shown off Now Playing (bleed). Tell the user the
+                    // picture paused; audio keeps going. Return to Now Playing to see it again.
+                    android.widget.Toast.makeText(
+                        appContext, "Video paused — audio still playing", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
             Box(Modifier.fillMaxSize()) {
                 if (surfaceMounted) {
