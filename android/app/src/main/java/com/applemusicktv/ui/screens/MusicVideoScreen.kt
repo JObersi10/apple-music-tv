@@ -63,6 +63,13 @@ fun MusicVideoScreen(
     val cues by vm.cues.collectAsState()
     val showQueue by vm.showQueue.collectAsState()
     var queueCursor by remember(showQueue) { mutableIntStateOf(queueIndex.coerceAtLeast(0)) }
+    // DIAG: what the MV queue panel actually receives. If this logs the updated queue/userQueue but
+    // the panel still looks stale, it's a render issue; if it logs stale values, the state isn't
+    // reaching this composable. Remove once the queue-not-updating cause is confirmed.
+    androidx.compose.runtime.LaunchedEffect(queue, userQueue, queueIndex) {
+        android.util.Log.i("AMMVq", "queue=${queue.size} idx=$queueIndex userQueue=${userQueue.size} " +
+            "q=[${queue.joinToString("|") { it.title.take(12) }}] uq=[${userQueue.joinToString("|") { it.title.take(12) }}]")
+    }
 
     var controls by remember { mutableStateOf(true) }
     var focus by remember { mutableStateOf(MvTarget.SCRUB) }

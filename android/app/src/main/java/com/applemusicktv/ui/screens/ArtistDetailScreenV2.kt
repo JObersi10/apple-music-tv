@@ -118,14 +118,13 @@ fun ArtistDetailScreenV2(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize()
-            // Focus-up trap fix: once you scroll down far enough, the hero (item 0, with the
-            // Play/Shuffle/Station controls) is DISPOSED by the LazyColumn, so there is no focusable
-            // target above and D-pad Up did nothing — focus was stuck in the lower shelves. When the
-            // hero is fully off-screen (firstVisibleItemIndex > 0), intercept Up: scroll back to the
-            // top and put focus on the hero Play button. While the hero is still on-screen, Up falls
-            // through to normal stepwise focus movement between shelves.
+            // Focus-up trap fix, take 2. Only ESCAPE to the hero when we're right at the top shelf
+            // (the hero — item 0 — has just been disposed, firstVisibleItemIndex == 1). Then Up jumps
+            // back to the hero Play button. Deeper in the list Up is NOT intercepted, so it moves
+            // one shelf at a time like normal (the old version jumped straight to the top from
+            // anywhere, which is what felt broken).
             .onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionUp && listState.firstVisibleItemIndex > 0) {
+                if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionUp && listState.firstVisibleItemIndex == 1) {
                     scope.launch {
                         listState.animateScrollToItem(0)
                         runCatching { heroPlayFocus.requestFocus() }
@@ -178,7 +177,7 @@ fun ArtistDetailScreenV2(
         if (state.musicVideos.isNotEmpty()) {
             item { HeaderV2("Music Videos") }
             item {
-                LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 0.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 10.dp, end = 24.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     items(state.musicVideos.size) { i ->
                         val v = state.musicVideos[i]
                         Surface(
@@ -225,7 +224,7 @@ fun ArtistDetailScreenV2(
         if (state.playlists.isNotEmpty()) {
             item { HeaderV2("Playlists") }
             item {
-                LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 0.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(AmTokens.Space.md)) {
+                LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 10.dp, end = 24.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(AmTokens.Space.md)) {
                     items(state.playlists, key = { it.id }) { pl ->
                         AmCard(title = pl.title, subtitle = pl.artistName.ifBlank { null },
                             artworkUrl = pl.artworkUrl(312), width = 156,
@@ -443,7 +442,9 @@ private fun HeroCircle(glyph: com.applemusicktv.ui.components.Glyph, size: Int, 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun AlbumRowV2(albums: List<Album>, onAlbumClick: (String) -> Unit) {
-    LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 0.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(AmTokens.Space.md)) {
+    // end=24 + roomier vertical padding so the focused card's scale + glow isn't hard-cut at the
+    // screen edge (Featured/Albums rows). LazyRow clips to its bounds, so the padding IS the margin.
+    LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 10.dp, end = 24.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(AmTokens.Space.md)) {
         items(albums, key = { it.id }) { album ->
             AmCard(title = album.title, subtitle = album.artistName.ifBlank { null },
                 artworkUrl = album.artworkUrl(312), width = 156, onClick = { onAlbumClick(album.id) })

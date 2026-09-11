@@ -32,6 +32,16 @@ If v3 still bleeds, the real cure is a video-model recode: render the MV in its 
 window/`Presentation` (or a separate secure surface with explicit `SurfaceHolder` destroy/recreate),
 fully dismissed when leaving Now Playing. See memory `video-surface-bleed`.
 
+## Music-video: ~1s video reload when returning to Now Playing
+Leaving Now Playing disables the video track (frees the secure decoder so BT audio doesn't stutter);
+returning re-enables it, and the decoder + surface re-acquire takes ~1s before the picture is back.
+Keeping the decoder alive off-screen (v6) removes the delay but churns the secure decoder and
+**stutters Bluetooth audio**, so track-disable stays. Options to try on-device: (a) pre-warm the video
+decoder a beat before the nav transition completes; (b) hold the last frame (`setKeepContentOnPlayerReset`)
+so the reload isn't visible; (c) accept it. Alternatively, a **hard "stop video on leave"** — close the
+MV entirely when navigating away instead of continuing its audio — kills the delay, the bleed, and the
+stutter in one go, at the cost of the "audio keeps playing like a song across tabs" behaviour.
+
 ## Other queued polish
 - Soft margins (content fades under the top bar).
 - Artist video hero + collapsing hero.
