@@ -63,7 +63,10 @@ class AlbumDetailViewModel @Inject constructor(
                 // Albums rarely list MVs in the tracklist, but the artist usually has related ones.
                 // Pull the artist feed and prefer videos whose title/album matches this album; fall back
                 // to the artist's videos so the shelf isn't empty. Best-effort — never fails the page.
-                val videos = album?.artistId?.takeIf { it.isNotBlank() }?.let { aid ->
+                // album.artistId is often null (the album feed omits it) — fall back to a track's artist.
+                val artistIdForVideos = album?.artistId?.takeIf { it.isNotBlank() }
+                    ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
+                val videos = artistIdForVideos?.takeIf { it.isNotBlank() }?.let { aid ->
                     runCatching { repo.getArtistFull(aid).getOrNull()?.musicVideos?.map(repo::songFromDto).orEmpty() }.getOrDefault(emptyList())
                 }.orEmpty().let { all ->
                     val name = album?.title?.lowercase().orEmpty()

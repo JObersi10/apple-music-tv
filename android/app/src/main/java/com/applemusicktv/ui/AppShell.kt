@@ -643,13 +643,13 @@ fun AppShell(modifier: Modifier = Modifier) {
             // Return to Now Playing re-attaches video in place. Audio never stops.
             LaunchedEffect(isOnNowPlaying, videoActive) {
                 if (!videoActive) { surfaceMounted = false; return@LaunchedEffect }
-                // v5: keep the surface MOUNTED the whole time a video is active (destroy-on-leave
-                // orphaned the secure plane). Audio never rebuilds now — detach/attach only toggle the
-                // video TRACK on the live player, so the sound is continuous (fixes the ~0.5s cut the
-                // v2 rebuild introduced). Off Now Playing the surface is shoved far off-screen so its
-                // compositor hole is nowhere visible; on return we re-enable the track and re-attach.
-                surfaceMounted = true
-                if (isOnNowPlaying) mvVm.attachVideo() else mvVm.detachVideo()
+                // Bleed fix, Avenue 4 (HARD STOP). This MTK chip forces the secure decoder → protected
+                // plane bleed that nothing at the surface/track/DRM layer could reap. So on leaving Now
+                // Playing we RELEASE the codec entirely (MV audio stops too — accepted) and UNMOUNT the
+                // surface; returning rebuilds at the saved position (~1s). No live secure decoder off
+                // Now Playing = no bleed, no Bluetooth stutter.
+                if (isOnNowPlaying) { surfaceMounted = true; mvVm.resumeVideo() }
+                else { mvVm.hardStopVideo(); surfaceMounted = false }
             }
             Box(Modifier.fillMaxSize()) {
                 if (surfaceMounted) {

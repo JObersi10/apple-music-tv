@@ -610,6 +610,34 @@ class MusicVideoViewModel @Inject constructor(
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
     }
 
+    // ── Bleed fix, Avenue 4: HARD STOP on leaving Now Playing ────────────────────
+    // This MediaTek Fire TV forces the SECURE video decoder for Apple's Widevine content (L1) — L3
+    // override, TextureView, and track-disable all failed: the .secure codec renders to a protected
+    // SurfaceFlinger plane that bleeds onto other tabs, and keeping it alive off-screen stutters
+    // Bluetooth audio. The ONLY reliable cure is to fully RELEASE the codec when leaving Now Playing.
+    // Cross-tab MV audio therefore stops (accepted). Returning rebuilds from the on-disk playlists at
+    // the saved position (no network) — ~1s reload.
+    private var hardStopped = false
+    @OptIn(UnstableApi::class)
+    fun hardStopVideo() {
+        val exo = player ?: return
+        if (hardStopped) return
+        hardStopped = true
+        pendingSeekMs = exo.currentPosition
+        Log.i("AMMV", "hardStopVideo: releasing secure codec at ${pendingSeekMs}ms (audio stops)")
+        releasePlayer()   // stop + release ExoPlayer + DRM → the .secure MediaCodec is destroyed
+    }
+    @OptIn(UnstableApi::class)
+    fun resumeVideo() {
+        if (!hardStopped) return
+        hardStopped = false
+        val mv = curMv; val b = curBearer; val m = curMut
+        if (mv != null && b != null && m != null) {
+            Log.i("AMMV", "resumeVideo: rebuild at ${pendingSeekMs}ms")
+            viewModelScope.launch { buildAndPlay(mv, b, m, disableVideo = false, seekMs = pendingSeekMs, playWhenReady = !userPaused); pendingSeekMs = 0 }
+        }
+    }
+
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }
     fun seekBy(deltaMs: Long) { player?.let { it.seekTo((it.currentPosition + deltaMs).coerceAtLeast(0)) } }
     fun seekTo(ms: Long) { player?.seekTo(ms.coerceAtLeast(0)) }
