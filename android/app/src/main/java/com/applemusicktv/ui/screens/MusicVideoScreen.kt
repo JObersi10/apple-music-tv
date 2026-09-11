@@ -63,13 +63,6 @@ fun MusicVideoScreen(
     val cues by vm.cues.collectAsState()
     val showQueue by vm.showQueue.collectAsState()
     var queueCursor by remember(showQueue) { mutableIntStateOf(queueIndex.coerceAtLeast(0)) }
-    // DIAG: what the MV queue panel actually receives. If this logs the updated queue/userQueue but
-    // the panel still looks stale, it's a render issue; if it logs stale values, the state isn't
-    // reaching this composable. Remove once the queue-not-updating cause is confirmed.
-    androidx.compose.runtime.LaunchedEffect(queue, userQueue, queueIndex) {
-        android.util.Log.i("AMMVq", "queue=${queue.size} idx=$queueIndex userQueue=${userQueue.size} " +
-            "q=[${queue.joinToString("|") { it.title.take(12) }}] uq=[${userQueue.joinToString("|") { it.title.take(12) }}]")
-    }
 
     var controls by remember { mutableStateOf(true) }
     var focus by remember { mutableStateOf(MvTarget.SCRUB) }
@@ -292,6 +285,7 @@ fun MusicVideoScreen(
             }
         }
 
+        // (QueueRow is defined below.)
         // ── Up-Next queue panel (right side) — translucent, rounded, slides in ──
         AnimatedVisibility(
             visible = showQueue,
@@ -301,62 +295,43 @@ fun MusicVideoScreen(
         ) {
             Box(Modifier.fillMaxHeight().padding(14.dp).width(360.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xF21C1C1E)).padding(vertical = 22.dp)) {
                 val queueListState = androidx.compose.foundation.lazy.rememberLazyListState()
-                // LazyColumn rows before the base queue: "Up Next" header (1) + optional
-                // "Playing Next" section (label + userQueue rows) — so the cursor→item map is offset.
-                val headerRows = 1 + (if (userQueue.isNotEmpty()) userQueue.size + 2 else 0)
-                LaunchedEffect(queueCursor, showQueue) {
-                    if (showQueue) runCatching { queueListState.animateScrollToItem((headerRows + (queueCursor - queueIndex)).coerceAtLeast(0)) }
+                // Order: "Up Next" header, the CURRENT track, then "Playing Next" (userQueue — the
+                // Play-Next / Add-to-Queue songs, which genuinely play before the rest), then the
+                // upcoming queue. userQueue sits right UNDER the current track so added songs are
+                // always visible — the old layout put it above the current track and the auto-scroll
+                // (which pins the current track near the top) pushed it off the top of the panel, so
+                // added songs were there but never on screen.
+                val uqBlockRows = if (userQueue.isNotEmpty()) userQueue.size + 2 else 0  // label + rows + spacer
+                // Item index of the current track = 1 (after the header). Keep it near the top so the
+                // "Playing Next" block below it is visible.
+                LaunchedEffect(queueCursor, showQueue, userQueue.size) {
+                    if (!showQueue) return@LaunchedEffect
+                    val target = if (queueCursor <= queueIndex) 0
+                                 else 2 + uqBlockRows + (queueCursor - queueIndex - 1)
+                    runCatching { queueListState.animateScrollToItem(target.coerceAtLeast(0)) }
                 }
                 LazyColumn(state = queueListState, contentPadding = PaddingValues(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     item {
                         Text("Up Next", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                             letterSpacing = (-0.3).sp, modifier = Modifier.padding(bottom = 14.dp))
                     }
-                    // Play Next / Add to Queue items — shown read-only so the user sees what they added.
+                    // Current track.
+                    if (queueIndex in queue.indices) {
+                        item(key = "cur_${queue[queueIndex].id}") { QueueRow(queue[queueIndex], nowPlaying = true, selected = queueCursor == queueIndex) }
+                    }
+                    // Playing Next (userQueue) — right under the current track.
                     if (userQueue.isNotEmpty()) {
                         item {
                             Text("Playing Next", color = Color(0x99FFFFFF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.5.sp, modifier = Modifier.padding(bottom = 6.dp))
+                                letterSpacing = 0.5.sp, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
                         }
-                        itemsIndexed(userQueue, key = { i, s -> "uq_${s.id}_$i" }) { _, song ->
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                if (song.isMusicVideo)
-                                    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 5.dp, vertical = 1.dp)) {
-                                        Text("MV", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                                    }
-                                Column(Modifier.weight(1f)) {
-                                    Text(song.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-                                    Text(song.artistName, color = Color(0x99FFFFFF), fontSize = 11.sp, maxLines = 1)
-                                }
-                            }
-                        }
+                        itemsIndexed(userQueue, key = { i, s -> "uq_${s.id}_$i" }) { _, song -> QueueRow(song, nowPlaying = false, selected = false) }
                         item { Spacer(Modifier.height(8.dp)) }
                     }
-                    // Only the current track + what's upcoming (drop already-played), matching the
-                    // audio Now Playing panel. userQueue above already shows Play-Next items, which
-                    // genuinely play before these (next() drains userQueue first).
-                    items(queue.size - queueIndex) { rel ->
-                        val i = queueIndex + rel
-                        val song = queue[i]
-                        val sel = i == queueCursor
-                        val nowPlaying = i == queueIndex
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                .background(if (sel) Color(0x26FFFFFF) else Color.Transparent)
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            if (song.isMusicVideo)
-                                Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 5.dp, vertical = 1.dp)) {
-                                    Text("MV", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                                }
-                            Column(Modifier.weight(1f)) {
-                                Text(song.title, color = if (nowPlaying) Color(0xFFFA233B) else Color.White, fontSize = 14.sp,
-                                    fontWeight = if (nowPlaying) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
-                                Text(song.artistName, color = Color(0x99FFFFFF), fontSize = 11.sp, maxLines = 1)
-                            }
-                        }
+                    // Upcoming queue (after the current track).
+                    items(maxOf(0, queue.size - queueIndex - 1)) { rel ->
+                        val i = queueIndex + 1 + rel
+                        QueueRow(queue[i], nowPlaying = false, selected = i == queueCursor)
                     }
                 }
             }
@@ -381,6 +356,26 @@ fun MusicVideoScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun QueueRow(song: com.applemusicktv.data.model.Song, nowPlaying: Boolean, selected: Boolean) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(if (selected) Color(0x26FFFFFF) else Color.Transparent)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (song.isMusicVideo)
+            Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 5.dp, vertical = 1.dp)) {
+                Text("MV", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        Column(Modifier.weight(1f)) {
+            Text(song.title, color = if (nowPlaying) Color(0xFFFA233B) else Color.White, fontSize = 14.sp,
+                fontWeight = if (nowPlaying) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+            Text(song.artistName, color = Color(0x99FFFFFF), fontSize = 11.sp, maxLines = 1)
         }
     }
 }

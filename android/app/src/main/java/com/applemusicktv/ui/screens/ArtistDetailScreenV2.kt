@@ -117,21 +117,7 @@ fun ArtistDetailScreenV2(
         }
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize()
-            // Focus-up trap fix, take 2. Only ESCAPE to the hero when we're right at the top shelf
-            // (the hero — item 0 — has just been disposed, firstVisibleItemIndex == 1). Then Up jumps
-            // back to the hero Play button. Deeper in the list Up is NOT intercepted, so it moves
-            // one shelf at a time like normal (the old version jumped straight to the top from
-            // anywhere, which is what felt broken).
-            .onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionUp && listState.firstVisibleItemIndex == 1) {
-                    scope.launch {
-                        listState.animateScrollToItem(0)
-                        runCatching { heroPlayFocus.requestFocus() }
-                    }
-                    true
-                } else false
-            },
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = 80.dp),
     ) {
         // Hero item is now transparent — the backdrop above shows through it; this just holds the
