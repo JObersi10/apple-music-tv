@@ -42,6 +42,26 @@ so the reload isn't visible; (c) accept it. Alternatively, a **hard "stop video 
 MV entirely when navigating away instead of continuing its audio — kills the delay, the bleed, and the
 stutter in one go, at the cost of the "audio keeps playing like a song across tabs" behaviour.
 
+## Dynamic Now Playing background — Apple's ambient-video approach
+Confirmed from music.apple.com's lyrics fullscreen DOM: Apple layers two things behind the lyrics —
+1. a `<canvas data-testid="now-playing-backdrop">` painting the animated color wash (we already do this
+   in `DynamicBackground` — canvas gradient blobs from the artwork palette), and
+2. an `<amp-ambient-video>` — the album's editorial **motion loop** — as a full backdrop behind the
+   artwork when one exists.
+We ALREADY fetch that motion loop: `GET /api/motion/:songId` returns the square motion-art HLS, and
+`MotionCover` plays it over the static cover on Now Playing. The remaining work is to also render that
+same motion URL FULLSCREEN behind the lyrics/queue (under the color wash + darkening overlays), muted +
+looping, only when `motionUrl != null`; fall back to the pure color wash otherwise. Low risk — reuses
+the URL and the ExoPlayer/MotionCover plumbing already in place. Keep the 4-blob perf budget; the video
+is one decoder, so gate it behind Low Power off.
+
+## Lyrics translation — upgrade to Apple's native translations
+Today translation uses the proxy's keyless Google endpoint (`/api/translate`) — works but unofficial
+and occasionally rate-limited. Apple's own lyrics API returns translations inline (seen in the web DOM:
+`enable-translations="true"` → a `secondary` line per lyric). Upgrade `/api/lyrics/:id` to request and
+parse Apple's own translation track (the `secondary`/localization spans) so translations are official
+and don't depend on Google. Keep the Google path as the fallback for songs Apple hasn't translated.
+
 ## Other queued polish
 - Soft margins (content fades under the top bar).
 - Artist video hero + collapsing hero.

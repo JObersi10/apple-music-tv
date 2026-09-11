@@ -2074,6 +2074,8 @@ class PlayerViewModel @Inject constructor(
         if (lines.isEmpty()) return
         translateJob = viewModelScope.launch {
             val translated = repo.translateLines(lines, translateLang)
+            android.util.Log.i("AMtr", "translate lang=$translateLang in=${lines.size} out=${translated.size} sample='${translated.firstOrNull()?.take(30)}'")
+            webServer.addLog("TR", "translate lang=$translateLang in=${lines.size} out=${translated.size}")
             if (translated.isNotEmpty() && _state.value.currentSong?.id == songId && _state.value.translateLyrics)
                 _state.update { it.copy(lyricsTranslation = translated) }
         }

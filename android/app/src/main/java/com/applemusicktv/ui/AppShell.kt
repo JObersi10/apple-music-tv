@@ -698,7 +698,29 @@ fun AppShell(modifier: Modifier = Modifier) {
                             pv.setKeepContentOnPlayerReset(isOnNowPlaying)
                             if (lowPower && isOnNowPlaying) mvVm.attachVideo()
                         },
-                        onRelease = { it.setKeepContentOnPlayerReset(false); it.player = null },
+                        onRelease = { pv ->
+                            // Bleed fix — Approach A. Before the SurfaceView is destroyed, un-latch the
+                            // protected buffer stuck on the SurfaceFlinger plane:
+                            //  1. detach the player from the surface (stop it re-locking),
+                            //  2. clear the SECURE flag FIRST — a secure surface refuses lockCanvas
+                            //     (no CPU access to protected buffers), so this must come before the draw,
+                            //  3. overwrite the latched frame with an opaque BLACK canvas,
+                            //  4. then release.
+                            pv.setKeepContentOnPlayerReset(false)
+                            (pv.videoSurfaceView as? android.view.SurfaceView)?.let { sv ->
+                                runCatching { pv.player?.clearVideoSurfaceView(sv) }
+                                runCatching { sv.setSecure(false) }
+                                runCatching {
+                                    val holder = sv.holder
+                                    val canvas = holder.lockCanvas()
+                                    if (canvas != null) {
+                                        canvas.drawColor(android.graphics.Color.BLACK)
+                                        holder.unlockCanvasAndPost(canvas)
+                                    }
+                                }
+                            }
+                            pv.player = null
+                        },
                         // Off Now Playing: shove the (audio-only, no protected frame) surface FAR off the
                         // visible screen instead of leaving a 1px hole at the origin that bled onto the
                         // Videos tab. On Now Playing: fullscreen.
