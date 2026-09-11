@@ -667,7 +667,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                     android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                 )
-                                keepScreenOn = true
+                                setKeepScreenOn(true)
                             }
                         },
                         update = { tv ->

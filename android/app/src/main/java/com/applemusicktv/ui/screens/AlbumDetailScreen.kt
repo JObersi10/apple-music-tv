@@ -146,8 +146,7 @@ fun AlbumDetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         contentPadding = PaddingValues(end = 24.dp, top = 4.dp, bottom = 10.dp),
                     ) {
-                        androidx.compose.foundation.lazy.items(state.musicVideos.size) { i ->
-                            val v = state.musicVideos[i]
+                        itemsIndexed(state.musicVideos) { i, v ->
                             androidx.tv.material3.Surface(
                                 onClick = { playerVm.playAlbum(state.musicVideos, i) },
                                 shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
