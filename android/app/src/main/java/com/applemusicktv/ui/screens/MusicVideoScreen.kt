@@ -57,12 +57,25 @@ fun MusicVideoScreen(
     queueIndex: Int = 0,
     userQueue: List<com.applemusicktv.data.model.Song> = emptyList(),
     onPickQueueItem: (Int) -> Unit = {},
+    onPickUserQueue: (Int) -> Unit = {},
     focusRequester: FocusRequester,
 ) {
     val state by vm.state.collectAsState()
     val cues by vm.cues.collectAsState()
     val showQueue by vm.showQueue.collectAsState()
-    var queueCursor by remember(showQueue) { mutableIntStateOf(queueIndex.coerceAtLeast(0)) }
+    // Flat list of navigable targets in VISUAL order: current track, then the userQueue (Play-Next)
+    // rows, then the upcoming queue. Encoding: value >= 0 is a queue index; value < 0 is a userQueue
+    // index encoded as -(uqIndex + 1). The cursor is an index INTO this list, so D-pad Up/Down can
+    // land on the added songs too (before, the cursor only walked the main queue and skipped them).
+    val navTargets = remember(queue, queueIndex, userQueue.size) {
+        buildList {
+            if (queueIndex in queue.indices) add(queueIndex)
+            userQueue.indices.forEach { add(-(it + 1)) }
+            for (i in queueIndex + 1 until queue.size) add(i)
+        }
+    }
+    var queueCursor by remember(showQueue) { mutableIntStateOf(0) }
+    val selTarget = navTargets.getOrNull(queueCursor)
 
     var controls by remember { mutableStateOf(true) }
     var focus by remember { mutableStateOf(MvTarget.SCRUB) }
@@ -127,12 +140,17 @@ fun MusicVideoScreen(
                 if (showQueue) {
                     when (ev.key) {
                         Key.Back, Key.Menu -> { vm.hideQueue(); poke(); true }
-                        Key.DirectionUp -> { if (queueCursor > queueIndex) queueCursor--; true }
-                        Key.DirectionDown -> { if (queueCursor < queue.size - 1) queueCursor++; true }
-                        Key.DirectionCenter, Key.Enter -> { onPickQueueItem(queueCursor); vm.hideQueue(); poke(); true }
+                        Key.DirectionUp -> { if (queueCursor > 0) queueCursor--; true }
+                        Key.DirectionDown -> { if (queueCursor < navTargets.lastIndex) queueCursor++; true }
+                        Key.DirectionCenter, Key.Enter -> {
+                            navTargets.getOrNull(queueCursor)?.let { t ->
+                                if (t >= 0) onPickQueueItem(t) else onPickUserQueue(-t - 1)
+                            }
+                            vm.hideQueue(); poke(); true
+                        }
                         else -> true
                     }
-                } else if (ev.key == Key.Menu) { queueCursor = queueIndex.coerceAtLeast(0); vm.toggleQueue(); true }
+                } else if (ev.key == Key.Menu) { queueCursor = 0; vm.toggleQueue(); true }
                 else if (picker != MvPicker.NONE) {
                     val count = if (picker == MvPicker.AUDIO) auds.size else qualities.size
                     when (ev.key) {
@@ -306,9 +324,15 @@ fun MusicVideoScreen(
                 // "Playing Next" block below it is visible.
                 LaunchedEffect(queueCursor, showQueue, userQueue.size) {
                     if (!showQueue) return@LaunchedEffect
-                    val target = if (queueCursor <= queueIndex) 0
-                                 else 2 + uqBlockRows + (queueCursor - queueIndex - 1)
-                    runCatching { queueListState.animateScrollToItem(target.coerceAtLeast(0)) }
+                    // Map the selected target to its LazyColumn item index (0 header, 1 current,
+                    // 2 "Playing Next" label, 3.. userQueue rows, then upcoming after the spacer).
+                    val item = when {
+                        selTarget == null -> 0
+                        selTarget == queueIndex -> 1
+                        selTarget < 0 -> 3 + (-selTarget - 1)
+                        else -> 2 + uqBlockRows + (selTarget - queueIndex - 1)
+                    }
+                    runCatching { queueListState.animateScrollToItem(item.coerceAtLeast(0)) }
                 }
                 LazyColumn(state = queueListState, contentPadding = PaddingValues(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     item {
@@ -317,21 +341,21 @@ fun MusicVideoScreen(
                     }
                     // Current track.
                     if (queueIndex in queue.indices) {
-                        item(key = "cur_${queue[queueIndex].id}") { QueueRow(queue[queueIndex], nowPlaying = true, selected = queueCursor == queueIndex) }
+                        item(key = "cur_${queue[queueIndex].id}") { QueueRow(queue[queueIndex], nowPlaying = true, selected = selTarget == queueIndex) }
                     }
-                    // Playing Next (userQueue) — right under the current track.
+                    // Playing Next (userQueue) — right under the current track, now cursor-selectable.
                     if (userQueue.isNotEmpty()) {
                         item {
                             Text("Playing Next", color = Color(0x99FFFFFF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
                                 letterSpacing = 0.5.sp, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
                         }
-                        itemsIndexed(userQueue, key = { i, s -> "uq_${s.id}_$i" }) { _, song -> QueueRow(song, nowPlaying = false, selected = false) }
+                        itemsIndexed(userQueue, key = { i, s -> "uq_${s.id}_$i" }) { j, song -> QueueRow(song, nowPlaying = false, selected = selTarget == -(j + 1)) }
                         item { Spacer(Modifier.height(8.dp)) }
                     }
                     // Upcoming queue (after the current track).
                     items(maxOf(0, queue.size - queueIndex - 1)) { rel ->
                         val i = queueIndex + 1 + rel
-                        QueueRow(queue[i], nowPlaying = false, selected = i == queueCursor)
+                        QueueRow(queue[i], nowPlaying = false, selected = selTarget == i)
                     }
                 }
             }

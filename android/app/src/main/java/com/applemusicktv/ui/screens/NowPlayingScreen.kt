@@ -1509,12 +1509,18 @@ private fun LyricsPanel(
             // Translated text under the line (only when it differs from the original — skip
             // instrumentals / untranslatable lines). Dimmer + italic so it reads as a gloss.
             translations.getOrNull(idx)?.takeIf { it.isNotBlank() && !it.equals(line.text, ignoreCase = true) }?.let { tr ->
+                // Grows + brightens with the active line (mirrors the main lyric), fades back when past.
+                val trAlpha by animateFloatAsState(if (isActive) 0.90f else if (isPast) 0.28f else 0.40f, label = "trA")
+                val trScale by animateFloatAsState(if (isActive) 1f else 0.92f, label = "trS")
                 Text(
                     tr,
-                    style = TextStyle(fontSize = (15f * fontScale).sp, lineHeight = (20f * fontScale).sp,
+                    style = TextStyle(fontSize = ((if (isActive) 16.5f else 14f) * fontScale).sp,
+                        lineHeight = ((if (isActive) 21f else 18f) * fontScale).sp,
                         fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                        color = if (isActive) Color(0xCCFFFFFF) else Color(0x55FFFFFF)),
-                    modifier = Modifier.fillMaxWidth().padding(end = 16.dp, top = 1.dp, bottom = 2.dp),
+                        color = Color.White.copy(alpha = trAlpha)),
+                    modifier = Modifier.fillMaxWidth()
+                        .graphicsLayer { scaleX = trScale; scaleY = trScale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) }
+                        .padding(end = 16.dp, top = 5.dp, bottom = 6.dp),
                 )
             }
         }

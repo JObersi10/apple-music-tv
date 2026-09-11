@@ -760,6 +760,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                         queueIndex = playerState.queueIndex,
                         userQueue = playerState.userQueue,
                         onPickQueueItem = { playerVm.playFromQueue(it) },
+                        onPickUserQueue = { playerVm.playFromUserQueue(it) },
                         focusRequester = videoFocus,
                     )
                 }

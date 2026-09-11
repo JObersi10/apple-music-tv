@@ -67,3 +67,10 @@ and don't depend on Google. Keep the Google path as the fallback for songs Apple
 - Artist video hero + collapsing hero.
 - Radio/Videos card-size + accent fine-tuning vs Home/New.
 - MV audio-only rebuild speed (tied to the video-model recode).
+
+## Album page: Music Videos section
+Albums rarely carry MVs in the tracklist, but the artist often has related MVs. Add a "Music Videos"
+shelf at the BOTTOM of `AlbumDetailScreen` — pull the artist feed (`/api/artists/:id/full` already
+returns `musicVideos`) using the album's `artistId`, filter to videos matching this album/era, render
+as 16:9 thumbnails that play via `playerVm.playAlbum(videos, i)`. Also consider MV badges on search
+results.
