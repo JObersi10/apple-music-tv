@@ -401,10 +401,11 @@ fun NowPlayingScreen(
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
                 Row(
-                    // Vertical padding gives the focused play/pause button room for its 1.10x
-                    // scale + glow; without it the button's top/bottom clipped as the whole
-                    // group scaled up on the idle transition.
-                    modifier = Modifier.padding(vertical = 8.dp).graphicsLayer { alpha = chromeAlpha },
+                    // The alpha graphicsLayer composites the row into an offscreen buffer sized to
+                    // its bounds, which CLIPS the focused play/pause button's 10dp glow while chrome
+                    // is mid-fade (alpha != 1). Padding placed AFTER the layer lives inside that
+                    // buffer, giving the glow (and the 1.10x focus scale) room so it isn't cropped.
+                    modifier = Modifier.graphicsLayer { alpha = chromeAlpha }.padding(14.dp),
                     horizontalArrangement = Arrangement.spacedBy(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1378,6 +1379,10 @@ private fun LyricsPanel(
             // low, then it snaps up on the next line change. Scroll to bring it on screen,
             // then nudge (instantly) by the same delta the line-change path animates.
             listState.scrollToItem(target)
+            // Let the layout pass run before reading item offsets — reading immediately after
+            // scrollToItem returns stale/empty visibleItemsInfo, so the nudge was skipped and the
+            // line stayed top-aligned (low) until the next line change snapped it to 30%.
+            withFrameNanos { }
             val info = listState.layoutInfo
             val activeItem = info.visibleItemsInfo.firstOrNull { it.index == scrollAnchor }
             if (activeItem != null) {
