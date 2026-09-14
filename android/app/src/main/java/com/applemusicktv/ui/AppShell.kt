@@ -651,10 +651,8 @@ fun AppShell(modifier: Modifier = Modifier) {
                 if (isOnNowPlaying) { surfaceMounted = true; mvVm.resumeVideo() }
                 else {
                     mvVm.hardStopVideo(); surfaceMounted = false
-                    // The MTK secure plane can leave a leftover video frame on other tabs (a TV
-                    // firmware quirk we can't clear). Warn the user so it doesn't look like a crash.
                     android.widget.Toast.makeText(
-                        appContext, "Music video may linger on screen — TV hardware quirk",
+                        appContext, "Press Back to return to the previous screen",
                         android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }

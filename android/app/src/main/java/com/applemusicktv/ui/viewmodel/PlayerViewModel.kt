@@ -1302,9 +1302,15 @@ class PlayerViewModel @Inject constructor(
         beatAnalyzer.resetBeat(); mainProc?.resetBeat()
         crossfadeSkipSongId = null
         catalogRetriedSongId = null   // fresh selection → allow a new catalog on-device retry
-        // Cancel any in-progress crossfade
+        // Cancel any in-progress crossfade — AND tear down the incoming crossfade player.
+        // cfExo is built at volume 0 and play()ed immediately to pre-buffer, so cancelling
+        // only the fade job leaves it running: the old `player` then starts this new
+        // selection while cfExo keeps playing the previous crossfade target → two songs at
+        // once. Releasing it here is the same cleanup the fade-cancel paths already do.
         fadeJob?.cancel()
         crossfadeInProgress = false
+        crossfadeExo?.let { cfExoErrListener?.let { l -> it.removeListener(l) }; try { it.stop(); it.release() } catch (_: Exception) {} }
+        crossfadeExo = null; cfExoErrListener = null
 
         val song = q[idx]
         if (song.id in unavailableSongIds) {
