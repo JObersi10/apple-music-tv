@@ -67,8 +67,11 @@ class AlbumDetailViewModel @Inject constructor(
                 val artistIdForVideos = album?.artistId?.takeIf { it.isNotBlank() }
                     ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
                 val videos = artistIdForVideos?.takeIf { it.isNotBlank() }?.let { aid ->
-                    runCatching { repo.getArtistFull(aid).getOrNull()?.musicVideos?.map(repo::songFromDto).orEmpty() }.getOrDefault(emptyList())
+                    runCatching { repo.getArtistFull(aid).getOrNull()?.musicVideos?.map(repo::songFromDto).orEmpty() }
+                        .onFailure { android.util.Log.w("AMAlbumMV", "getArtistFull($aid) failed: ${it.message}") }
+                        .getOrDefault(emptyList())
                 }.orEmpty().let { all ->
+                    android.util.Log.i("AMAlbumMV", "aid=$artistIdForVideos artistMVs=${all.size} album='${album?.title}'")
                     val name = album?.title?.lowercase().orEmpty()
                     val matched = all.filter { it.albumName.lowercase() == name || it.title.lowercase().contains(name) }
                     (if (matched.isNotEmpty()) matched else all).take(12)

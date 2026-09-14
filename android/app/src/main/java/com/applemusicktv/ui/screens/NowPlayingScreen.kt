@@ -1342,6 +1342,9 @@ private fun LyricsPanel(
     // into it) — not only after a scroll. Focus-in alone used to leave the timer disarmed,
     // so it never handed focus back to the play button.
     var listFocused by remember { mutableStateOf(false) }
+    // Which lyric line currently holds D-pad focus (-1 = none). Used so the up-escape guard
+    // only blocks leaving the list from the FIRST line — not moving up INTO the first line.
+    var focusedLineIndex by remember { mutableStateOf(-1) }
     // After the lyrics have been focused/centred for a bit, hand focus back to the
     // play button so the D-pad isn't stranded in the lyric list.
     LaunchedEffect(userScrolled, listFocused) {
@@ -1442,8 +1445,12 @@ private fun LyricsPanel(
                 }
             } else Modifier)
             .onPreviewKeyEvent { ev: androidx.compose.ui.input.key.KeyEvent ->
-                // Block upward D-pad escape to top nav bar from lyrics
+                // Block upward D-pad escape to the top nav bar only when the FIRST line is
+                // focused. Otherwise let Up through so focus can move UP INTO the first line
+                // (the old scroll-position guard consumed every Up at the top → first line
+                // was unreachable).
                 ev.key == Key.DirectionUp && ev.type == KeyEventType.KeyDown &&
+                    focusedLineIndex <= 0 &&
                     listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
             },
         contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
@@ -1504,6 +1511,7 @@ private fun LyricsPanel(
                     fontScale = fontScale,
                     focusRequester = if (isActive) activeLineFocus else null,
                     onSeek = { onSeek(line.startMs) },
+                    onFocused = { focusedLineIndex = idx },
                 )
             }
             // Translated text under the line (only when it differs from the original — skip
@@ -1649,6 +1657,7 @@ private fun LyricLineRow(
     onSeek: () -> Unit,
     fontScale: Float = 1f,
     focusRequester: FocusRequester? = null,
+    onFocused: (() -> Unit)? = null,
 ) {
     // Reading the provider here subscribes only this row: the active row (live clock)
     // recomposes per frame; inactive rows read a constant and never re-run on tick.
@@ -1671,7 +1680,9 @@ private fun LyricLineRow(
     ) {
         Surface(
             onClick = onSeek,
-            modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
+            modifier = Modifier.fillMaxWidth()
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .then(if (onFocused != null) Modifier.onFocusChanged { if (it.isFocused) onFocused() } else Modifier),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.Transparent,

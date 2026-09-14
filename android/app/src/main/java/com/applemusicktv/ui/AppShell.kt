@@ -651,10 +651,11 @@ fun AppShell(modifier: Modifier = Modifier) {
                 if (isOnNowPlaying) { surfaceMounted = true; mvVm.resumeVideo() }
                 else {
                     mvVm.hardStopVideo(); surfaceMounted = false
-                    // MTK secure decoder can't be shown off Now Playing (bleed). Tell the user the
-                    // picture paused; audio keeps going. Return to Now Playing to see it again.
+                    // The MTK secure plane can leave a leftover video frame on other tabs (a TV
+                    // firmware quirk we can't clear). Warn the user so it doesn't look like a crash.
                     android.widget.Toast.makeText(
-                        appContext, "Video paused — audio still playing", android.widget.Toast.LENGTH_SHORT
+                        appContext, "Music video may linger on screen — TV hardware quirk",
+                        android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }
             }
