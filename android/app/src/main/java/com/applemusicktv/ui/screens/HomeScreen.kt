@@ -98,9 +98,9 @@ private fun ContentRow(
     if (section.style == "picks") {
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
+                modifier = Modifier.padding(start = 24.dp, bottom = 14.dp))
             LazyRow(
-                contentPadding = PaddingValues(horizontal = 48.dp),
+                contentPadding = PaddingValues(start = 24.dp, end = 0.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 items(section.albums, key = { it.id }, contentType = { "picks" }) { album ->
@@ -120,9 +120,9 @@ private fun ContentRow(
     if (section.style == "gradient") {
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(section.title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
+                modifier = Modifier.padding(start = 24.dp, bottom = 14.dp))
             LazyRow(
-                contentPadding = PaddingValues(horizontal = 48.dp),
+                contentPadding = PaddingValues(start = 24.dp, end = 0.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 items(section.albums, key = { it.id }, contentType = { "gradient" }) { album ->
@@ -144,10 +144,10 @@ private fun ContentRow(
             fontSize   = 18.sp,
             fontWeight = FontWeight.SemiBold,
             color      = Color.White,
-            modifier   = Modifier.padding(start = 48.dp, bottom = 14.dp),
+            modifier   = Modifier.padding(start = 24.dp, bottom = 14.dp),
         )
         LazyRow(
-            contentPadding        = PaddingValues(horizontal = 48.dp),
+            contentPadding        = PaddingValues(start = 24.dp, end = 0.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             items(section.albums, key = { it.id }, contentType = { "album" }) { album ->

@@ -56,6 +56,15 @@ fun AlbumDetailScreen(
     val album = state.album ?: return
     var menuSong by remember { mutableStateOf<Song?>(null) }
     var addToSong by remember { mutableStateOf<Song?>(null) }
+    // Per-row focus requesters → closing the context menu returns focus to the long-pressed row.
+    val rowFocus = remember { mutableMapOf<String, FocusRequester>() }
+    var refocusId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(refocusId) {
+        val id = refocusId ?: return@LaunchedEffect
+        kotlinx.coroutines.delay(60)
+        runCatching { rowFocus[id]?.requestFocus() }
+        refocusId = null
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
     Row(modifier = Modifier.fillMaxSize().padding(48.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
@@ -122,7 +131,44 @@ fun AlbumDetailScreen(
                     index       = index + 1,
                     onClick     = { playerVm.playAlbum(state.tracks, index) },
                     onLongClick = { menuSong = track },
+                    focusRequester = rowFocus.getOrPut(track.id) { FocusRequester() },
                 )
+            }
+            // Music Videos shelf — the album's own MVs (or the artist's related ones), at the bottom.
+            if (state.musicVideos.isNotEmpty()) {
+                item {
+                    Text("Music Videos", color = androidx.compose.ui.graphics.Color.White,
+                        fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp, top = 20.dp, bottom = 8.dp))
+                }
+                item {
+                    androidx.compose.foundation.lazy.LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(end = 24.dp, top = 4.dp, bottom = 10.dp),
+                    ) {
+                        itemsIndexed(state.musicVideos) { i, v ->
+                            androidx.tv.material3.Surface(
+                                onClick = { playerVm.playAlbum(state.musicVideos, i) },
+                                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                                scale = androidx.tv.material3.ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent, focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent),
+                            ) {
+                                Column(Modifier.width(220.dp).padding(bottom = 6.dp)) {
+                                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(androidx.compose.ui.graphics.Color(0xFF1A1A1A))) {
+                                        v.artworkUrl?.let {
+                                            coil.compose.AsyncImage(model = v.artworkUrl(480), contentDescription = null,
+                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                        }
+                                    }
+                                    Text(v.title, color = androidx.compose.ui.graphics.Color.White, fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold, maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 6.dp, end = 4.dp))
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     } // Row
@@ -136,46 +182,23 @@ fun AlbumDetailScreen(
                     menuSong = s.copy(artistId = aId ?: s.artistId, albumId = alId ?: s.albumId)
             }
         }
-        val dismissMenu = { menuSong = null }
-        Box(
-            Modifier.fillMaxSize()
-                .background(Color(0x88000000))
-                .onKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown &&
-                        (event.key == Key.Back || event.key == Key.Escape)) {
-                        dismissMenu(); true
-                    } else false
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            val firstFocus = remember { FocusRequester() }
-            var clickBlocked by remember(s.id) { mutableStateOf(true) }
-            LaunchedEffect(s.id) {
-                kotlinx.coroutines.delay(800)
-                clickBlocked = false
-                runCatching { firstFocus.requestFocus() }
-            }
-            Column(
-                Modifier.width(320.dp).heightIn(max = 340.dp).clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF1C1C1E))
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-                Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                AlbumContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                AlbumContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                AlbumContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
-                AlbumContextItem(Glyph.RADIO, "Create Station", { if (!clickBlocked) { playerVm.createSongStation(s); dismissMenu() } })
-                val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
-                val goAlbum  = s.albumId ?: album.id
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                if (goArtist != null) AlbumContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(goArtist); dismissMenu() } })
-                if (goAlbum  != null) AlbumContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(goAlbum);   dismissMenu() } })
-            }
-        }
+        val dismissMenu = { refocusId = menuSong?.id; menuSong = null }
+        val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
+        val goAlbum  = s.albumId ?: album.id
+        com.applemusicktv.ui.components.AmContextMenu(
+            title = s.title,
+            subtitle = s.artistName,
+            artworkUrl = s.artworkUrl,
+            onDismiss = dismissMenu,
+            actions = buildList {
+                add(com.applemusicktv.ui.components.AmMenuAction("Play Next", com.applemusicktv.ui.components.Glyph.PLAY_NEXT) { playerVm.playNext(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", com.applemusicktv.ui.components.Glyph.QUEUE_ADD) { playerVm.addToQueue(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to…", com.applemusicktv.ui.components.Glyph.ADD_TO) { addToSong = s; dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Create Station", com.applemusicktv.ui.components.Glyph.RADIO) { playerVm.createSongStation(s); dismissMenu() })
+                if (goArtist != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", com.applemusicktv.ui.components.Glyph.ARTIST) { onArtistClick(goArtist); dismissMenu() })
+                if (goAlbum  != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Album", com.applemusicktv.ui.components.Glyph.ALBUM) { onAlbumClick(goAlbum); dismissMenu() })
+            },
+        )
     }
 
     addToSong?.let { s ->
@@ -209,11 +232,11 @@ private fun AlbumContextItem(icon: Glyph, label: String, onClick: () -> Unit, mo
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TrackRow(track: Song, index: Int, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
+private fun TrackRow(track: Song, index: Int, onClick: () -> Unit, onLongClick: () -> Unit = {}, focusRequester: FocusRequester? = null) {
     Surface(
         onClick     = onClick,
         onLongClick = onLongClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).fillMaxWidth(),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
         colors   = ClickableSurfaceDefaults.colors(
             containerColor        = Color.Transparent,

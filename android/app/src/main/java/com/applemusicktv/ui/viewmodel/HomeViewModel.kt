@@ -95,8 +95,26 @@ class HomeViewModel @Inject constructor(
                 if (attempt < 3) kotlinx.coroutines.delay(1500)
             }
             // Total failure: keep any cached feed rather than blanking.
-            if (cached.isNotEmpty()) _state.value = HomeUiState(isLoading = false, sections = cached)
-            else _state.value = HomeUiState(isLoading = false, error = lastErr)
+            if (cached.isNotEmpty()) { _state.value = HomeUiState(isLoading = false, sections = cached); return@launch }
+            // No cache AND every source 500'd (Apple's recommendations service streaks 500s, and a
+            // fresh install right after an update has nothing cached — that's the "home is gone"). Don't
+            // give up: keep retrying in the background with backoff so Home self-heals once Apple
+            // recovers, instead of stranding the user on an empty screen until they relaunch.
+            _state.value = HomeUiState(isLoading = false, error = lastErr)
+            var backoff = 4_000L
+            repeat(15) {
+                kotlinx.coroutines.delay(backoff)
+                backoff = (backoff * 3 / 2).coerceAtMost(30_000L)
+                val r = repo.getHome().getOrNull() ?: return@repeat
+                val secs = r.sections.map { s -> HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style) }
+                if (secs.isNotEmpty()) {
+                    _state.value = HomeUiState(isLoading = false, sections = secs)
+                    if (secs.isPersonalized()) launch(kotlinx.coroutines.Dispatchers.Default) {
+                        runCatching { prefs.edit().putString("sections", adapter.toJson(secs)).apply() }
+                    }
+                    return@launch
+                }
+            }
         }
     }
 }

@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.applemusicktv.data.datasource.RadioSource
 import com.applemusicktv.data.datasource.RadioStation
+import com.applemusicktv.data.network.HomeSection
+import com.applemusicktv.data.repository.MusicRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,11 +23,19 @@ data class RadioUiState(
     val activeCountry: String = "",
     /** Toast-ish note when a typed country name was auto-corrected. */
     val correctionNote: String? = null,
+    /** Apple Music Radio shelves (grouping 168577) shown ABOVE the internet-radio section. */
+    val appleSections: List<HomeSection> = emptyList(),
+    val appleLoading: Boolean = true,
 )
+
+/** Apple's Radio landing page = editorial grouping 168577 (live stations, shows, DJ mixes, broadcasters,
+ *  genre stations). We render those shelves on top, then our own internet-radio directory below. */
+private const val RADIO_GROUPING_ID = "168577"
 
 @HiltViewModel
 class RadioViewModel @Inject constructor(
     private val radio: RadioSource,
+    private val repo: MusicRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RadioUiState())
@@ -36,6 +46,11 @@ class RadioViewModel @Inject constructor(
     private var allCountries: List<Pair<String, String>> = emptyList()
 
     init {
+        viewModelScope.launch {
+            repo.getGrouping(RADIO_GROUPING_ID)
+                .onSuccess { d -> _state.update { it.copy(appleSections = d.sections, appleLoading = false) } }
+                .onFailure { _state.update { it.copy(appleLoading = false) } }
+        }
         viewModelScope.launch {
             allCountries = radio.countryList()
             val geo = radio.detectCountry()

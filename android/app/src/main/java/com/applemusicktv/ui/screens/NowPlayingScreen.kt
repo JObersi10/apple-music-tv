@@ -67,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
@@ -243,6 +244,7 @@ fun NowPlayingScreen(
                 onPrev = playerVm::prev,
                 onPlayPause = playerVm::togglePlayPause,
                 onNext = playerVm::next,
+                translations = state.lyricsTranslation,
                 lyricsScale = state.lyricsScale,
             )
             else -> {
@@ -303,6 +305,18 @@ fun NowPlayingScreen(
                     // paused → show the station's own cover (there's no "current track" while paused).
                     val coverUrl = if (state.isLiveRadio && !state.isPlaying && state.radioStationArt != null)
                         state.radioStationArt else song.artworkUrl(600)
+                    // Fallback FIRST (drawn under the image): many internet-radio stations have no
+                    // favicon in the directory, so guarantee something branded shows — the station's
+                    // initial on a tinted tile. The real logo crossfades in on top when it exists.
+                    if (state.isLiveRadio) {
+                        val letter = (song.albumName.ifBlank { song.artistName }.ifBlank { song.title })
+                            .trim().firstOrNull()?.uppercaseChar()?.toString() ?: "♪"
+                        Box(Modifier.fillMaxSize().background(
+                            Brush.linearGradient(listOf(Color(0xFF2A2A3E), Color(0xFF14141F)))),
+                            contentAlignment = Alignment.Center) {
+                            Text(letter, fontSize = 96.sp, fontWeight = FontWeight.Bold, color = Color(0x55FFFFFF))
+                        }
+                    }
                     if (coverUrl != null) {
                         androidx.compose.animation.Crossfade(
                             targetState = coverUrl,
@@ -337,7 +351,11 @@ fun NowPlayingScreen(
                 var showAddTo by remember { mutableStateOf(false) }
                 if (showAddTo) com.applemusicktv.ui.components.AddToDialog(playerVm, song, onDismiss = { showAddTo = false })
 
-                Box(Modifier.fillMaxWidth()) {
+                // Min height = the ⋯ button's 32dp. The button leaves COMPOSITION on idle
+                // (below), so without a floor the row shrinks to text height and the artist
+                // line jumps up abruptly right as the chrome finishes fading. Pinning the
+                // height keeps title→artist spacing constant through the transition.
+                Box(Modifier.fillMaxWidth().heightIn(min = 32.dp), contentAlignment = Alignment.Center) {
                     MarqueeText(
                         song.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
                         letterSpacing = (-0.5).sp,
@@ -377,13 +395,17 @@ fun NowPlayingScreen(
                     MarqueeText(song.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
                         modifier = Modifier.fillMaxWidth())
                 }
-                Spacer(Modifier.height(14.dp))
-
                 LaunchedEffect(song.id) {
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
                 Row(
-                    modifier = Modifier.graphicsLayer { alpha = chromeAlpha },
+                    // The alpha graphicsLayer composites the row into an offscreen buffer sized to
+                    // its bounds, which CLIPS the focused play/pause button's 10dp glow while chrome
+                    // is mid-fade (alpha != 1). Padding placed AFTER the layer lives inside that
+                    // buffer, giving the glow (+1.10x focus scale) room so it isn't cropped. This
+                    // padding replaces the old fixed Spacers around the row — adding both pushed the
+                    // progress bar off the bottom of the fixed-height column.
+                    modifier = Modifier.graphicsLayer { alpha = chromeAlpha }.padding(horizontal = 14.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -441,6 +463,7 @@ fun NowPlayingScreen(
                                 val repeatLabel = when (state.repeatMode) { RepeatMode.Off -> "Repeat: Off"; RepeatMode.All -> "Repeat: All"; RepeatMode.One -> "Repeat: One" }
                                 NpMenuItem(repeatLabel, icon = if (state.repeatMode == RepeatMode.One) Glyph.REPEAT_ONE else Glyph.REPEAT, checked = state.repeatMode != RepeatMode.Off) { playerVm.toggleRepeat() }
                                 if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics", icon = Glyph.LYRICS) { fullScreenLyrics = true; showOptionsMenu = false }
+                                if (state.lyrics.isNotEmpty()) NpMenuItem("Translate Lyrics", icon = Glyph.LYRICS, checked = state.translateLyrics) { playerVm.toggleTranslateLyrics() }
                                 NpMenuItem("Add to…", icon = Glyph.ADD_TO) { showAddTo = true; showOptionsMenu = false }
                                 NpMenuItem("Start Screensaver", icon = Glyph.STAR) { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
                                 if (song.artistId != null) NpMenuItem("Go to Artist", icon = Glyph.ARTIST) { onArtistClick(song.artistId); showOptionsMenu = false }
@@ -450,7 +473,7 @@ fun NowPlayingScreen(
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(2.dp))
 
                 // Column, not Box: PlayerProgressBar emits the bar AND a time row, which a Box would
                 // overlap (the elapsed/duration text clipped over the bar).
@@ -508,6 +531,7 @@ fun NowPlayingScreen(
                             onSeek = { ms -> playerVm.player.seekTo(ms) },
                             playFocus = playFocus,
                             fontScale = state.lyricsScale,
+                            translations = state.lyricsTranslation,
                         )
                     } else {
                         QueuePanel(
@@ -622,6 +646,7 @@ private fun FullScreenLyrics(
     onPrev: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    translations: List<String> = emptyList(),
     lyricsScale: Float = 1f,
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
@@ -657,6 +682,7 @@ private fun FullScreenLyrics(
                 playFocus = playFocus,
                 fontScale = 1.3f * lyricsScale,
                 autoReturnMs = 5_000L,
+                translations = translations,
             )
         }
         // Now-playing chip, bottom-left — same placement as the screensaver.
@@ -1289,6 +1315,7 @@ private fun LyricsPanel(
     playFocus: FocusRequester? = null,
     fontScale: Float = 1f,
     autoReturnMs: Long = 7000L,
+    translations: List<String> = emptyList(),
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -1324,6 +1351,9 @@ private fun LyricsPanel(
     // into it) — not only after a scroll. Focus-in alone used to leave the timer disarmed,
     // so it never handed focus back to the play button.
     var listFocused by remember { mutableStateOf(false) }
+    // Which lyric line currently holds D-pad focus (-1 = none). Used so the up-escape guard
+    // only blocks leaving the list from the FIRST line — not moving up INTO the first line.
+    var focusedLineIndex by remember { mutableStateOf(-1) }
     // After the lyrics have been focused/centred for a bit, hand focus back to the
     // play button so the D-pad isn't stranded in the lyric list.
     LaunchedEffect(userScrolled, listFocused) {
@@ -1344,7 +1374,22 @@ private fun LyricsPanel(
         if (lyrics.isEmpty()) return@LaunchedEffect
         val target = (scrollAnchor - LYRIC_LEAD_LINES).coerceAtLeast(0)
         if (firstLoad.value) {
+            // Land the active line on its steady-state resting spot (~30% down) right away,
+            // not just top-aligned — otherwise entering Now Playing shows the line sitting
+            // low, then it snaps up on the next line change. Scroll to bring it on screen,
+            // then nudge (instantly) by the same delta the line-change path animates.
             listState.scrollToItem(target)
+            // Let the layout pass run before reading item offsets — reading immediately after
+            // scrollToItem returns stale/empty visibleItemsInfo, so the nudge was skipped and the
+            // line stayed top-aligned (low) until the next line change snapped it to 30%.
+            withFrameNanos { }
+            val info = listState.layoutInfo
+            val activeItem = info.visibleItemsInfo.firstOrNull { it.index == scrollAnchor }
+            if (activeItem != null) {
+                val viewportH = info.viewportEndOffset - info.viewportStartOffset
+                val delta = (activeItem.offset + activeItem.size / 2) - viewportH * 0.30f
+                if (kotlin.math.abs(delta) > 8f) listState.scrollBy(delta)
+            }
             firstLoad.value = false
             return@LaunchedEffect
         }
@@ -1424,8 +1469,12 @@ private fun LyricsPanel(
                 }
             } else Modifier)
             .onPreviewKeyEvent { ev: androidx.compose.ui.input.key.KeyEvent ->
-                // Block upward D-pad escape to top nav bar from lyrics
+                // Block upward D-pad escape to the top nav bar only when the FIRST line is
+                // focused. Otherwise let Up through so focus can move UP INTO the first line
+                // (the old scroll-position guard consumed every Up at the top → first line
+                // was unreachable).
                 ev.key == Key.DirectionUp && ev.type == KeyEventType.KeyDown &&
+                    focusedLineIndex <= 0 &&
                     listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
             },
         contentPadding = PaddingValues(top = 32.dp, bottom = 120.dp),
@@ -1486,6 +1535,24 @@ private fun LyricsPanel(
                     fontScale = fontScale,
                     focusRequester = if (isActive) activeLineFocus else null,
                     onSeek = { onSeek(line.startMs) },
+                    onFocused = { focusedLineIndex = idx },
+                )
+            }
+            // Translated text under the line (only when it differs from the original — skip
+            // instrumentals / untranslatable lines). Dimmer + italic so it reads as a gloss.
+            translations.getOrNull(idx)?.takeIf { it.isNotBlank() && !it.equals(line.text, ignoreCase = true) }?.let { tr ->
+                // Grows + brightens with the active line (mirrors the main lyric), fades back when past.
+                val trAlpha by animateFloatAsState(if (isActive) 0.90f else if (isPast) 0.28f else 0.40f, label = "trA")
+                val trScale by animateFloatAsState(if (isActive) 1f else 0.92f, label = "trS")
+                Text(
+                    tr,
+                    style = TextStyle(fontSize = ((if (isActive) 16.5f else 14f) * fontScale).sp,
+                        lineHeight = ((if (isActive) 21f else 18f) * fontScale).sp,
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                        color = Color.White.copy(alpha = trAlpha)),
+                    modifier = Modifier.fillMaxWidth()
+                        .graphicsLayer { scaleX = trScale; scaleY = trScale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) }
+                        .padding(end = 16.dp, top = 5.dp, bottom = 6.dp),
                 )
             }
         }
@@ -1545,17 +1612,21 @@ private fun WordWipeLine(
                 isCurrent -> ((progressMs - word.startMs).toFloat() / dur).coerceIn(0f, 1f)
                 else      -> 0f
             }
-            // Smooth sine swell — grows to a peak mid-word then eases back to original
-            // size by the end. Sine (not a linear triangle) keeps it from reading as
-            // shake; left-anchored so the first letter stays put. Slow/held words swell +
-            // glow more; fast words stay flat.
+            // Smooth sine swell — grows to a peak mid-word then eases back to original size by the
+            // end. Sine (not a linear triangle) keeps it from reading as shake. Slow/held words
+            // swell + glow more; fast words stay flat.
+            //
+            // Growth is applied as REAL font size (not a graphicsLayer scale), so the word takes up
+            // more width in the FlowRow and the rest of THIS line reflows to the right to make room,
+            // then settles back as the word shrinks — the Apple-style nudge. Kept subtle (~5%) so a
+            // held word never bumps a trailing word onto the next line.
             val slow  = (dur.coerceIn(300L, 1600L) - 300L) / 1300f
             val pulse = if (isCurrent) kotlin.math.sin(frac * Math.PI.toFloat()).coerceIn(0f, 1f) else 0f
-            val grow  = 1f + 0.09f * slow * pulse
+            val grow  = 1f + 0.055f * slow * pulse
             val glowA = if (isCurrent && dur > 700L) 0.34f * pulse * slow else 0f
             WordWipe(
                 text  = word.text + if (i < words.lastIndex) " " else "",
-                frac  = frac, scale = grow, glowAlpha = glowA,
+                frac  = frac, glowAlpha = glowA, grow = grow,
                 fontSize = fontSize, lineHeight = lineHeight, weight = weight,
                 sungColor = sungColor, unsungColor = unsungColor,
             )
@@ -1567,8 +1638,8 @@ private fun WordWipeLine(
 private fun WordWipe(
     text: String,
     frac: Float,
-    scale: Float,
     glowAlpha: Float,
+    grow: Float = 1f,
     fontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
@@ -1592,11 +1663,11 @@ private fun WordWipe(
     val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 14f) else null
     Text(
         text,
+        // Growth rides a graphicsLayer SCALE (GPU, no per-frame relayout) — smoother on Fire TV than
+        // animating fontSize, which relaid out the whole line every frame and read as choppy. Trade-off:
+        // the word scales over its neighbours instead of nudging the line (revisit if the nudge matters).
+        modifier = if (grow != 1f) Modifier.graphicsLayer { scaleX = grow; scaleY = grow } else Modifier,
         style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp, brush = brush, shadow = glow),
-        modifier = Modifier.graphicsLayer {
-            scaleX = scale; scaleY = scale
-            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
-        },
     )
 }
 
@@ -1610,6 +1681,7 @@ private fun LyricLineRow(
     onSeek: () -> Unit,
     fontScale: Float = 1f,
     focusRequester: FocusRequester? = null,
+    onFocused: (() -> Unit)? = null,
 ) {
     // Reading the provider here subscribes only this row: the active row (live clock)
     // recomposes per frame; inactive rows read a constant and never re-run on tick.
@@ -1632,7 +1704,9 @@ private fun LyricLineRow(
     ) {
         Surface(
             onClick = onSeek,
-            modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
+            modifier = Modifier.fillMaxWidth()
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .then(if (onFocused != null) Modifier.onFocusChanged { if (it.isFocused) onFocused() } else Modifier),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.Transparent,
@@ -1712,6 +1786,10 @@ private fun QueuePanel(
 ) {
     val listState = rememberLazyListState()
     var movingIndex by remember { mutableStateOf<Int?>(null) }
+    // Keep focus on the row being moved: it re-keys (its index changes) on every reorder, which would
+    // otherwise drop focus to the nav bar. Re-request focus whenever the moving index changes.
+    val moveFocus = remember { FocusRequester() }
+    LaunchedEffect(movingIndex) { if (movingIndex != null) runCatching { moveFocus.requestFocus() } }
 
     // Always scroll to top (current song) when index changes or userQueue gains items
     LaunchedEffect(currentIndex, userQueue.size) {
@@ -1763,8 +1841,11 @@ private fun QueuePanel(
                 val song = visibleQueue[rel]
                 val isCurrent = false
                 val isMoving = idx == movingIndex
-                val movingMod = if (isMoving) Modifier.onKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                // onPreviewKeyEvent intercepts D-pad BEFORE Compose's focus search — otherwise Up at
+                // the top row escapes to the nav bar instead of moving the song. focusRequester keeps
+                // the handler on the row as it re-keys on each reorder.
+                val movingMod = if (isMoving) Modifier.focusRequester(moveFocus).onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (event.key) {
                         Key.DirectionUp -> {
                             val target = (movingIndex!! - 1).coerceAtLeast(currentIndex + 1)
@@ -1776,13 +1857,13 @@ private fun QueuePanel(
                             if (target != movingIndex) { onMove(movingIndex!!, target); movingIndex = target }
                             true
                         }
-                        Key.Enter -> { movingIndex = null; true }
+                        Key.Enter, Key.DirectionCenter, Key.Back -> { movingIndex = null; true }
                         else -> false
                     }
                 } else Modifier
                 Surface(
                     onClick = { if (movingIndex == idx) movingIndex = null else onSelect(idx) },
-                    onLongClick = { if (rel > 0) movingIndex = idx },
+                    onLongClick = { movingIndex = idx },
                     shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                     colors = ClickableSurfaceDefaults.colors(
                         containerColor        = when { isMoving -> Color(0x44FA233B); isCurrent -> Color(0x26FFFFFF); else -> Color.Transparent },

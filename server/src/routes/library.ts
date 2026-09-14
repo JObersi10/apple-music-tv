@@ -92,6 +92,27 @@ library.get("/songs", async (c) => {
   }
 });
 
+// Music videos in the user's library — same shape as /songs, typed so the client plays them as MVs.
+library.get("/music-videos", async (c) => {
+  const mut = guard(c); if (!mut) return;
+  try {
+    const all: any[] = [];
+    let url: string | null = "https://amp-api-edge.music.apple.com/v1/me/library/music-videos";
+    while (url && all.length < 2000) {
+      const res = await (all.length === 0
+        ? appleGet(url, { limit: 100, include: "catalog" }, mut)
+        : axios.get(url, { headers: appleHeaders(mut) }));
+      all.push(...(res.data?.data ?? []));
+      url = res.data?.next ? `https://amp-api-edge.music.apple.com${res.data.next}` : null;
+    }
+    const videos = all.map((s: any) => ({ ...normaliseSong(s), type: "music-videos" }));
+    return c.json({ songs: videos });
+  } catch (e: any) {
+    console.error("[library/music-videos]", e?.response?.data ?? e.message);
+    return c.json({ error: e.message }, 500);
+  }
+});
+
 library.get("/albums", async (c) => {
   const mut = guard(c); if (!mut) return;
   try {

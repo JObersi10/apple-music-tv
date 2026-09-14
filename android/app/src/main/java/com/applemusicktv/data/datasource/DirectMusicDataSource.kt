@@ -182,13 +182,37 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
 
     /** A catalog grouping (e.g. Music Videos = grouping 34). Video shelves become `videos` sections
      *  so CategoryScreen plays them in the video player; everything else is album/curator cards. */
+    // Apple Music Radio landing grouping. The live-station grid (editorial kind 316) doesn't expand
+    // its children here, so seed the marquee stations by id — matches the proxy `/browse/grouping`.
+    private val RADIO_GROUPING_ID = "168577"
+    private val RADIO_LIVE_IDS = listOf(
+        "ra.978194965", "ra.1498155548", "ra.1498157166", "ra.1740613864", "ra.1740613859", "ra.1740614260",
+    )
+
+    private suspend fun radioLiveSection(): HomeSection? = runCatching {
+        val raw = api.catalogStationsByIds(storefront, RADIO_LIVE_IDS.joinToString(","))
+        val byId = ((raw["data"] as? List<*>)?.mapNotNull { it as? Map<*, *> } ?: emptyList())
+            .associateBy { it["id"] as? String }
+        val albums = RADIO_LIVE_IDS.mapNotNull { sid ->
+            val n = byId[sid] ?: return@mapNotNull null
+            val a = n["attributes"] as? Map<*, *> ?: return@mapNotNull null
+            val url = (a["artwork"] as? Map<*, *>)?.get("url") as? String ?: return@mapNotNull null
+            AlbumDto(id = sid, title = a["name"] as? String ?: "", artistName = "", artworkUrl = url,
+                type = "stations", artworkBgColor = (a["artwork"] as? Map<*, *>)?.get("bgColor") as? String, releaseDate = null)
+        }
+        if (albums.isEmpty()) null else HomeSection("Apple Music Radio", albums)
+    }.getOrNull()
+
     suspend fun getGrouping(id: String): MultiRoomDto {
         val g = api.edGrouping(storefront, id).data.firstOrNull() ?: return MultiRoomDto(id = id)
         val tab = g.relationships?.tabs?.data?.firstOrNull()
+        val live = if (id == RADIO_GROUPING_ID) radioLiveSection() else null
         val sections = (tab?.relationships?.children?.data ?: emptyList()).mapNotNull { k ->
             val kind = k.attributes?.editorialElementKind
             if (kind != "326" && kind != "327") return@mapNotNull null
             val title = k.attributes?.name ?: k.attributes?.title ?: return@mapNotNull null
+            // Radio: "Watch Interviews" uploaded-videos 404 on download — drop it (matches proxy).
+            if (id == RADIO_GROUPING_ID && title == "Watch Interviews") return@mapNotNull null
             val contents = k.relationships?.contents?.data ?: emptyList()
             val types = contents.map { it.type }.toSet()
             if (types.isNotEmpty() && types.all { it == "music-videos" || it == "uploaded-videos" }) {
@@ -199,7 +223,9 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
                 if (albums.isEmpty()) null else HomeSection(title, albums)
             }
         }
-        return MultiRoomDto(id = id, title = g.attributes?.title ?: g.attributes?.name ?: "", sections = sections)
+        val allSections = if (live != null) listOf(live) + sections else sections
+        val title = if (id == RADIO_GROUPING_ID) "Radio" else (g.attributes?.title ?: g.attributes?.name ?: "")
+        return MultiRoomDto(id = id, title = title, sections = allSections)
     }
 
     private fun edItemToVideo(it: EdItem): com.applemusicktv.data.network.SongDto? {
@@ -523,11 +549,15 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
             genreNames = (attrs["genreNames"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
             editorialNotes = ((attrs["editorialNotes"] as? Map<*, *>)?.get("standard")
                 ?: (attrs["editorialNotes"] as? Map<*, *>)?.get("short")) as? String,
+            origin = attrs["origin"] as? String,
+            bornOrFormed = attrs["bornOrFormed"] as? String,
+            artistBio = attrs["artistBio"] as? String,
             topSongs = songs("top-songs"),
             musicVideos = songs("top-music-videos", forceType = "music-videos"),
             latestRelease = albums("latest-release").firstOrNull(),
             albums = albums("full-albums"),
             featuredAlbums = albums("featured-albums"),
+            playlists = albums("playlists"),
             similarArtists = similar,
         )
     }

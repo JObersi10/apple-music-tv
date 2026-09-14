@@ -54,8 +54,22 @@ fun TopNavBar(
     isPlaying: Boolean = false,
     updateAvailable: Boolean = false,
     beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null,
+    /** New-UI flag (Dev → Interface). Renames Listen Now→Home, Browse→New and reveals Videos + Radio. */
+    newUi: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // New UI adds the Videos + Radio destinations (Apple's tab set); classic UI keeps the original five.
+    val tabs = if (newUi)
+        listOf(TopNavTab.ListenNow, TopNavTab.Browse, TopNavTab.Videos, TopNavTab.Radio,
+               TopNavTab.Library, TopNavTab.Search, TopNavTab.NowPlaying, TopNavTab.Dev)
+    else
+        listOf(TopNavTab.ListenNow, TopNavTab.Browse,
+               TopNavTab.Library, TopNavTab.Search, TopNavTab.NowPlaying, TopNavTab.Dev)
+    fun labelFor(tab: TopNavTab): String = when {
+        newUi && tab == TopNavTab.ListenNow -> "Home"
+        newUi && tab == TopNavTab.Browse    -> "New"
+        else -> tab.label
+    }
     var isFocused by remember { mutableStateOf(false) }
     // When the Now Playing screen is up, ANY upward entry into the nav bar (from the
     // ··· button, transport row, lyrics, etc.) must land on the Now Playing tab, not
@@ -93,7 +107,7 @@ fun TopNavBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                TopNavTab.entries.forEach { tab ->
+                tabs.forEach { tab ->
                     val isSelected = tab == selected
                     val bgColor by animateColorAsState(
                         if (isSelected) Color.White else Color.Transparent, tween(180))
@@ -122,7 +136,7 @@ fun TopNavBar(
                                 )
                             } else {
                                 Text(
-                                    text       = tab.label,
+                                    text       = labelFor(tab),
                                     fontSize   = 13.sp,
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                                     letterSpacing = if (isSelected) (-0.1).sp else 0.sp,

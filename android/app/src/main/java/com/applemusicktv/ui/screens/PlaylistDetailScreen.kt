@@ -88,8 +88,20 @@ fun PlaylistDetailScreen(
     var menuSongState by remember { mutableStateOf<Song?>(null) }
     var addToSong by remember { mutableStateOf<Song?>(null) }
     var lastDismissMs by remember { mutableStateOf(0L) }
+    // Per-row focus requesters so closing the context menu lands focus back on the song the
+    // user long-pressed (not the top of the list). Keyed by song id, created lazily per row.
+    val rowFocus = remember { mutableMapOf<String, FocusRequester>() }
+    var refocusId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(refocusId) {
+        val id = refocusId ?: return@LaunchedEffect
+        // Wait a frame for the overlay to leave composition and the row to be focusable again.
+        kotlinx.coroutines.delay(60)
+        runCatching { rowFocus[id]?.requestFocus() }
+        refocusId = null
+    }
     val dismissMenu: () -> Unit = {
         lastDismissMs = System.currentTimeMillis()
+        refocusId = menuSongState?.id
         menuSongState = null
     }
     menuSongState?.let { s ->
@@ -166,10 +178,14 @@ fun PlaylistDetailScreen(
                             SortCircleButton(onClick = { showSortDialog = true })
                         }
                     }
-                    trackItems(sortedTracks, playerVm) { song ->
-                        val now = System.currentTimeMillis()
-                        if (menuSongState == null && now - lastDismissMs > 600) menuSongState = song
-                    }
+                    trackItems(
+                        sortedTracks, playerVm,
+                        focusFor = { id -> rowFocus.getOrPut(id) { FocusRequester() } },
+                        onLongPress = { song ->
+                            val now = System.currentTimeMillis()
+                            if (menuSongState == null && now - lastDismissMs > 600) menuSongState = song
+                        },
+                    )
                 }
                 }  // end else block
             }
@@ -178,43 +194,20 @@ fun PlaylistDetailScreen(
 
     // Fullscreen context menu overlay — no Dialog API, no focus/dismiss races
     menuSongState?.let { s ->
-        Box(
-            Modifier.fillMaxSize()
-                .background(Color(0x88000000))
-                .onKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown &&
-                        (event.key == Key.Back || event.key == Key.Escape)) {
-                        dismissMenu(); true
-                    } else false
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            val firstFocus = remember { FocusRequester() }
-            var clickBlocked by remember(s.id) { mutableStateOf(true) }
-            LaunchedEffect(s.id) {
-                kotlinx.coroutines.delay(800)
-                clickBlocked = false
-                runCatching { firstFocus.requestFocus() }
-            }
-            Column(
-                Modifier.width(320.dp).heightIn(max = 340.dp).clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF1C1C1E))
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-                Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                PlaylistContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                PlaylistContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                PlaylistContextItem(Glyph.RADIO, "Create Station", { if (!clickBlocked) { playerVm.createSongStation(s); dismissMenu() } })
-                PlaylistContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                s.artistId?.let { aid -> PlaylistContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(aid); dismissMenu() } }) }
-                s.albumId?.let  { alid -> PlaylistContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(alid);  dismissMenu() } }) }
-            }
-        }
+        com.applemusicktv.ui.components.AmContextMenu(
+            title = s.title,
+            subtitle = s.artistName,
+            artworkUrl = s.artworkUrl,
+            onDismiss = dismissMenu,
+            actions = buildList {
+                add(com.applemusicktv.ui.components.AmMenuAction("Play Next", com.applemusicktv.ui.components.Glyph.PLAY_NEXT) { playerVm.playNext(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", com.applemusicktv.ui.components.Glyph.QUEUE_ADD) { playerVm.addToQueue(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Create Station", com.applemusicktv.ui.components.Glyph.RADIO) { playerVm.createSongStation(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to…", com.applemusicktv.ui.components.Glyph.ADD_TO) { addToSong = s; dismissMenu() })
+                s.artistId?.let { aid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", com.applemusicktv.ui.components.Glyph.ARTIST) { onArtistClick(aid); dismissMenu() }) }
+                s.albumId?.let  { alid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Album", com.applemusicktv.ui.components.Glyph.ALBUM) { onAlbumClick(alid); dismissMenu() }) }
+            },
+        )
     }
 
     addToSong?.let { s ->
@@ -304,9 +297,10 @@ private fun PlaylistSortRow(label: String, selected: Boolean, modifier: Modifier
     }
 }
 
-private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onMusicVideoClick: (Song) -> Unit = {}, onLongPress: (Song) -> Unit = {}) {
+private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewModel, onMusicVideoClick: (Song) -> Unit = {}, focusFor: (String) -> FocusRequester? = { null }, onLongPress: (Song) -> Unit = {}) {
     items(tracks.size) { idx ->
         val song = tracks[idx]
+        val fr = focusFor(song.id)
         @OptIn(ExperimentalTvMaterial3Api::class)
         Surface(
             onClick     = {
@@ -315,7 +309,8 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
                 playerVm.playAlbum(tracks, idx)
             },
             onLongClick = { onLongPress(song) },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
+            modifier = (if (fr != null) Modifier.focusRequester(fr) else Modifier)
+                .fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = Color.Transparent,

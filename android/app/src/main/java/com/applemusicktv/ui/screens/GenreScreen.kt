@@ -86,7 +86,7 @@ fun GenreScreen(
 
     Column(modifier.fillMaxSize()) {
         Text(genreName, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White,
-            modifier = Modifier.padding(start = 48.dp, top = 20.dp, bottom = 8.dp))
+            modifier = Modifier.padding(start = 24.dp, top = 20.dp, bottom = 8.dp))
 
         when {
             state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = Color(0xFFFA233B)) }
@@ -117,8 +117,8 @@ private fun AlbumRow(
 ) {
     Column(Modifier.fillMaxWidth()) {
         Text(section.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
-            modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            modifier = Modifier.padding(start = 24.dp, bottom = 14.dp))
+        LazyRow(contentPadding = PaddingValues(start = 24.dp, end = 0.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(section.albums, key = { it.id }) { album ->
                 val isPlaylist = album.id.startsWith("pl.") || album.id.startsWith("p.")
                 AlbumCard(album = album, size = 130, onClick = {
@@ -137,8 +137,8 @@ private fun AlbumRow(
 private fun VideoRow(section: GenreSection, playerVm: PlayerViewModel) {
     Column(Modifier.fillMaxWidth()) {
         Text(section.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
-            modifier = Modifier.padding(start = 48.dp, bottom = 14.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            modifier = Modifier.padding(start = 24.dp, bottom = 14.dp))
+        LazyRow(contentPadding = PaddingValues(start = 24.dp, end = 0.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(section.videos.size) { idx ->
                 val v = section.videos[idx]
                 Surface(

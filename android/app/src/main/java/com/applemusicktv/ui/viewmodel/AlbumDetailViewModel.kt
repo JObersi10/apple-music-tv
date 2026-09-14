@@ -22,6 +22,7 @@ data class AlbumDetailUiState(
     val album:         Album?      = null,
     val tracks:        List<Song>  = emptyList(),
     val relatedAlbums: List<Album> = emptyList(),
+    val musicVideos:   List<Song>  = emptyList(),
     val motionUrl:     String?     = null,
     val error:         String?     = null,
 )
@@ -58,11 +59,17 @@ class AlbumDetailViewModel @Inject constructor(
                 val relatedD = async { repo.getRelatedAlbums(albumId) }
                 val tracks = tracksD.await().getOrDefault(emptyList())
                 val motionUrl = tracks.firstOrNull()?.id?.let { repo.getMotion(it).getOrNull() }
+                val album = albumD.await().getOrNull()
+                // Album music videos via the dedicated repo path (proxy route, or artist-feed
+                // derivation on standalone). Best-effort — never fails the page.
+                val videos = repo.getAlbumMusicVideos(albumId).getOrDefault(emptyList())
+                android.util.Log.i("AMAlbumMV", "albumId=$albumId MVs=${videos.size} album='${album?.title}'")
                 val newState = AlbumDetailUiState(
                     isLoading     = false,
-                    album         = albumD.await().getOrNull(),
+                    album         = album,
                     tracks        = tracks,
                     relatedAlbums = relatedD.await().getOrDefault(emptyList()),
+                    musicVideos   = videos,
                     motionUrl     = motionUrl,
                 )
                 _state.value = newState

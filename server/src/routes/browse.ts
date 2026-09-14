@@ -210,11 +210,28 @@ browse.get("/grouping/:id", async (c) => {
     const tab = g?.relationships?.tabs?.data?.[0];
     const kids: any[] = tab?.relationships?.children?.data ?? [];
     const sections: Array<{ title: string; albums?: any[]; videos?: any[] }> = [];
+
+    // Radio page (grouping 168577): the live-station grid (editorial kind 316) doesn't expand its
+    // children via include=tabs, so seed the marquee live stations by id — the identity of the tab.
+    if (id === "168577") {
+      const LIVE = ["ra.978194965", "ra.1498155548", "ra.1498157166", "ra.1740613864", "ra.1740613859", "ra.1740614260"];
+      try {
+        const s = await axios.get(`${APPLE}/v1/catalog/${sf}/stations`, {
+          headers: hdrs(mut),
+          params: { ids: LIVE.join(","), l: "en-US", platform: "web" },
+        });
+        const byId = new Map((s.data?.data ?? []).map((it: any) => [it.id, it]));
+        const live = LIVE.map((sid) => byId.get(sid)).filter(Boolean).map(itemFromRaw).filter(Boolean);
+        if (live.length) sections.push({ title: "Apple Music Radio", albums: live });
+      } catch (e: any) { console.warn("[browse] radio live stations failed:", e?.response?.status); }
+    }
     for (const k of kids) {
       const attr = k.attributes ?? {};
       if (attr.editorialElementKind !== "326" && attr.editorialElementKind !== "327") continue;
       const title: string = attr.name ?? attr.title ?? "";
       if (!title) continue;
+      // Radio: "Watch Interviews" uploaded-videos 404 on download ("no longer available") — drop it.
+      if (id === "168577" && title === "Watch Interviews") continue;
       const contents: any[] = k.relationships?.contents?.data ?? [];
       if (!contents.length) continue;
       const types = new Set(contents.map((it: any) => it.type));
@@ -231,7 +248,8 @@ browse.get("/grouping/:id", async (c) => {
       }).filter(Boolean);
       if (albums.length) sections.push({ title, albums });
     }
-    return c.json({ id, title: g?.attributes?.title ?? g?.attributes?.name ?? "", description: null, artworkUrl: null, sections });
+    const gTitle = id === "168577" ? "Radio" : (g?.attributes?.title ?? g?.attributes?.name ?? "");
+    return c.json({ id, title: gTitle, description: null, artworkUrl: null, sections });
   } catch (e: any) {
     console.warn("[browse] grouping failed:", e?.response?.status, e?.message);
     return c.json({ id, title: "", sections: [] });

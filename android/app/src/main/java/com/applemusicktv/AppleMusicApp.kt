@@ -43,6 +43,7 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
     @Inject lateinit var webServer: InAppWebServer
     @Inject lateinit var repo: MusicRepository
     @Inject lateinit var mutPrefs: MutPreferences
+    @Inject lateinit var cachePrefs: com.applemusicktv.data.CachePreferences
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -50,6 +51,11 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
         super.onCreate()
         com.applemusicktv.util.CrashReporter.install(this)
         clearStaleCaches()
+        // Bound the downloaded-media scratch (standalone decrypt + music video) to the user's cap;
+        // Coil's artwork cache is capped separately above. This is the cache that grew past 300 MB.
+        appScope.launch {
+            runCatching { com.applemusicktv.util.MediaCacheManager.trim(this@AppleMusicApp, cachePrefs.getCap()) }
+        }
         webServer.boot(appScope)   // starts only if the Dev toggle is on
         // Route volume-leveling diagnostics into the APP log (so they show under App Log, not Network,
         // and stream live on the :8081 event port).

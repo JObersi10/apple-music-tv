@@ -42,24 +42,25 @@ fun CategoryScreen(
 ) {
     val vm: CategoryViewModel = hiltViewModel()
     val state by vm.state.collectAsState()
+    var menuItem by remember { mutableStateOf<Album?>(null) }
 
     Box(modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
         when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFFFA233B))
-            }
+            state.isLoading -> com.applemusicktv.ui.components.ShelfSkeleton()
             state.error != null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Text("Couldn't load this category.", color = Color(0xFF888888), fontSize = 15.sp)
             }
             // contentPadding (not Modifier.padding) so a focused card's scaled border and
             // glow can bleed into the margin instead of being clipped at the edges.
+            // No horizontal contentPadding — each shelf handles start=24/end=0 itself so the first
+            // card sits at the title margin and the row bleeds off the right edge (matches Home/New).
             else -> LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 40.dp, bottom = 40.dp),
+                contentPadding = PaddingValues(top = 40.dp, bottom = 40.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                item {
-                    Column(Modifier.padding(start = 8.dp)) {
+                if (!state.hideHeader) item {
+                    Column(Modifier.padding(start = 32.dp, end = 24.dp)) {
                         // Editorial hero — a wide banner with a scrim, title overlaid bottom-left.
                         state.artworkUrl?.takeIf { it.isNotBlank() }?.let { art ->
                             Box(
@@ -106,19 +107,23 @@ fun CategoryScreen(
                         // the title twice — hide the shelf header when it matches the page title after
                         // normalising away the "Apple Music" prefix and case/whitespace.
                         if (norm(section.title) != pageTitleNorm) {
-                            Text(section.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
-                                color = Color.White, modifier = Modifier.padding(bottom = 10.dp, start = 8.dp))
+                            com.applemusicktv.ui.components.SectionHeader(section.title,
+                                modifier = Modifier.padding(start = 24.dp, end = 24.dp))
                         }
                         if (section.videos.isNotEmpty() && playerVm != null) {
                             LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 0.dp, bottom = 6.dp),
                             ) {
                                 items(section.videos.size) { idx ->
                                     val v = section.videos[idx]
                                     val art = (v.artworkUrl ?: "").replace("{w}", "480").replace("{h}", "270").replace("{f}", "jpg")
                                     Surface(
                                         onClick = { playerVm.playVideos(section.videos, idx) },
+                                        onLongClick = {
+                                            menuItem = Album(id = v.id, title = v.title, artistName = v.artistName,
+                                                artistId = v.artistId, artworkUrl = v.artworkUrl, type = "music-videos")
+                                        },
                                         // RectangleShape so the surface never clips the title/artist
                                         // text below the thumbnail (a rounded surface rounded them off).
                                         shape = ClickableSurfaceDefaults.shape(androidx.compose.ui.graphics.RectangleShape),
@@ -139,9 +144,8 @@ fun CategoryScreen(
                             return@Column
                         }
                         LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            // Room on all sides so the focus glow/scale never clips.
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(com.applemusicktv.ui.theme.AmTokens.Space.md),
+                            contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 0.dp, bottom = 6.dp),
                         ) {
                             items(section.albums, key = { it.id }) { dto ->
                                 val isPlaylist = dto.id.startsWith("pl.") || dto.id.startsWith("p.")
@@ -149,13 +153,15 @@ fun CategoryScreen(
                                 val isStation = dto.id.startsWith("ra.")
                                 val isArtist = dto.type == "artists" || dto.id.startsWith("r.")
                                 val isSong = dto.type == "songs"
-                                AlbumCard(
-                                    album = Album(
-                                        id = dto.id, title = dto.title, artistName = dto.artistName,
-                                        artworkUrl = dto.artworkUrl, artworkBgColor = dto.artworkBgColor,
-                                        type = dto.type,
-                                    ),
-                                    size = 150,
+                                com.applemusicktv.ui.components.AmCard(
+                                    title = dto.title,
+                                    subtitle = dto.artistName.ifBlank { null },
+                                    artworkUrl = dto.artworkUrl?.let { (it).replace("{w}", "312").replace("{h}", "312").replace("{f}", "jpg") },
+                                    width = 156,
+                                    onLongClick = {
+                                        menuItem = Album(id = dto.id, title = dto.title, artistName = dto.artistName,
+                                            artworkUrl = dto.artworkUrl, artworkBgColor = dto.artworkBgColor, type = dto.type)
+                                    },
                                     onClick = {
                                         when {
                                             isCurator  -> onCuratorClick(dto.id)
@@ -173,6 +179,12 @@ fun CategoryScreen(
                 }
                 item { Spacer(Modifier.height(20.dp)) }
             }
+        }
+        menuItem?.let { mi ->
+            if (playerVm != null) com.applemusicktv.ui.components.CardContextMenu(
+                item = mi, playerVm = playerVm,
+                onArtist = onArtistClick, onAlbum = onAlbumClick, onDismiss = { menuItem = null },
+            )
         }
     }
 }

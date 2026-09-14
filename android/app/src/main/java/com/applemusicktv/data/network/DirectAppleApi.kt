@@ -342,8 +342,8 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("views") views: String =
-            "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos",
-        @Query("extend") extend: String = "editorialArtwork,artistBio",
+            "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos,playlists",
+        @Query("extend") extend: String = "editorialArtwork,artistBio,bornOrFormed,origin",
     ): Map<String, Any>
 
     @GET("v1/catalog/{sf}/artists/{id}/albums")
@@ -375,6 +375,13 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("include") include: String = "tracks,contents,radio-show",
+    ): Map<String, Any>
+
+    /** Batch station fetch (comma-separated ids) — used to seed the Radio page's live-station grid. */
+    @GET("v1/catalog/{sf}/stations")
+    suspend fun catalogStationsByIds(
+        @Path("sf") storefront: String,
+        @Query("ids") ids: String,
     ): Map<String, Any>
 
     /** Live-radio playback assets. Absolute @Url — lives on amp-api.music.apple.com, not the
