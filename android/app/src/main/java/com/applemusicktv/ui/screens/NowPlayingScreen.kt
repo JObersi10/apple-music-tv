@@ -395,8 +395,6 @@ fun NowPlayingScreen(
                     MarqueeText(song.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
                         modifier = Modifier.fillMaxWidth())
                 }
-                Spacer(Modifier.height(14.dp))
-
                 LaunchedEffect(song.id) {
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
@@ -404,8 +402,10 @@ fun NowPlayingScreen(
                     // The alpha graphicsLayer composites the row into an offscreen buffer sized to
                     // its bounds, which CLIPS the focused play/pause button's 10dp glow while chrome
                     // is mid-fade (alpha != 1). Padding placed AFTER the layer lives inside that
-                    // buffer, giving the glow (and the 1.10x focus scale) room so it isn't cropped.
-                    modifier = Modifier.graphicsLayer { alpha = chromeAlpha }.padding(14.dp),
+                    // buffer, giving the glow (+1.10x focus scale) room so it isn't cropped. This
+                    // padding replaces the old fixed Spacers around the row — adding both pushed the
+                    // progress bar off the bottom of the fixed-height column.
+                    modifier = Modifier.graphicsLayer { alpha = chromeAlpha }.padding(horizontal = 14.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -473,7 +473,7 @@ fun NowPlayingScreen(
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(2.dp))
 
                 // Column, not Box: PlayerProgressBar emits the bar AND a time row, which a Box would
                 // overlap (the elapsed/duration text clipped over the bar).
