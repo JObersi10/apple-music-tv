@@ -131,6 +131,8 @@ data class AlbumsResponse(val albums: List<AlbumDto> = emptyList())
 @JsonClass(generateAdapter = true)
 data class SongsResponse(val songs: List<SongDto> = emptyList())
 
+data class MusicVideosResponse(val musicVideos: List<SongDto> = emptyList())
+
 @JsonClass(generateAdapter = true)
 data class StationStreamResponse(
     val liveStreamUrl: String? = null,
@@ -245,6 +247,9 @@ interface ProxyApi {
 
     @GET("api/albums/{id}/related")
     suspend fun getRelatedAlbums(@Path("id") id: String): AlbumsResponse
+
+    @GET("api/albums/{id}/music-videos")
+    suspend fun getAlbumMusicVideos(@Path("id") id: String): MusicVideosResponse
 
     @GET("api/albums/station/{id}/tracks")
     suspend fun getStationTracks(@Path("id") id: String): SongsResponse

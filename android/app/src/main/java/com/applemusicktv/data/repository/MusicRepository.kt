@@ -105,6 +105,21 @@ class MusicRepository @Inject constructor(
         if (!useProxy) direct.relatedAlbums(id).map { it.map(::albumFromDto) }
         else apiCall { api.getRelatedAlbums(id).albums.map(::albumFromDto) }
 
+    // Music videos for an album. Proxy has a first-class route; standalone derives them from
+    // the album's artist feed (same shape) so the AlbumDetail shelf works on either path.
+    suspend fun getAlbumMusicVideos(id: String): Result<List<Song>> =
+        if (!useProxy) runCatching {
+            // Direct AlbumDto has no artist id, so derive it from a track (they carry artistId).
+            val tracks = direct.albumTracks(id).getOrNull()?.map(::songFromDto).orEmpty()
+            val artistId = tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
+                ?: return@runCatching emptyList<Song>()
+            val title = direct.album(id).getOrNull()?.title?.lowercase().orEmpty()
+            val all = direct.artistFull(artistId).getOrNull()?.musicVideos?.map(::songFromDto).orEmpty()
+            val matched = all.filter { it.albumName.lowercase() == title || (title.isNotEmpty() && it.title.lowercase().contains(title)) }
+            (if (matched.isNotEmpty()) matched else all).take(12)
+        }
+        else apiCall { api.getAlbumMusicVideos(id).musicVideos.map(::songFromDto) }
+
     suspend fun getSong(id: String) =
         if (!useProxy) direct.song(id).map(::songFromDto)
         else apiCall { songFromDto(api.getSong(id)) }

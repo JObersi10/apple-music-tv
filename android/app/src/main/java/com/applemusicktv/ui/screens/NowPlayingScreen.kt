@@ -67,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
@@ -350,7 +351,11 @@ fun NowPlayingScreen(
                 var showAddTo by remember { mutableStateOf(false) }
                 if (showAddTo) com.applemusicktv.ui.components.AddToDialog(playerVm, song, onDismiss = { showAddTo = false })
 
-                Box(Modifier.fillMaxWidth()) {
+                // Min height = the ⋯ button's 32dp. The button leaves COMPOSITION on idle
+                // (below), so without a floor the row shrinks to text height and the artist
+                // line jumps up abruptly right as the chrome finishes fading. Pinning the
+                // height keeps title→artist spacing constant through the transition.
+                Box(Modifier.fillMaxWidth().heightIn(min = 32.dp), contentAlignment = Alignment.Center) {
                     MarqueeText(
                         song.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
                         letterSpacing = (-0.5).sp,
@@ -396,7 +401,10 @@ fun NowPlayingScreen(
                     try { playFocus.requestFocus() } catch (_: Exception) {}
                 }
                 Row(
-                    modifier = Modifier.graphicsLayer { alpha = chromeAlpha },
+                    // Vertical padding gives the focused play/pause button room for its 1.10x
+                    // scale + glow; without it the button's top/bottom clipped as the whole
+                    // group scaled up on the idle transition.
+                    modifier = Modifier.padding(vertical = 8.dp).graphicsLayer { alpha = chromeAlpha },
                     horizontalArrangement = Arrangement.spacedBy(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1365,7 +1373,18 @@ private fun LyricsPanel(
         if (lyrics.isEmpty()) return@LaunchedEffect
         val target = (scrollAnchor - LYRIC_LEAD_LINES).coerceAtLeast(0)
         if (firstLoad.value) {
+            // Land the active line on its steady-state resting spot (~30% down) right away,
+            // not just top-aligned — otherwise entering Now Playing shows the line sitting
+            // low, then it snaps up on the next line change. Scroll to bring it on screen,
+            // then nudge (instantly) by the same delta the line-change path animates.
             listState.scrollToItem(target)
+            val info = listState.layoutInfo
+            val activeItem = info.visibleItemsInfo.firstOrNull { it.index == scrollAnchor }
+            if (activeItem != null) {
+                val viewportH = info.viewportEndOffset - info.viewportStartOffset
+                val delta = (activeItem.offset + activeItem.size / 2) - viewportH * 0.30f
+                if (kotlin.math.abs(delta) > 8f) listState.scrollBy(delta)
+            }
             firstLoad.value = false
             return@LaunchedEffect
         }

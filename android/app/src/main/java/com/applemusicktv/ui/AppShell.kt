@@ -118,6 +118,23 @@ fun AppShell(modifier: Modifier = Modifier) {
     // item is a video it emits it here; we hand it to the video player and jump to Now Playing.
     // The video's prev/next/auto-advance drive the same queue back through PlayerViewModel.
     val videoReq by playerVm.videoRequest.collectAsState()
+    // Bleed warning: when you leave Now Playing (Back OR switching tabs) while a music video
+    // is active, the MTK secure plane can leave a leftover frame on the tab you land on. Toast
+    // so it doesn't read as a glitch. Snapshot the PREVIOUS video-active state — on a tab
+    // switch videoActive can flip false in the same pass as the route change, which is exactly
+    // why the old in-effect toast only fired on Back.
+    var prevOnNowPlaying by remember { mutableStateOf(isOnNowPlaying) }
+    var prevVideoActive by remember { mutableStateOf(videoActive) }
+    LaunchedEffect(isOnNowPlaying, videoActive) {
+        if (prevOnNowPlaying && !isOnNowPlaying && (videoActive || prevVideoActive)) {
+            android.widget.Toast.makeText(
+                appContext, "Press Back to return to the previous screen",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+        prevOnNowPlaying = isOnNowPlaying
+        prevVideoActive = videoActive
+    }
     LaunchedEffect(Unit) {
         mvVm.onRequestNext = { playerVm.next() }
         mvVm.onRequestPrev = { playerVm.prev() }
@@ -649,13 +666,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                 // surface; returning rebuilds at the saved position (~1s). No live secure decoder off
                 // Now Playing = no bleed, no Bluetooth stutter.
                 if (isOnNowPlaying) { surfaceMounted = true; mvVm.resumeVideo() }
-                else {
-                    mvVm.hardStopVideo(); surfaceMounted = false
-                    android.widget.Toast.makeText(
-                        appContext, "Press Back to return to the previous screen",
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
-                }
+                else { mvVm.hardStopVideo(); surfaceMounted = false }
             }
             Box(Modifier.fillMaxSize()) {
                 if (surfaceMounted) {

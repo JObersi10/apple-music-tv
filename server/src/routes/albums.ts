@@ -123,6 +123,58 @@ albumRoutes.get("/:id/tracks", async (c) => {
   }
 })
 
+// Music videos related to an album. Albums rarely list MVs in their own tracklist, so we
+// resolve album -> artist and return the artist's music videos, preferring ones whose title
+// matches this album (else all). Mirrors what the Android AlbumDetail shelf did client-side
+// against /artists/:id/full; this makes it a first-class route (and standalone-mirrorable).
+albumRoutes.get("/:id/music-videos", async (c) => {
+  const id = c.req.param("id")
+  const sf = getStorefront() || "us"
+  try {
+    // 1) album -> artist id (+ album title for matching). Library albums resolve via catalog.
+    let artistId: string | null = null
+    let albumTitle = ""
+    if (isLibraryAlbum(id)) {
+      const r = await axios.get(
+        `https://amp-api-edge.music.apple.com/v1/me/library/albums/${id}?include=catalog,artists`,
+        { headers: ampHeaders() }
+      )
+      const a = r.data?.data?.[0]
+      albumTitle = a?.attributes?.name ?? a?.relationships?.catalog?.data?.[0]?.attributes?.name ?? ""
+      artistId = a?.relationships?.artists?.data?.[0]?.id
+        ?? a?.relationships?.catalog?.data?.[0]?.relationships?.artists?.data?.[0]?.id ?? null
+    } else {
+      const r = await axios.get(
+        `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/albums/${id}`,
+        { headers: ampHeaders(), params: { include: "artists" } }
+      )
+      const a = r.data?.data?.[0]
+      albumTitle = a?.attributes?.name ?? ""
+      artistId = a?.relationships?.artists?.data?.[0]?.id ?? null
+    }
+    if (!artistId) return c.json({ musicVideos: [] })
+
+    // 2) artist -> top music videos
+    const r2 = await axios.get(
+      `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/artists/${artistId}`,
+      { headers: ampHeaders(), params: { views: "top-music-videos", "limit[artists:top-music-videos]": 20 } }
+    )
+    const raw = r2.data?.data?.[0]?.views?.["top-music-videos"]?.data ?? []
+    const all = raw.map(normaliseSong)
+
+    // 3) prefer MVs off this album; fall back to all so the shelf isn't empty
+    const name = albumTitle.toLowerCase()
+    const matched = name
+      ? all.filter((v: any) => (v.albumName ?? "").toLowerCase() === name || (v.title ?? "").toLowerCase().includes(name))
+      : []
+    const musicVideos = (matched.length ? matched : all).slice(0, 12)
+    console.log(`[albums] music-videos id=${id} artist=${artistId} all=${all.length} matched=${matched.length}`)
+    return c.json({ musicVideos })
+  } catch (e: any) {
+    return c.json({ error: e.message, musicVideos: [] }, 500)
+  }
+})
+
 function decodeStationId(id: string): string {
   if (!id.startsWith("ra.q-")) return id
   try {

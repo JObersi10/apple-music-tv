@@ -60,22 +60,10 @@ class AlbumDetailViewModel @Inject constructor(
                 val tracks = tracksD.await().getOrDefault(emptyList())
                 val motionUrl = tracks.firstOrNull()?.id?.let { repo.getMotion(it).getOrNull() }
                 val album = albumD.await().getOrNull()
-                // Albums rarely list MVs in the tracklist, but the artist usually has related ones.
-                // Pull the artist feed and prefer videos whose title/album matches this album; fall back
-                // to the artist's videos so the shelf isn't empty. Best-effort — never fails the page.
-                // album.artistId is often null (the album feed omits it) — fall back to a track's artist.
-                val artistIdForVideos = album?.artistId?.takeIf { it.isNotBlank() }
-                    ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
-                val videos = artistIdForVideos?.takeIf { it.isNotBlank() }?.let { aid ->
-                    runCatching { repo.getArtistFull(aid).getOrNull()?.musicVideos?.map(repo::songFromDto).orEmpty() }
-                        .onFailure { android.util.Log.w("AMAlbumMV", "getArtistFull($aid) failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                }.orEmpty().let { all ->
-                    android.util.Log.i("AMAlbumMV", "aid=$artistIdForVideos artistMVs=${all.size} album='${album?.title}'")
-                    val name = album?.title?.lowercase().orEmpty()
-                    val matched = all.filter { it.albumName.lowercase() == name || it.title.lowercase().contains(name) }
-                    (if (matched.isNotEmpty()) matched else all).take(12)
-                }
+                // Album music videos via the dedicated repo path (proxy route, or artist-feed
+                // derivation on standalone). Best-effort — never fails the page.
+                val videos = repo.getAlbumMusicVideos(albumId).getOrDefault(emptyList())
+                android.util.Log.i("AMAlbumMV", "albumId=$albumId MVs=${videos.size} album='${album?.title}'")
                 val newState = AlbumDetailUiState(
                     isLoading     = false,
                     album         = album,
