@@ -1359,12 +1359,26 @@ class PlayerViewModel @Inject constructor(
                 // Superseded by a newer selection while we were decrypting — drop it so
                 // the skipped-over song never briefly plays.
                 if (myGen != playGen) return@launch
-                if (src != null) player.setMediaSource(src)
-                else player.setMediaItem(buildMediaItem(song, uri))
-                player.prepare()
-                if (src != null) standaloneFailures = 0
-                _state.update { it.copy(standaloneActive = src != null) }
-                startPlayback()
+                if (src != null) {
+                    player.setMediaSource(src)
+                    player.prepare()
+                    standaloneFailures = 0
+                    _state.update { it.copy(standaloneActive = true) }
+                    startPlayback()
+                } else if (serverPrefs.serverReachable) {
+                    // On-device build failed but a proxy is up — let it serve the track.
+                    Log.w("AMSA", "standalone null, falling back to proxy for ${song.title}")
+                    player.setMediaItem(buildMediaItem(song, uri))
+                    player.prepare()
+                    _state.update { it.copy(standaloneActive = false) }
+                    startPlayback()
+                } else {
+                    // No proxy AND on-device failed. Don't set the dead proxy URL — it just
+                    // hangs 60s on a SocketTimeout. Surface it and stop so it's obvious.
+                    Log.e("AMSA", "can't play ${song.title}: on-device build failed and no server reachable")
+                    _state.update { it.copy(standaloneActive = false, isLoading = false) }
+                    toast("Can't play \"${song.title}\" — no server and on-device failed")
+                }
             }
         } else {
             usingStandalone = false
@@ -1688,8 +1702,12 @@ class PlayerViewModel @Inject constructor(
         return try {
             val bearer = appleClient.getBearer()
             val mut = mutPrefs.getMUT()
-            if (bearer.isEmpty() || mut.isEmpty()) return null
+            if (bearer.isEmpty() || mut.isEmpty()) {
+                Log.e("AMSA", "standalone null: bearer=${bearer.length} mut=${mut.length} (need both) song=${song.id}")
+                return null
+            }
             val wb = appleClient.getWebPlayback(song.id, bearer, mut)
+            Log.i("AMSA", "standalone webPlayback ok song=${song.id} hlsUrl=${wb.hlsUrl.take(60)}")
             // Serve a rewritten copy of the playlist from disk — see
             // rewritePlaylistForExo for why the EXT-X-KEY line has to go.
             val playlistUri = try {
@@ -1715,7 +1733,7 @@ class PlayerViewModel @Inject constructor(
                 .setDrmSessionManagerProvider { drmManager }
                 .createMediaSource(buildMediaItem(song, playlistUri))
         } catch (e: Exception) {
-            Log.e("PlayerVM", "Standalone source failed for ${song.id}: ${e.message}")
+            Log.e("AMSA", "standalone source failed for ${song.id}: ${e.message}", e)
             null
         }
     }
