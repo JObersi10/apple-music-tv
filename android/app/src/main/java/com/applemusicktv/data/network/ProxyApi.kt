@@ -75,6 +75,9 @@ data class ArtistFullDto(
     val id:             String,
     val name:           String,
     val artworkUrl:     String?,
+    val heroUrl:        String?               = null,
+    val heroBgColor:    String?               = null,
+    val heroTextColor:  String?               = null,
     val genreNames:     List<String>          = emptyList(),
     val editorialNotes: String?               = null,
     val origin:         String?               = null,
@@ -353,6 +356,13 @@ interface ProxyApi {
 
     @POST("api/translate")
     suspend fun translate(@Body body: TranslateRequest): TranslateResponse
+
+    /** Apple-native (proxy) per-line lyric translation; falls back to machine translate server-side. */
+    @GET("api/lyrics/{songId}/translation")
+    suspend fun getLyricTranslation(
+        @Path("songId") songId: String,
+        @Query("to") to: String,
+    ): TranslateResponse
 
     // ── Auth ──────────────────────────────────────────────────────────────
     @GET("auth/status")

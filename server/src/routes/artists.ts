@@ -38,7 +38,7 @@ artistRoutes.get("/:id/full", async (c) => {
   try {
     const views = "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos,playlists"
     const url = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/artists/${id}` +
-      `?views=${views}&extend=editorialNotes,artistBio,bornOrFormed,origin` +
+      `?views=${views}&extend=editorialNotes,artistBio,bornOrFormed,origin,editorialArtwork` +
       `&limit[artists:top-songs]=20&limit[artists:full-albums]=30&limit[artists:top-music-videos]=20&limit[artists:playlists]=15`
     const res = await axios.get(url, { headers })
     const artist = res.data?.data?.[0]
@@ -66,10 +66,23 @@ artistRoutes.get("/:id/full", async (c) => {
       type: "playlists",
     }))
 
+    // editorialArtwork = Apple's wide hero image + its gradient/bg/text colours (used on their own
+    // artist pages). Pick the widest available flavour so the app can theme the ArtistDetail header.
+    const ea = attr.editorialArtwork ?? {}
+    const heroArt = ea.subscriptionHero ?? ea.bannerUber ?? ea.centeredFullscreenBackground
+      ?? ea.storeFlowcase ?? ea.superHeroWide ?? ea.brickPlus ?? null
+    const heroUrl = heroArt?.url
+      ? String(heroArt.url).replace("{w}", "1600").replace("{h}", "900").replace("{f}", "jpg")
+      : null
+
     return c.json({
       id: artist.id,
       name: attr.name ?? "Unknown",
       artworkUrl: attr.artwork?.url ?? null,
+      // Apple editorial hero (wide banner) + theming colours; null when the artist has none.
+      heroUrl,
+      heroBgColor: heroArt?.bgColor ? `#${heroArt.bgColor}` : (attr.artwork?.bgColor ? `#${attr.artwork.bgColor}` : null),
+      heroTextColor: heroArt?.textColor1 ? `#${heroArt.textColor1}` : null,
       genreNames: attr.genreNames ?? [],
       editorialNotes: attr.editorialNotes?.standard ?? attr.editorialNotes?.short ?? null,
       // Artist "About" facts (The Weeknd → origin "Toronto, ON, Canada", born "February 16, 1990").

@@ -72,10 +72,24 @@ class AlbumDetailViewModel @Inject constructor(
                 // 0..1 → 0.5, 0..100 → 50). If popularity isn't present (older cache / no extend),
                 // fall back to matching the artist's top-songs by title.
                 val withPop = tracks.mapNotNull { t -> t.popularity?.let { t to it } }
-                val popularTitles: Set<String> = if (withPop.isNotEmpty()) {
+                val popularTitles: Set<String> = if (withPop.size >= 3) {
+                    // Apple only dots the few standout tracks (the singles), NOT every track above a
+                    // flat threshold — 0.5 dotted almost everything. So pick RELATIVE to this album:
+                    // the top quartile by popularity, capped at 5, AND strictly above the album median
+                    // (a flat "greatest hits" album where every track is equally popular gets no dots).
+                    val vals = withPop.map { it.second }.sorted()
+                    val median = vals[vals.size / 2]
+                    val topN = (withPop.size + 3) / 4  // ceil(size/4)
+                    withPop.sortedByDescending { it.second }
+                        .take(topN.coerceIn(1, 5))
+                        .filter { it.second > median }
+                        .map { it.first.title.trim().lowercase() }
+                        .toSet()
+                } else if (withPop.isNotEmpty()) {
+                    // Tiny album (1–2 tracks): dot the single clear leader only if it out-pops the rest.
                     val max = withPop.maxOf { it.second }
-                    val thr = if (max <= 1.0) 0.5 else 50.0
-                    withPop.filter { it.second >= thr }.map { it.first.title.trim().lowercase() }.toSet()
+                    withPop.filter { it.second >= max && withPop.size == 1 }
+                        .map { it.first.title.trim().lowercase() }.toSet()
                 } else {
                     val artistIdForTop = album?.artistId?.takeIf { it.isNotBlank() }
                         ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId

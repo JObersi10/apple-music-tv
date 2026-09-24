@@ -100,9 +100,13 @@ fun ArtistDetailScreenV2(
         // Artist photo as a FIXED backdrop behind the scroll — flush to the very top (no black border),
         // filling from y=0 so there is no gap. A base gradient fades it into the page; a scroll-driven
         // black overlay dims it as you move down.
-        if (state.artworkUrl != null) {
+        val heroBackdrop = state.heroUrl
+            ?: state.artworkUrl?.replace("{w}", "1600")?.replace("{h}", "1600")?.replace("{f}", "jpg")
+        if (heroBackdrop != null) {
+            // Prefer Apple's editorial wide hero (editorialArtwork) when the artist has one; it's the
+            // banner Apple uses on its own artist pages. Falls back to the square artist photo.
             AsyncImage(
-                model = state.artworkUrl?.replace("{w}", "1600")?.replace("{h}", "1600")?.replace("{f}", "jpg"),
+                model = heroBackdrop,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 alignment = Alignment.TopCenter,

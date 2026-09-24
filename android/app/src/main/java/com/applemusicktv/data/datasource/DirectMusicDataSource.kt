@@ -542,10 +542,21 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
                 )
             } ?: emptyList()
 
+        // Apple editorial wide hero (editorialArtwork) — pick the widest flavour present.
+        val ea = attrs["editorialArtwork"] as? Map<*, *>
+        val heroArt = (ea?.get("subscriptionHero") ?: ea?.get("bannerUber")
+            ?: ea?.get("centeredFullscreenBackground") ?: ea?.get("storeFlowcase")
+            ?: ea?.get("superHeroWide") ?: ea?.get("brickPlus")) as? Map<*, *>
+        val heroUrl = (heroArt?.get("url") as? String)
+            ?.replace("{w}", "1600")?.replace("{h}", "900")?.replace("{f}", "jpg")
+
         ArtistFullDto(
             id = item["id"] as? String ?: catId,
             name = attrs["name"] as? String ?: "",
             artworkUrl = artwork(attrs),
+            heroUrl = heroUrl,
+            heroBgColor = (heroArt?.get("bgColor") as? String)?.let { "#$it" },
+            heroTextColor = (heroArt?.get("textColor1") as? String)?.let { "#$it" },
             genreNames = (attrs["genreNames"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
             editorialNotes = ((attrs["editorialNotes"] as? Map<*, *>)?.get("standard")
                 ?: (attrs["editorialNotes"] as? Map<*, *>)?.get("short")) as? String,

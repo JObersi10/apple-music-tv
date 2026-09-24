@@ -113,10 +113,17 @@ class MusicRepository @Inject constructor(
             val tracks = direct.albumTracks(id).getOrNull()?.map(::songFromDto).orEmpty()
             val artistId = tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
                 ?: return@runCatching emptyList<Song>()
-            val title = direct.album(id).getOrNull()?.title?.lowercase().orEmpty()
+            val title = direct.album(id).getOrNull()?.title?.trim()?.lowercase().orEmpty()
+            val trackTitles = tracks.map { it.title.trim().lowercase() }.toSet()
             val all = direct.artistFull(artistId).getOrNull()?.musicVideos?.map(::songFromDto).orEmpty()
-            val matched = all.filter { it.albumName.lowercase() == title || (title.isNotEmpty() && it.title.lowercase().contains(title)) }
-            (if (matched.isNotEmpty()) matched else all).take(12)
+            // ONLY MVs from THIS album — album-name match OR the MV is for a track on the album.
+            // No "all the artist's MVs" fallback (that showed every video the artist ever made).
+            all.filter {
+                val vTitle = it.title.trim().lowercase()
+                val bare = vTitle.replace(Regex("\\s*\\(.*?(video|music video).*?\\)\\s*$"), "").trim()
+                (title.length > 2 && it.albumName.trim().lowercase() == title) ||
+                    vTitle in trackTitles || bare in trackTitles
+            }.take(12)
         }
         else apiCall { api.getAlbumMusicVideos(id).musicVideos.map(::songFromDto) }
 
@@ -322,6 +329,19 @@ class MusicRepository @Inject constructor(
 
     /** Translate lyric lines to [to] (ISO code). Proxy-only (uses the server's keyless translator);
      *  returns empty on failure so callers just show the originals. */
+    /** Native-first: when the proxy is reachable, ask Apple for its OWN per-line translation (falls to
+     *  server machine-translate if Apple has none). Only if the proxy is down do we use the on-device
+     *  keyless translator. Apple's translations read better and match the app's timing exactly. */
+    suspend fun translateLinesForSong(songId: String, lines: List<String>, to: String): List<String> {
+        if (serverPrefs.serverReachable) {
+            val native = runCatching {
+                api.getLyricTranslation(songId, to).lines
+            }.getOrDefault(emptyList())
+            if (native.isNotEmpty()) return native
+        }
+        return translateLines(lines, to)
+    }
+
     suspend fun translateLines(lines: List<String>, to: String): List<String> {
         // On-device FIRST: hit the keyless Google endpoint directly from the app so translation works
         // with no proxy dependency (the user wants it on-device). Fall back to the proxy route only if

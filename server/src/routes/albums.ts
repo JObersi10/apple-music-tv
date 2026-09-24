@@ -131,26 +131,31 @@ albumRoutes.get("/:id/music-videos", async (c) => {
   const id = c.req.param("id")
   const sf = getStorefront() || "us"
   try {
-    // 1) album -> artist id (+ album title for matching). Library albums resolve via catalog.
+    // 1) album -> artist id (+ album title + track titles for matching). Library albums via catalog.
     let artistId: string | null = null
     let albumTitle = ""
+    let trackTitleSet = new Set<string>()
     if (isLibraryAlbum(id)) {
       const r = await axios.get(
-        `https://amp-api-edge.music.apple.com/v1/me/library/albums/${id}?include=catalog,artists`,
+        `https://amp-api-edge.music.apple.com/v1/me/library/albums/${id}?include=catalog,artists,tracks`,
         { headers: ampHeaders() }
       )
       const a = r.data?.data?.[0]
       albumTitle = a?.attributes?.name ?? a?.relationships?.catalog?.data?.[0]?.attributes?.name ?? ""
       artistId = a?.relationships?.artists?.data?.[0]?.id
         ?? a?.relationships?.catalog?.data?.[0]?.relationships?.artists?.data?.[0]?.id ?? null
+      for (const t of a?.relationships?.tracks?.data ?? [])
+        if (t?.attributes?.name) trackTitleSet.add(String(t.attributes.name).trim().toLowerCase())
     } else {
       const r = await axios.get(
         `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/albums/${id}`,
-        { headers: ampHeaders(), params: { include: "artists" } }
+        { headers: ampHeaders(), params: { include: "artists,tracks" } }
       )
       const a = r.data?.data?.[0]
       albumTitle = a?.attributes?.name ?? ""
       artistId = a?.relationships?.artists?.data?.[0]?.id ?? null
+      for (const t of a?.relationships?.tracks?.data ?? [])
+        if (t?.attributes?.name) trackTitleSet.add(String(t.attributes.name).trim().toLowerCase())
     }
     if (!artistId) return c.json({ musicVideos: [] })
 
@@ -162,12 +167,20 @@ albumRoutes.get("/:id/music-videos", async (c) => {
     const raw = r2.data?.data?.[0]?.views?.["top-music-videos"]?.data ?? []
     const all = raw.map(normaliseSong)
 
-    // 3) prefer MVs off this album; fall back to all so the shelf isn't empty
-    const name = albumTitle.toLowerCase()
-    const matched = name
-      ? all.filter((v: any) => (v.albumName ?? "").toLowerCase() === name || (v.title ?? "").toLowerCase().includes(name))
-      : []
-    const musicVideos = (matched.length ? matched : all).slice(0, 12)
+    // 3) ONLY MVs that belong to THIS album — match by album name, or the MV's song title
+    // matching a track on the album. NO "all the artist's MVs" fallback: the user saw the shelf
+    // showing every video the artist ever made, which is wrong. Empty shelf > wrong shelf.
+    const name = albumTitle.trim().toLowerCase()
+    const matched = all.filter((v: any) => {
+      const vAlbum = (v.albumName ?? "").trim().toLowerCase()
+      const vTitle = (v.title ?? "").trim().toLowerCase()
+      // MV belongs to this album if: its album name equals this album, OR its title is one of the
+      // album's track titles (the MV for a song ON the album). Strips " (Music Video)" suffixes.
+      const bare = vTitle.replace(/\s*\(.*?(video|music video).*?\)\s*$/i, "").trim()
+      return (name.length > 2 && vAlbum === name) ||
+             trackTitleSet.has(vTitle) || trackTitleSet.has(bare)
+    })
+    const musicVideos = matched.slice(0, 12)
     console.log(`[albums] music-videos id=${id} artist=${artistId} all=${all.length} matched=${matched.length}`)
     return c.json({ musicVideos })
   } catch (e: any) {

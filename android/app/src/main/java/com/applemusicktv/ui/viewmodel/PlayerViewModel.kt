@@ -80,9 +80,14 @@ private const val CAPTURE_PCM = false
  *   edge, so a projected image has no visible boundary. Halo brightness stays constant with the
  *   beat — only size moves — so the black never pumps.
  * - [BLACK]: plain black, no blobs, no beat.
+ * - [AMBIENT]: "Dynamic v2" — Apple's own Now Playing look. The album's motion art (editorialVideo)
+ *   fills the screen, cover-cropped + dimmed + ambient-tinted; when there's no motion art it falls
+ *   back to the album cover upscaled soft (Modifier.blur is a no-op on this Fire TV) under the same
+ *   scrim. One decoder only — the small motion cover on the card is suppressed while this is active.
  */
 enum class NowPlayingBackground(val label: String) {
     DYNAMIC("Dynamic"),
+    AMBIENT("Dynamic v2"),
     PROJECTOR("Projector"),
     BLACK("Black"),
     ;
@@ -2097,7 +2102,7 @@ class PlayerViewModel @Inject constructor(
         val lines = _state.value.lyrics.map { it.text }
         if (lines.isEmpty()) return
         translateJob = viewModelScope.launch {
-            val translated = repo.translateLines(lines, translateLang)
+            val translated = repo.translateLinesForSong(songId, lines, translateLang)
             android.util.Log.i("AMtr", "translate lang=$translateLang in=${lines.size} out=${translated.size} sample='${translated.firstOrNull()?.take(30)}'")
             webServer.addLog("TR", "translate lang=$translateLang in=${lines.size} out=${translated.size}")
             if (translated.isNotEmpty() && _state.value.currentSong?.id == songId && _state.value.translateLyrics)

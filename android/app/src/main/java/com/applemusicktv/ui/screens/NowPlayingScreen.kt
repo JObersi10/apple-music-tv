@@ -154,7 +154,12 @@ fun NowPlayingScreen(
         val chromeAlpha = 1f - idle
         val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
             NowPlayingBackground.BLACK else state.nowPlayingBackground
-        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying, orbSpeed = state.orbSpeed, reduceMotion = state.reduceMotion, lowPower = state.lowPowerMode)
+        if (backgroundMode == NowPlayingBackground.AMBIENT) {
+            // Dynamic v2 — Apple's fullscreen ambient backdrop (motion art or soft album cover).
+            AmbientBackground(motionUrl = state.motionUrl, artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "")
+        } else {
+            DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying, orbSpeed = state.orbSpeed, reduceMotion = state.reduceMotion, lowPower = state.lowPowerMode)
+        }
 
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -338,8 +343,11 @@ fun NowPlayingScreen(
                     // In PiP, drop the motion decoder entirely: it's a whole second ExoPlayer/video
                     // decoder, and holding it alive through the PiP transition is a memory spike that
                     // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
+                    // Skip the small card cover when Dynamic v2 is already playing the SAME motion art
+                    // fullscreen — two decoders of the same HEVC loop is a needless memory/GPU hit.
                     @Suppress("ConstantConditionIf")
-                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
+                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode &&
+                        backgroundMode != NowPlayingBackground.AMBIENT) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
                 }
@@ -887,6 +895,42 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
         update = { view -> view.player = exo },
         modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
+}
+
+/**
+ * Dynamic v2 — Apple's fullscreen Now Playing backdrop. The album's motion art fills the screen
+ * (cover-cropped, dimmed); with no motion art the album cover is upscaled from a tiny fetch so it
+ * reads soft (Modifier.blur is a no-op on this Fire TV, API < 31 — a small image stretched fullscreen
+ * is a free approximation). An ambient colour scrim pulled from the artwork tints it, and a dark
+ * scrim (heavier on the right) keeps the lyrics legible — same readability strategy as DynamicBackground.
+ */
+@Composable
+private fun AmbientBackground(motionUrl: String?, artworkUrlTemplate: String?, songKey: String) {
+    val paletteUrl = artworkUrlTemplate?.replace("{w}", "300")?.replace("{h}", "300")?.replace("{f}", "jpg")
+    val palette = rememberArtworkPalette(paletteUrl, seed = songKey)
+    val tint = animateColorAsState(palette.firstOrNull() ?: Color(0xFF101010), tween(1500), label = "ambientTint").value
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
+        if (motionUrl != null) {
+            MotionCover(url = motionUrl, modifier = Modifier.fillMaxSize())
+        } else if (artworkUrlTemplate != null) {
+            // Tiny fetch (120px) upscaled fullscreen = soft, cheap blur on a device with no RenderEffect.
+            val softUrl = artworkUrlTemplate.replace("{w}", "120").replace("{h}", "120").replace("{f}", "jpg")
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current).data(softUrl).crossfade(true).build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.15f; scaleY = 1.15f },
+            )
+        }
+        // Ambient colour wash (Apple tints the blurred backdrop toward the artwork's dominant hue).
+        Box(Modifier.fillMaxSize().background(tint.copy(alpha = 0.28f)))
+        // Dark scrims: overall dim + vertical falloff + heavier right side for the lyric column.
+        Box(Modifier.fillMaxSize().background(
+            Brush.verticalGradient(listOf(Color(0x66000000), Color(0x22000000), Color(0x99000000)))))
+        Box(Modifier.fillMaxSize().background(
+            Brush.horizontalGradient(0.30f to Color(0x00000000), 1f to Color(0x9E000000))))
+    }
 }
 
 private fun Color.hsvHue(): Float {

@@ -16,6 +16,10 @@ data class ArtistDetailUiState(
     val isLoading:      Boolean = true,
     val name:           String = "",
     val artworkUrl:     String? = null,
+    /** Apple editorial wide hero banner + its theming colours (null when the artist has none). */
+    val heroUrl:        String? = null,
+    val heroBgColor:    String? = null,
+    val heroTextColor:  String? = null,
     val bio:            String? = null,
     /** Richer long-form artist bio (Apple `artistBio`); falls back to editorial notes. */
     val fullBio:        String? = null,
@@ -52,6 +56,9 @@ class ArtistDetailViewModel @Inject constructor(
                     isLoading      = false,
                     name           = d.name,
                     artworkUrl     = d.artworkUrl,
+                    heroUrl        = d.heroUrl,
+                    heroBgColor    = d.heroBgColor,
+                    heroTextColor  = d.heroTextColor,
                     bio            = d.editorialNotes,
                     fullBio        = d.artistBio ?: d.editorialNotes,
                     origin         = d.origin,

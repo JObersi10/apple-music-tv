@@ -16,7 +16,12 @@ client does, and what we can borrow. Source of truth for the features below.
 - Threshold is a guess (Apple's exact `POPULARITY_THRESHOLD` value wasn't a literal in the dex) —
   tune 0.5 if too many/few dots.
 
-## 2. Now Playing background = ambient EDITORIAL VIDEO — NOT BUILT (this is "Dynamic v2")
+### Popular dot tuning (2026-09-24)
+- 0.5 absolute threshold dotted almost every track. Fixed: dot is now RELATIVE to the album — top
+  quartile by `popularity`, capped at 5, and strictly above the album median (a flat "greatest hits"
+  album where every track is equally popular gets no dots). `AlbumDetailViewModel`.
+
+## 2. Now Playing background = ambient EDITORIAL VIDEO — BUILT as "Dynamic v2" (2026-09-24)
 - Apple's now-playing backdrop is driven by **`EditorialVideo`** (model
   `com.apple.android.music.mediaapi.models.internals.EditorialVideo`) with quality **`Flavor`s**.
 - Flavors seen: **`motionSquare`**, **`previewFrame`**. `previewFrame` carries
@@ -31,7 +36,22 @@ client does, and what we can borrow. Source of truth for the features below.
   motion off when the backdrop is on). NOTE: user first saw a raw version and disliked it as the
   default — that's why it must be an opt-in toggle, not forced.
 
-## 3. Native lyrics translations + pronunciation — NOT BUILT (candidate upgrade)
+- **BUILT:** `NowPlayingBackground.AMBIENT` ("Dynamic v2"), selectable in the Dev/Settings background
+  cycle. `AmbientBackground` in `NowPlayingScreen.kt` renders the album's motion art (`/api/motion`)
+  fullscreen cover-cropped + ambient-colour tint + dark scrim; no motion art → album cover upscaled
+  from a 120px fetch (soft, since `Modifier.blur` is a no-op on this Fire TV). One decoder: the small
+  card MotionCover is suppressed while Dynamic v2 is showing the same loop fullscreen.
+
+## 3. Native lyrics translations + pronunciation — BUILT (translation; pronunciation still open)
+- **BUILT (2026-09-24):** `GET /api/lyrics/:songId/translation?to=<lang>` — native-first. Requests
+  the lyrics with `l=<lang>`; if Apple returns TTML whose text actually differs from the original
+  (≥40% of lines), that's Apple's own translation, returned aligned line-for-line. Otherwise falls
+  back to the keyless machine translator so it never regresses. Android: `repo.translateLinesForSong`
+  prefers this when the proxy is reachable, else on-device Google. NOTE: the exact Apple param is a
+  best guess (`l=`) — verify against the live server; the machine fallback guarantees it still works.
+- Pronunciation/transliteration (romaji/pinyin) still not built.
+
+## 3b. (was §3) Native lyrics translations + pronunciation — original notes
 - Apple's lyrics entity carries **translations** and **pronunciation/transliteration** natively:
   `isTranslationAutomaticallyCreated`, `getTranslationAvailableLiveResult`,
   `getTranslationSelectedLiveResult`, `lyricsTranslationsEnabledByDefault`, layout
@@ -40,16 +60,28 @@ client does, and what we can borrow. Source of truth for the features below.
   romaji/pinyin pronunciation. Exact request param not a dex literal (built at runtime) — likely an
   `l=`/`extend`/`with` on the `/lyrics` or `/syllable-lyrics` call. Needs probing with a real bearer.
 
-## 4. editorialArtwork (richer hero theming) — NOT BUILT (nice-to-have)
+## 4. editorialArtwork (richer hero theming) — BUILT for artist hero (2026-09-24)
+- **BUILT:** artist `/full` route + standalone `DirectMusicDataSource` request `extend=editorialArtwork`
+  and expose `heroUrl` (widest flavour: subscriptionHero → bannerUber → centeredFullscreenBackground
+  → …), `heroBgColor`, `heroTextColor`. `ArtistDetailScreenV2` uses `heroUrl` as the backdrop when
+  present (Apple's own wide banner), falling back to the square artist photo. Album hero theming with
+  editorialArtwork still open (nice-to-have).
+
+## 4b. (was §4) editorialArtwork — original notes
 - Albums/artists expose **`editorialArtwork`**: `getEditorialArtworkImageUrl`,
   `getEditorialArtworkGradient`, `getEditorialArtworkBGColor`, `getEditorialArtworkTextGradient`.
 - A wide hero image + gradient + bg colour + text gradient — Apple uses it for artist/album hero
   headers and readable text overlays. Request via `extend=editorialArtwork`. Would upgrade the
   ArtistDetail/AlbumDetail hero look.
 
-## 5. Not worth borrowing
-- SpatialAudio / Dolby Atmos / Hi-Res Lossless traits (`SongTrait_HighResolutionLossless`,
-  `KEY_DOLBY_ATMOS_*`, `SUPPORTSSPATIALIZATION`) — we don't decode Atmos/spatial; irrelevant.
+## 5. Dolby Atmos / Spatial / Hi-Res — DEFERRED (revisit later, potentially valuable on Fire TV)
+- Traits: `SongTrait_HighResolutionLossless`, `KEY_DOLBY_ATMOS_*`, `SUPPORTSSPATIALIZATION`.
+- Not built and NOT currently decoded. User flagged this as worth doing later: Fire TV can pass Dolby
+  Atmos/spatial through to a capable AVR/soundbar, so if executed properly (select the `ec+3`/Atmos
+  asset instead of `ctrp`, pass the E-AC-3 JOC bitstream through ExoPlayer with
+  `AudioAttributes`/passthrough, let the receiver render) it could be a real feature. Blocked on: the
+  Atmos asset is a different (non-Widevine `ctrp`) flavour we'd have to decrypt+remux without
+  transcoding, and the user has no Atmos equipment to verify against yet. Park it; don't delete.
 
 ## Auth (unchanged from what we already do)
 - Same amp-api model: `Authorization: Bearer <JWT>` + `Music-User-Token` + `Origin:
