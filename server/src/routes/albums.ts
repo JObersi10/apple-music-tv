@@ -108,7 +108,7 @@ albumRoutes.get("/:id/tracks", async (c) => {
   try {
     const r = await axios.get(
       `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/albums/${id}/tracks`,
-      { headers: ampHeaders(), params: { limit: Math.min(limit, 100), include: "artists" } }
+      { headers: ampHeaders(), params: { limit: Math.min(limit, 100), include: "artists", extend: "popularity" } }
     )
     const raw = r.data?.data ?? []
     const tracks = raw.filter((t: any) => t.type === "songs").map((s: any) => ({

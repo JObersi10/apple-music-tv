@@ -360,6 +360,7 @@ class MusicRepository @Inject constructor(
         artistName     = dto.artistName,
         albumName      = dto.albumName,
         durationMs     = dto.durationMs,
+        popularity     = dto.popularity,
         artworkUrl     = dto.artworkUrl,
         artworkBgColor = dto.artworkBgColor,
         previewUrl     = dto.previewHlsUrl ?: dto.previewUrl,

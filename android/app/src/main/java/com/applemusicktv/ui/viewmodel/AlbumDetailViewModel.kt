@@ -67,16 +67,27 @@ class AlbumDetailViewModel @Inject constructor(
                 // derivation on standalone). Best-effort — never fails the page.
                 val videos = repo.getAlbumMusicVideos(albumId).getOrDefault(emptyList())
                 android.util.Log.i("AMAlbumMV", "albumId=$albumId MVs=${videos.size} album='${album?.title}'")
-                // Popular ("best songs") dot: album tracks whose title is in the artist's top-songs.
-                val artistIdForTop = album?.artistId?.takeIf { it.isNotBlank() }
-                    ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
-                val popularTitles = artistIdForTop?.let { aid ->
-                    runCatching {
-                        repo.getArtistFull(aid).getOrNull()?.topSongs
-                            ?.map { it.title.trim().lowercase() }?.toSet()
-                    }.getOrNull()
-                }?.let { top -> tracks.map { it.title.trim().lowercase() }.filter { it in top }.toSet() }
-                    ?: emptySet()
+                // Popular ("best songs") dot — Apple's own signal. Prefer the per-track popularity
+                // attribute (from ?extend=popularity): dot tracks at/above a threshold (scale-aware:
+                // 0..1 → 0.5, 0..100 → 50). If popularity isn't present (older cache / no extend),
+                // fall back to matching the artist's top-songs by title.
+                val withPop = tracks.mapNotNull { t -> t.popularity?.let { t to it } }
+                val popularTitles: Set<String> = if (withPop.isNotEmpty()) {
+                    val max = withPop.maxOf { it.second }
+                    val thr = if (max <= 1.0) 0.5 else 50.0
+                    withPop.filter { it.second >= thr }.map { it.first.title.trim().lowercase() }.toSet()
+                } else {
+                    val artistIdForTop = album?.artistId?.takeIf { it.isNotBlank() }
+                        ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
+                    artistIdForTop?.let { aid ->
+                        runCatching {
+                            repo.getArtistFull(aid).getOrNull()?.topSongs
+                                ?.map { it.title.trim().lowercase() }?.toSet()
+                        }.getOrNull()
+                    }?.let { top -> tracks.map { it.title.trim().lowercase() }.filter { it in top }.toSet() }
+                        ?: emptySet()
+                }
+                android.util.Log.i("AMPopular", "album='${album?.title}' withPop=${withPop.size} dots=${popularTitles.size}")
                 val newState = AlbumDetailUiState(
                     isLoading     = false,
                     album         = album,

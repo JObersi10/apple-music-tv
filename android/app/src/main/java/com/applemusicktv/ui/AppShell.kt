@@ -728,6 +728,9 @@ fun AppShell(modifier: Modifier = Modifier) {
                 updateAvailable = pendingUpdate != null,
                 beatAnalyzer = playerVm.beatAnalyzer,
                 newUi = playerState.newUiEnabled,
+                // Auto-hide only on the real Now Playing route (covers lyrics + fullscreen video).
+                // Detail routes (album/artist) keep the bar visible even when reached from Now Playing.
+                autoHide = isOnNowPlaying,
                 onSelect = onSelect@ { tab ->
                     // Swallow a stray click bled onto the nav bar right after a video→pushed-screen
                     // navigation (focus escaped here while the new screen was still loading). Without

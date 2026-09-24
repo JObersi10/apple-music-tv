@@ -56,6 +56,11 @@ fun TopNavBar(
     beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null,
     /** New-UI flag (Dev → Interface). Renames Listen Now→Home, Browse→New and reveals Videos + Radio. */
     newUi: Boolean = false,
+    /** Auto-hide the bar (fade to 0 until focused). True ONLY on the actual Now Playing route —
+     *  which covers lyrics + fullscreen video too. Route-based, NOT selectedTab-based: detail
+     *  routes (album/artist) don't update selectedTab, so keying off `selected==NowPlaying` used to
+     *  keep the bar hidden on an album opened from Now Playing. */
+    autoHide: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // New UI adds the Videos + Radio destinations (Apple's tab set); classic UI keeps the original five.
@@ -76,7 +81,7 @@ fun TopNavBar(
     // whichever tab sits nearest the pressed control.
     val npTabFocus = remember { FocusRequester() }
     val alpha by animateFloatAsState(
-        targetValue = if (selected == TopNavTab.NowPlaying && !isFocused) 0f else 1f,
+        targetValue = if (autoHide && !isFocused) 0f else 1f,
         animationSpec = tween(500),
         label = "navBarAlpha"
     )

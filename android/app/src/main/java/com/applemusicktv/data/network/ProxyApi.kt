@@ -13,6 +13,7 @@ data class SongDto(
     val albumId:        String? = null,
     val albumName:      String,
     val durationMs:     Long,
+    val popularity:     Double?      = null,
     val artworkUrl:     String?,
     val artworkBgColor: String?,
     val previewUrl:     String?,

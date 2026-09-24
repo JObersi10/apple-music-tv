@@ -24,6 +24,9 @@ data class AppleSongAttrs(
     val artistName: String = "",
     val albumName: String = "",
     val durationInMillis: Long = 0,
+    // Apple's per-track popularity (0..1), returned with ?extend=popularity. Drives the album's
+    // grey "popular" dot (Apple gates it on a threshold — see AlbumDetailScreen).
+    val popularity: Double? = null,
     val artwork: AppleArtwork? = null,
     val previews: List<ApplePreview> = emptyList(),
     val hasLyrics: Boolean = false,
@@ -135,6 +138,7 @@ fun AppleItem<AppleSongAttrs>.toSongDto() = SongDto(
     artistId       = relationships?.artists?.data?.firstOrNull()?.id,
     albumId        = relationships?.albums?.data?.firstOrNull()?.id,
     durationMs     = attributes?.durationInMillis ?: 0,
+    popularity     = attributes?.popularity,
     artworkUrl     = attributes?.artwork?.url,
     artworkBgColor = attributes?.artwork?.bgColor,
     previewUrl     = attributes?.previews?.firstOrNull()?.url,
@@ -284,6 +288,8 @@ interface DirectAppleApi {
         // Without it artistId is null on the direct path, which breaks album MVs, the popular dot,
         // and related albums (all resolve the artist from a track).
         @Query("include") include: String = "artists",
+        // extend=popularity → attributes.popularity for the grey popular dot (Apple's own signal).
+        @Query("extend") extend: String = "popularity",
     ): AppleList<AppleItem<AppleSongAttrs>>
 
     /** Library albums need the library endpoint; `include=catalog` gives us the id. */
