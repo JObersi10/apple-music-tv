@@ -129,6 +129,7 @@ fun AlbumDetailScreen(
                 TrackRow(
                     track       = track,
                     index       = index + 1,
+                    isPopular   = track.title.trim().lowercase() in state.popularTitles,
                     onClick     = { playerVm.playAlbum(state.tracks, index) },
                     onLongClick = { menuSong = track },
                     focusRequester = rowFocus.getOrPut(track.id) { FocusRequester() },
@@ -232,7 +233,7 @@ private fun AlbumContextItem(icon: Glyph, label: String, onClick: () -> Unit, mo
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TrackRow(track: Song, index: Int, onClick: () -> Unit, onLongClick: () -> Unit = {}, focusRequester: FocusRequester? = null) {
+private fun TrackRow(track: Song, index: Int, isPopular: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit = {}, focusRequester: FocusRequester? = null) {
     Surface(
         onClick     = onClick,
         onLongClick = onLongClick,
@@ -251,7 +252,13 @@ private fun TrackRow(track: Song, index: Int, onClick: () -> Unit, onLongClick: 
         ) {
             Text("$index", fontSize = 13.sp, color = Color(0xFF555555), modifier = Modifier.width(24.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(track.title, fontSize = 14.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Apple's "popular" dot: a small red dot before the title on the album's best songs.
+                    if (isPopular) {
+                        Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFFFA233B)))
+                    }
+                    Text(track.title, fontSize = 14.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 if (track.artistName.isNotEmpty()) {
                     Text(track.artistName, fontSize = 11.sp, color = Color(0xFF666666), modifier = Modifier.padding(top = 2.dp))
                 }

@@ -156,6 +156,29 @@ fun NowPlayingScreen(
             NowPlayingBackground.BLACK else state.nowPlayingBackground
         DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying, orbSpeed = state.orbSpeed, reduceMotion = state.reduceMotion, lowPower = state.lowPowerMode)
 
+        // Apple-style ambient motion backdrop: when the album has motion art, play it FULL-SCREEN
+        // behind everything, cover-cropped and dimmed. It reuses MotionCover (640px cap) upscaled to
+        // fill — the upscale is a free soft-blur (Fire TV has no hardware blur). Gated to the DYNAMIC
+        // background, powered/foreground only. When it's on we render it INSTEAD of the small motion
+        // cover below (see the cover's `&& !ambientBackdropOn` guard) so only ONE video decoder runs.
+        val ambientBackdropOn = MOTION_ENABLED && song != null && state.motionUrl != null &&
+            !state.isInPip && !state.lowPowerMode && !screensaverOn &&
+            backgroundMode == NowPlayingBackground.DYNAMIC
+        if (ambientBackdropOn) {
+            MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
+            // Scrim: darken + right-weighted gradient so white lyrics stay readable over the video.
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(listOf(Color(0x66000000), Color(0x99000000)))
+                )
+            )
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.horizontalGradient(0f to Color(0x00000000), 1f to Color(0x80000000))
+                )
+            )
+        }
+
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 Text("Nothing playing", color = Color(0xFF666666), fontSize = 18.sp)
@@ -339,7 +362,7 @@ fun NowPlayingScreen(
                     // decoder, and holding it alive through the PiP transition is a memory spike that
                     // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
                     @Suppress("ConstantConditionIf")
-                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
+                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode && !ambientBackdropOn) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
                 }

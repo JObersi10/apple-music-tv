@@ -24,6 +24,9 @@ data class AlbumDetailUiState(
     val relatedAlbums: List<Album> = emptyList(),
     val musicVideos:   List<Song>  = emptyList(),
     val motionUrl:     String?     = null,
+    // Lowercased titles of the album's tracks that are also in the artist's top-songs — Apple's
+    // "popular"/best-songs dot. Matched by title so library vs catalog ids don't matter.
+    val popularTitles: Set<String> = emptySet(),
     val error:         String?     = null,
 )
 
@@ -64,6 +67,16 @@ class AlbumDetailViewModel @Inject constructor(
                 // derivation on standalone). Best-effort — never fails the page.
                 val videos = repo.getAlbumMusicVideos(albumId).getOrDefault(emptyList())
                 android.util.Log.i("AMAlbumMV", "albumId=$albumId MVs=${videos.size} album='${album?.title}'")
+                // Popular ("best songs") dot: album tracks whose title is in the artist's top-songs.
+                val artistIdForTop = album?.artistId?.takeIf { it.isNotBlank() }
+                    ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
+                val popularTitles = artistIdForTop?.let { aid ->
+                    runCatching {
+                        repo.getArtistFull(aid).getOrNull()?.topSongs
+                            ?.map { it.title.trim().lowercase() }?.toSet()
+                    }.getOrNull()
+                }?.let { top -> tracks.map { it.title.trim().lowercase() }.filter { it in top }.toSet() }
+                    ?: emptySet()
                 val newState = AlbumDetailUiState(
                     isLoading     = false,
                     album         = album,
@@ -71,6 +84,7 @@ class AlbumDetailViewModel @Inject constructor(
                     relatedAlbums = relatedD.await().getOrDefault(emptyList()),
                     musicVideos   = videos,
                     motionUrl     = motionUrl,
+                    popularTitles = popularTitles,
                 )
                 _state.value = newState
                 writeCache(albumId, newState)
