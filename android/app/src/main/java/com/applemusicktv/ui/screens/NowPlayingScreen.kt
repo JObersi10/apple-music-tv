@@ -931,81 +931,62 @@ private fun AmbientBackground(
     )
     val amp = beatMultiplier.coerceIn(0.4f, 3.5f)
     val inf = rememberInfiniteTransition(label = "ambientDrift")
-    val z by inf.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(12000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "z")
-    val px by inf.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(17000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "px")
-    val py by inf.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(21000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "py")
-    // Extra slow clocks for the lava-lamp layers (each blurred cover copy drifts/rotates/scales on its
-    // own period so the colours flow and morph like Apple's ambient backdrop, not a sliding photo).
-    val la by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(23000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "la")
-    val lb by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(31000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "lb")
-    val frozen = remember { floatArrayOf(0f, 0f, 0f) }
-    LaunchedEffect(move) { if (!move) { frozen[0] = z; frozen[1] = px; frozen[2] = py } }
+    // Independent slow clocks — each blob rides its own so the field never repeats and the colours
+    // slowly flow past each other (the lava-lamp morph). Apple's `colorBlobsBlurEffect`.
+    val t1 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(19000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
+    val t2 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(24000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
+    val t3 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(29000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
+    val t4 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(34000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
+    val t5 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(27000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t5")
+    val frozen = remember { FloatArray(5) }
+    LaunchedEffect(move) { if (!move) { frozen[0]=t1;frozen[1]=t2;frozen[2]=t3;frozen[3]=t4;frozen[4]=t5 } }
+    // Vivid blob colours from the artwork palette (distinct hues — NOT the whole cover averaged to mud).
+    val blobColors = palette.mapIndexed { i, c -> animateColorAsState(c, tween(1500), label = "ambBlob$i").value }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF060606))) {
         if (motionUrl != null) {
-            // Apple uses the motion video when the album has one — over-scanned so its edges never show.
+            // Apple uses the motion video when the album has one — over-scanned + blurred so it reads
+            // as flowing colour, not a sharp square. (The 640-cap upscaled ~4× is already soft.)
             Box(Modifier.fillMaxSize().graphicsLayer {
-                val zz = if (move) z else frozen[0]
-                val s = 1.35f + zz * 0.10f; scaleX = s; scaleY = s
-                translationX = (if (move) px else frozen[1] - 0.5f) * size.width * 0.10f
-                translationY = (if (move) py else frozen[2] - 0.5f) * size.height * 0.10f
+                val s = 1.5f + (if (move) t1 else frozen[0]) * 0.12f; scaleX = s; scaleY = s
             }) { MotionCover(url = motionUrl, modifier = Modifier.fillMaxSize()) }
-        } else if (artworkUrlTemplate != null) {
-            // LAVA LAMP: three heavily-blurred copies of the cover, each drifting + rotating + scaling on
-            // its own slow clock. Where they overlap the album's colours blend and flow — Apple's look.
-            // One decode is shared (same URL + BlurTransformation cacheKey); the layers are just transforms.
-            val blurUrl = artworkUrlTemplate.replace("{w}", "300").replace("{h}", "300").replace("{f}", "jpg")
-            val req = ImageRequest.Builder(LocalContext.current).data(blurUrl)
-                .transformations(com.applemusicktv.ui.components.BlurTransformation(radius = 22))
-                .crossfade(true).build()
-            val ctx = LocalContext.current
-            // Layer 0: base fill, slow zoom breathe.
-            AsyncImage(model = req, contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().graphicsLayer {
-                    val s = 1.6f + (if (move) z else frozen[0]) * 0.15f; scaleX = s; scaleY = s
-                    rotationZ = (if (move) la else 0f) * 12f - 6f
-                })
-            // Layer 1: rotates the other way, drifts, screen-ish via alpha — makes the colours swirl.
-            AsyncImage(model = req, contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().graphicsLayer {
-                    this.alpha = 0.55f
-                    val s = 1.9f + (if (move) lb else 0f) * 0.2f; scaleX = s; scaleY = s
-                    rotationZ = -(if (move) lb else 0f) * 18f + 9f
-                    translationX = ((if (move) px else frozen[1]) - 0.5f) * size.width * 0.28f
-                    translationY = ((if (move) py else frozen[2]) - 0.5f) * size.height * 0.22f
-                })
-            // Layer 2: big, slow, offset — adds the roaming colour blob that reads as the "lamp".
-            AsyncImage(model = req, contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().graphicsLayer {
-                    this.alpha = 0.5f
-                    val s = 2.3f + (if (move) la else 0f) * 0.25f; scaleX = s; scaleY = s
-                    rotationZ = (if (move) la else 0f) * 24f
-                    translationX = ((if (move) la else 0f) - 0.5f) * size.width * 0.35f
-                    translationY = ((if (move) lb else 0f) - 0.5f) * size.height * 0.30f
-                })
+            Box(Modifier.fillMaxSize().background(tint.copy(alpha = 0.14f)))
+        } else {
+            // LAVA LAMP: big soft colour blobs from the palette, drifting on independent clocks, Screen-
+            // blended so overlaps brighten and the colours melt together. Beat energy swells them. This
+            // is Apple's real mechanism (colour blobs + blur), not a blurred photo — which just went muddy.
+            Box(Modifier.fillMaxSize().drawBehind {
+                val w = size.width; val h = size.height
+                val e = energyState.value
+                val cols = blobColors.ifEmpty { listOf(tint) }
+                val n = cols.size.coerceAtLeast(1)
+                val twoPi = (2.0 * Math.PI).toFloat()
+                // Anchors spread across the frame; each drifts on a small ellipse via its own clock.
+                val ax = floatArrayOf(0.28f, 0.68f, 0.45f, 0.80f, 0.18f)
+                val ay = floatArrayOf(0.35f, 0.30f, 0.68f, 0.62f, 0.75f)
+                val clk = floatArrayOf(
+                    if (move) t1 else frozen[0], if (move) t2 else frozen[1],
+                    if (move) t3 else frozen[2], if (move) t4 else frozen[3], if (move) t5 else frozen[4],
+                )
+                val ph = floatArrayOf(0f, 1.7f, 3.1f, 4.6f, 5.5f)
+                for (i in 0 until 5) {
+                    val col = cols[i % n]
+                    val cx = ax[i] * w + cos(clk[i] * twoPi + ph[i]) * 0.14f * w
+                    val cy = ay[i] * h + sin(clk[i] * twoPi + ph[i]) * 0.12f * h
+                    val c = Offset(cx, cy)
+                    // Big soft blobs (radius ~0.6 of the frame) so they overlap heavily and melt.
+                    val r = maxOf(w, h) * (0.55f + 0.10f * clk[i]) * (1f + e * 0.15f * amp)
+                    val a = (0.5f + e * 0.18f * amp).coerceAtMost(0.85f)
+                    drawCircle(
+                        brush = Brush.radialGradient(listOf(col.copy(alpha = a), col.copy(alpha = 0f)), center = c, radius = r),
+                        radius = r, center = c, blendMode = BlendMode.Screen,
+                    )
+                }
+            })
         }
-        // Apple tints the blurred backdrop toward the ambient colour + darkens for legibility.
-        Box(Modifier.fillMaxSize().background(tint.copy(alpha = 0.18f)))
-        // Beat bloom: the ambient colour EXPANDS out from behind the album art on each hit — a radial
-        // glow whose radius + brightness ride the beat energy, screen-blended so it reads as light.
-        Box(Modifier.fillMaxSize().drawBehind {
-            val e = energyState.value
-            if (e <= 0.001f) return@drawBehind
-            val w = size.width; val h = size.height
-            // Bloom centred on the album art (left column), expanding rightward across the frame.
-            val center = Offset(w * 0.30f, h * 0.42f)
-            val radius = (minOf(w, h) * (0.35f + e * 0.9f * amp))
-            val a = (e * 0.5f * amp).coerceAtMost(0.85f)
-            drawCircle(
-                brush = Brush.radialGradient(listOf(tint.copy(alpha = a), tint.copy(alpha = 0f)), center = center, radius = radius),
-                radius = radius, center = center, blendMode = BlendMode.Screen,
-            )
-        })
+        // Darken for lyric legibility (overall + vertical falloff + heavier right column).
         Box(Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(Color(0x55000000), Color(0x22000000), Color(0x88000000)))))
+            Brush.verticalGradient(listOf(Color(0x4D000000), Color(0x1A000000), Color(0x80000000)))))
         Box(Modifier.fillMaxSize().background(
             Brush.horizontalGradient(0.30f to Color(0x00000000), 1f to Color(0x99000000))))
     }
