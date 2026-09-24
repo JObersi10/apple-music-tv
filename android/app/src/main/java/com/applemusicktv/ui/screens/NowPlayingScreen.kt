@@ -155,8 +155,12 @@ fun NowPlayingScreen(
         val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
             NowPlayingBackground.BLACK else state.nowPlayingBackground
         if (backgroundMode == NowPlayingBackground.AMBIENT) {
-            // Dynamic v2 — Apple's fullscreen ambient backdrop (motion art or soft album cover).
-            AmbientBackground(motionUrl = state.motionUrl, artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "")
+            // Dynamic v2 — Apple's own Now Playing backdrop (EditorialVideo previewFrame model): a
+            // heavily-blurred, slowly-drifting version of the motion art / cover, tinted by the
+            // artwork's ambient colour. No beat reactivity — that's the v1 "Dynamic" blobs.
+            AmbientBackground(motionUrl = state.motionUrl, artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "",
+                playing = state.isPlaying, reduceMotion = state.reduceMotion,
+                beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity)
         } else {
             DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying, orbSpeed = state.orbSpeed, reduceMotion = state.reduceMotion, lowPower = state.lowPowerMode)
         }
@@ -905,31 +909,105 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
  * scrim (heavier on the right) keeps the lyrics legible — same readability strategy as DynamicBackground.
  */
 @Composable
-private fun AmbientBackground(motionUrl: String?, artworkUrlTemplate: String?, songKey: String) {
+private fun AmbientBackground(
+    motionUrl: String?, artworkUrlTemplate: String?, songKey: String,
+    playing: Boolean = true, reduceMotion: Boolean = false,
+    beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null, beatMultiplier: Float = 1f,
+) {
     val paletteUrl = artworkUrlTemplate?.replace("{w}", "300")?.replace("{h}", "300")?.replace("{f}", "jpg")
     val palette = rememberArtworkPalette(paletteUrl, seed = songKey)
+    // Apple's `ambientColor` — the artwork's dominant hue. We derive it the same way (palette lead).
     val tint = animateColorAsState(palette.firstOrNull() ?: Color(0xFF101010), tween(1500), label = "ambientTint").value
+
+    // Apple's ambient backdrop drifts slowly and continuously (a Ken-Burns pan/zoom), NOT to the beat.
+    val move = playing && !reduceMotion
+    // Beat: Apple blooms the ambient COLOUR outward on each hit (the glow expands), it does NOT zoom
+    // the image. Damped so each beat lands once. Read inside drawBehind so only the draw re-runs.
+    val rawEnergy by (beatAnalyzer?.energy?.collectAsState() ?: remember { mutableStateOf(0f) })
+    val energyState = animateFloatAsState(
+        (if (move) rawEnergy else 0f).coerceIn(0f, 1f),
+        androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow),
+        label = "ambientBeat",
+    )
+    val amp = beatMultiplier.coerceIn(0.4f, 3.5f)
+    val inf = rememberInfiniteTransition(label = "ambientDrift")
+    val z by inf.animateFloat(0f, 1f,
+        infiniteRepeatable(tween(12000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "z")
+    val px by inf.animateFloat(0f, 1f,
+        infiniteRepeatable(tween(17000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "px")
+    val py by inf.animateFloat(0f, 1f,
+        infiniteRepeatable(tween(21000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "py")
+    // Extra slow clocks for the lava-lamp layers (each blurred cover copy drifts/rotates/scales on its
+    // own period so the colours flow and morph like Apple's ambient backdrop, not a sliding photo).
+    val la by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(23000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "la")
+    val lb by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(31000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "lb")
+    val frozen = remember { floatArrayOf(0f, 0f, 0f) }
+    LaunchedEffect(move) { if (!move) { frozen[0] = z; frozen[1] = px; frozen[2] = py } }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
         if (motionUrl != null) {
-            MotionCover(url = motionUrl, modifier = Modifier.fillMaxSize())
+            // Apple uses the motion video when the album has one — over-scanned so its edges never show.
+            Box(Modifier.fillMaxSize().graphicsLayer {
+                val zz = if (move) z else frozen[0]
+                val s = 1.35f + zz * 0.10f; scaleX = s; scaleY = s
+                translationX = (if (move) px else frozen[1] - 0.5f) * size.width * 0.10f
+                translationY = (if (move) py else frozen[2] - 0.5f) * size.height * 0.10f
+            }) { MotionCover(url = motionUrl, modifier = Modifier.fillMaxSize()) }
         } else if (artworkUrlTemplate != null) {
-            // Tiny fetch (120px) upscaled fullscreen = soft, cheap blur on a device with no RenderEffect.
-            val softUrl = artworkUrlTemplate.replace("{w}", "120").replace("{h}", "120").replace("{f}", "jpg")
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current).data(softUrl).crossfade(true).build(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.15f; scaleY = 1.15f },
-            )
+            // LAVA LAMP: three heavily-blurred copies of the cover, each drifting + rotating + scaling on
+            // its own slow clock. Where they overlap the album's colours blend and flow — Apple's look.
+            // One decode is shared (same URL + BlurTransformation cacheKey); the layers are just transforms.
+            val blurUrl = artworkUrlTemplate.replace("{w}", "300").replace("{h}", "300").replace("{f}", "jpg")
+            val req = ImageRequest.Builder(LocalContext.current).data(blurUrl)
+                .transformations(com.applemusicktv.ui.components.BlurTransformation(radius = 22))
+                .crossfade(true).build()
+            val ctx = LocalContext.current
+            // Layer 0: base fill, slow zoom breathe.
+            AsyncImage(model = req, contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    val s = 1.6f + (if (move) z else frozen[0]) * 0.15f; scaleX = s; scaleY = s
+                    rotationZ = (if (move) la else 0f) * 12f - 6f
+                })
+            // Layer 1: rotates the other way, drifts, screen-ish via alpha — makes the colours swirl.
+            AsyncImage(model = req, contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    this.alpha = 0.55f
+                    val s = 1.9f + (if (move) lb else 0f) * 0.2f; scaleX = s; scaleY = s
+                    rotationZ = -(if (move) lb else 0f) * 18f + 9f
+                    translationX = ((if (move) px else frozen[1]) - 0.5f) * size.width * 0.28f
+                    translationY = ((if (move) py else frozen[2]) - 0.5f) * size.height * 0.22f
+                })
+            // Layer 2: big, slow, offset — adds the roaming colour blob that reads as the "lamp".
+            AsyncImage(model = req, contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    this.alpha = 0.5f
+                    val s = 2.3f + (if (move) la else 0f) * 0.25f; scaleX = s; scaleY = s
+                    rotationZ = (if (move) la else 0f) * 24f
+                    translationX = ((if (move) la else 0f) - 0.5f) * size.width * 0.35f
+                    translationY = ((if (move) lb else 0f) - 0.5f) * size.height * 0.30f
+                })
         }
-        // Ambient colour wash (Apple tints the blurred backdrop toward the artwork's dominant hue).
-        Box(Modifier.fillMaxSize().background(tint.copy(alpha = 0.28f)))
-        // Dark scrims: overall dim + vertical falloff + heavier right side for the lyric column.
+        // Apple tints the blurred backdrop toward the ambient colour + darkens for legibility.
+        Box(Modifier.fillMaxSize().background(tint.copy(alpha = 0.18f)))
+        // Beat bloom: the ambient colour EXPANDS out from behind the album art on each hit — a radial
+        // glow whose radius + brightness ride the beat energy, screen-blended so it reads as light.
+        Box(Modifier.fillMaxSize().drawBehind {
+            val e = energyState.value
+            if (e <= 0.001f) return@drawBehind
+            val w = size.width; val h = size.height
+            // Bloom centred on the album art (left column), expanding rightward across the frame.
+            val center = Offset(w * 0.30f, h * 0.42f)
+            val radius = (minOf(w, h) * (0.35f + e * 0.9f * amp))
+            val a = (e * 0.5f * amp).coerceAtMost(0.85f)
+            drawCircle(
+                brush = Brush.radialGradient(listOf(tint.copy(alpha = a), tint.copy(alpha = 0f)), center = center, radius = radius),
+                radius = radius, center = center, blendMode = BlendMode.Screen,
+            )
+        })
         Box(Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(Color(0x66000000), Color(0x22000000), Color(0x99000000)))))
+            Brush.verticalGradient(listOf(Color(0x55000000), Color(0x22000000), Color(0x88000000)))))
         Box(Modifier.fillMaxSize().background(
-            Brush.horizontalGradient(0.30f to Color(0x00000000), 1f to Color(0x9E000000))))
+            Brush.horizontalGradient(0.30f to Color(0x00000000), 1f to Color(0x99000000))))
     }
 }
 

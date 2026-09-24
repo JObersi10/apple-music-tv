@@ -87,7 +87,7 @@ private const val CAPTURE_PCM = false
  */
 enum class NowPlayingBackground(val label: String) {
     DYNAMIC("Dynamic"),
-    AMBIENT("Dynamic v2"),
+    AMBIENT("Ambient"),
     PROJECTOR("Projector"),
     BLACK("Black"),
     ;

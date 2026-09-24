@@ -42,6 +42,19 @@ client does, and what we can borrow. Source of truth for the features below.
   from a 120px fetch (soft, since `Modifier.blur` is a no-op on this Fire TV). One decoder: the small
   card MotionCover is suppressed while Dynamic v2 is showing the same loop fullscreen.
 
+### How Apple's Android app actually renders it (confirmed from dex, 2026-09-24)
+- The now-playing backdrop is NOT a beat visualiser and NOT a sharp photo. Dex symbols:
+  `GenerationBackgroundParams(blurEffect, colorBlobsBlurEffect, bubbleBlur, overlayBlur,
+  postBlurEffect)` → Apple draws soft **colour blobs / bubbles** from the artwork colours and
+  **heavily blurs** them (a lava lamp). Blur is done with **RenderScript Toolkit**
+  (`com.apple.android.music.utils.ImageBlurTransformation`, "radius should be between 1 and 25",
+  `nativeBlurBitmap`) — a Coil Transformation, exactly the pattern we now use. Colours come from
+  `getPreviewFrameArtworkGradient` / `getPreviewFrameArtworkBGColor`; motion video (`motionSquare`)
+  is used over-scanned when the album has one.
+- **Our "Ambient" mode** matches this: `BlurTransformation` (box-blur Coil transform, no RenderEffect
+  needed) applied to 3 drifting/rotating/scaling cover layers = flowing blurred colour; motion video
+  over-scanned when present; ambient-colour tint; a beat "bloom" that expands the colour on each hit.
+
 ## 3. Native lyrics translations + pronunciation — BUILT (translation; pronunciation still open)
 - **BUILT (2026-09-24):** `GET /api/lyrics/:songId/translation?to=<lang>` — native-first. Requests
   the lyrics with `l=<lang>`; if Apple returns TTML whose text actually differs from the original
