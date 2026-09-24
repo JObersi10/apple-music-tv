@@ -280,6 +280,10 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("limit") limit: Int = 100,
+        // include=artists so each track carries relationships.artists → toSongDto fills artistId.
+        // Without it artistId is null on the direct path, which breaks album MVs, the popular dot,
+        // and related albums (all resolve the artist from a track).
+        @Query("include") include: String = "artists",
     ): AppleList<AppleItem<AppleSongAttrs>>
 
     /** Library albums need the library endpoint; `include=catalog` gives us the id. */

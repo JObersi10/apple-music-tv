@@ -253,9 +253,9 @@ private fun TrackRow(track: Song, index: Int, isPopular: Boolean = false, onClic
             Text("$index", fontSize = 13.sp, color = Color(0xFF555555), modifier = Modifier.width(24.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // Apple's "popular" dot: a small red dot before the title on the album's best songs.
+                    // Apple's "popular" dot: a small grey dot before the title on the album's best songs.
                     if (isPopular) {
-                        Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFFFA233B)))
+                        Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFF9A9A9A)))
                     }
                     Text(track.title, fontSize = 14.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
