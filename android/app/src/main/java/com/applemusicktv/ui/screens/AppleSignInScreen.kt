@@ -95,50 +95,66 @@ fun AppleSignInScreen(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    CookieManager.getInstance().apply {
-                        setAcceptCookie(true)
-                    }
-                    WebView(ctx).apply {
-                        // Desktop Safari UA — embedded WebViews are otherwise sometimes refused by Apple.
-                        settings.userAgentString = SAFARI_UA
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.javaScriptCanOpenWindowsAutomatically = true
-                        settings.setSupportMultipleWindows(true)
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    CookieManager.getInstance().apply { setAcceptCookie(true) }
+                    // Root holds the main WebView plus any auth popup, which MUST be its own child
+                    // WebView — Amazon's WebView crashes ("Parent WebView cannot host its own popup
+                    // window") if onCreateWindow points the popup transport back at the parent.
+                    val root = android.widget.FrameLayout(ctx)
 
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                status = "Loading…"
-                            }
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                status = if (devToken != null) "Press Connect, then sign in with your Apple ID"
-                                         else "Sign in with your Apple ID"
-                            }
-                        }
-                        // Route MusicKit's auth popup (window.open → idmsa.apple.com) into THIS WebView
-                        // rather than dropping it, which is what breaks the sign-in in a plain WebView.
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onCreateWindow(
-                                view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?,
-                            ): Boolean {
-                                val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-                                transport.webView = view
-                                resultMsg.sendToTarget()
-                                return true
-                            }
-                        }
-                        val dt = devToken
-                        if (dt != null) {
-                            // Host our own MusicKit "Connect" page, but with music.apple.com as the base
-                            // URL so the document origin matches the developer token + cookies. Then
-                            // music.authorize() opens Apple's official consent/login and returns the MUT.
-                            loadDataWithBaseURL("https://music.apple.com/", connectHtml(dt), "text/html", "UTF-8", null)
-                        } else {
-                            loadUrl(LOGIN_URL)
-                        }
-                        webView = this
+                    fun configure(wv: WebView) {
+                        wv.settings.userAgentString = SAFARI_UA
+                        wv.settings.javaScriptEnabled = true
+                        wv.settings.domStorageEnabled = true
+                        wv.settings.javaScriptCanOpenWindowsAutomatically = true
+                        wv.settings.setSupportMultipleWindows(true)
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
                     }
+
+                    val main = WebView(ctx)
+                    configure(main)
+                    main.webViewClient = object : WebViewClient() {
+                        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) { status = "Loading…" }
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            status = if (devToken != null) "Press Connect, then sign in with your Apple ID"
+                                     else "Sign in with your Apple ID"
+                        }
+                    }
+                    main.webChromeClient = object : WebChromeClient() {
+                        override fun onCreateWindow(
+                            view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?,
+                        ): Boolean {
+                            val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                            // A separate popup WebView, laid over the main one, for Apple's sign-in.
+                            val popup = WebView(ctx)
+                            configure(popup)
+                            popup.webViewClient = WebViewClient()
+                            popup.webChromeClient = object : WebChromeClient() {
+                                override fun onCloseWindow(window: WebView?) {
+                                    runCatching { root.removeView(popup); popup.destroy() }
+                                }
+                            }
+                            root.addView(popup, android.widget.FrameLayout.LayoutParams(
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT))
+                            transport.webView = popup
+                            resultMsg.sendToTarget()
+                            return true
+                        }
+                    }
+
+                    val dt = devToken
+                    if (dt != null) {
+                        // Our own MusicKit "Connect" page, base=music.apple.com so origin/token/cookies
+                        // line up. music.authorize() then opens Apple's official sign-in and returns the MUT.
+                        main.loadDataWithBaseURL("https://music.apple.com/", connectHtml(dt), "text/html", "UTF-8", null)
+                    } else {
+                        main.loadUrl(LOGIN_URL)
+                    }
+                    root.addView(main, android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT))
+                    webView = main
+                    root
                 },
             )
         }
