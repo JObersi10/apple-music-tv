@@ -43,6 +43,7 @@ class MusicRepository @Inject constructor(
     private val directLyrics: DirectLyricsSource,
     private val directBrowse: com.applemusicktv.data.datasource.DirectBrowseSource,
     private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
+    private val directClient: com.applemusicktv.media.AppleDirectClient,
 ) {
     /**
      * Standalone means *everything* on device — browse, library, search, artwork and
@@ -368,9 +369,12 @@ class MusicRepository @Inject constructor(
         api.setMUT(mapOf("mut" to token))
     }
     suspend fun syncMUTToServer(token: String) = api.setMUT(mapOf("mut" to token))
-    /** Developer token for the on-TV MusicKit "Connect to Apple Music" sign-in. Null if unavailable. */
-    suspend fun getDeveloperToken(): String? =
-        runCatching { api.getDeveloperToken()["token"] }.getOrNull()?.takeIf { it.isNotBlank() }
+    /** Developer token for the on-TV MusicKit "Connect to Apple Music" sign-in. Tries the proxy first,
+     *  then falls back to scraping the bearer on-device so sign-in works with no PC (standalone). */
+    suspend fun getDeveloperToken(): String? {
+        runCatching { api.getDeveloperToken()["token"] }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+        return runCatching { directClient.getBearer() }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
     suspend fun clearMUT() {
         mutPrefs.setMUT("")
         api.clearMUT()
