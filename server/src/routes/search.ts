@@ -122,6 +122,9 @@ export function normaliseSong(s: any) {
     albumId:        s.relationships?.albums?.data?.[0]?.id ?? null,
     albumName:      a.albumName ?? "",
     durationMs:     a.durationInMillis ?? a.durationInMilliseconds ?? 0,
+    // Apple per-track popularity (0..1), present only when the request adds ?extend=popularity.
+    // Drives the album "popular" dot.
+    popularity:     a.popularity ?? null,
     artworkUrl:     artworkUrl(s),
     artworkBgColor: a.artwork?.bgColor ?? s.relationships?.catalog?.data?.[0]?.attributes?.artwork?.bgColor ?? null,
     previewUrl:     a.previews?.[0]?.url ?? null,

@@ -56,15 +56,83 @@ lyrics.get("/:songId", async (c) => {
   return c.json({ lines: [], source: "none" });
 });
 
+/**
+ * GET /api/lyrics/:songId/translation?to=<lang> → { lines: string[], source }
+ *
+ * Native-first lyric translation. Apple ships official per-line translations in its lyrics entity
+ * (see docs/apple-apk-findings.md §3). We request the lyrics with the target language (`l=<lang>`)
+ * and, when Apple returns TTML whose text actually differs from the original, use THAT — it's the
+ * real Apple translation, aligned line-for-line. If Apple has no translation for the song/language
+ * (most catalog tracks), we fall back to the keyless machine translator so nothing regresses.
+ * Returns strings aligned by index to the base lyric lines.
+ */
+lyrics.get("/:songId/translation", async (c) => {
+  if (!hasMUT()) return c.json({ lines: [], source: "none" }, 401);
+  const songId = c.req.param("songId");
+  const to = (c.req.query("to") || "en").trim();
+  const headers = {
+    Authorization: `Bearer ${getBearerToken()}`,
+    "Music-User-Token": getMUT(),
+    Origin: "https://music.apple.com",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+  };
+
+  try {
+    const base = (await fetchAppleLyrics(songId, headers)) ?? [];
+    if (base.length === 0) return c.json({ lines: [], source: "none" });
+    const baseText = base.map((l) => l.text);
+
+    // 1) Apple native: same fetch, but ask for the target language. If the returned lines read as a
+    //    different language (enough lines differ from the original), it's Apple's own translation.
+    const translated = await fetchAppleLyrics(songId, { ...headers, "Accept-Language": to }, to);
+    if (translated && translated.length === base.length) {
+      const diff = translated.reduce((n, l, i) => n + (l.text.trim() && l.text.trim() !== baseText[i].trim() ? 1 : 0), 0);
+      if (diff >= Math.max(3, Math.floor(base.length * 0.4))) {
+        console.log(`[lyrics] ${songId} translation apple to=${to} diff=${diff}/${base.length}`);
+        return c.json({ lines: translated.map((l) => l.text), source: "apple" });
+      }
+    }
+
+    // 2) Machine fallback (keyless Google) — same technique as /api/translate.
+    const machine = await machineTranslate(baseText, to);
+    return c.json({ lines: machine, source: "machine" });
+  } catch (e: any) {
+    console.warn(`[lyrics] ${songId} translation failed: ${e.message}`);
+    return c.json({ lines: [], source: "none" });
+  }
+});
+
+/** Keyless Google batch translate — mirrors routes/translate.ts, kept local so this route is self-contained. */
+async function machineTranslate(lines: string[], to: string): Promise<string[]> {
+  const out = [...lines];
+  const need = lines.map((t, i) => ({ i, t })).filter((n) => n.t.trim());
+  if (need.length === 0) return out;
+  const SENT = "\n␞\n";
+  try {
+    const res = await axios.get("https://translate.googleapis.com/translate_a/single", {
+      params: { client: "gtx", sl: "auto", tl: to, dt: "t", q: need.map((n) => n.t).join(SENT) },
+      timeout: 12000, headers: { "User-Agent": "Mozilla/5.0" },
+    });
+    const chunks: string = (res.data?.[0] ?? []).map((seg: any[]) => seg?.[0] ?? "").join("");
+    const parts = chunks.split("␞").map((s) => s.trim());
+    need.forEach((n, k) => { out[n.i] = (parts[k] ?? n.t).trim() || n.t; });
+  } catch (e: any) {
+    console.warn("[lyrics] machine translate failed:", e?.message);
+  }
+  return out;
+}
+
 /** Fetch TTML from an endpoint, trying syllable-lyrics then lyrics. */
 async function fetchTTML(
   baseUrl: string,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  lang?: string,
 ): Promise<LyricLine[] | null> {
   // Try word-level syllable endpoint first, fall back to line-level.
   for (const suffix of ["syllable-lyrics", "lyrics"]) {
     try {
-      const res = await axios.get(`${baseUrl}/${suffix}`, { headers });
+      const url = lang ? `${baseUrl}/${suffix}?l=${encodeURIComponent(lang)}` : `${baseUrl}/${suffix}`;
+      const res = await axios.get(url, { headers });
       const ttml = res.data?.data?.[0]?.attributes?.ttml ?? null;
       if (ttml) {
         const lines = parseTTML(ttml);
@@ -78,26 +146,27 @@ async function fetchTTML(
 /** Apple Music TTML lyrics (library id resolves to catalog if needed). */
 async function fetchAppleLyrics(
   songId: string,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  lang?: string,
 ): Promise<LyricLine[] | null> {
   const isLibrary = songId.startsWith("i.");
   const sf = getStorefront();
 
   if (isLibrary) {
     const libBase = `https://amp-api-edge.music.apple.com/v1/me/library/songs/${songId}`;
-    const libLines = await fetchTTML(libBase, headers);
+    const libLines = await fetchTTML(libBase, headers, lang);
     if (libLines) return libLines;
 
     const catalogId = await resolveCatalogId(songId, headers);
     if (catalogId) {
       const catBase = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/songs/${catalogId}`;
-      return fetchTTML(catBase, headers);
+      return fetchTTML(catBase, headers, lang);
     }
     return null;
   }
 
   const catBase = `https://amp-api-edge.music.apple.com/v1/catalog/${sf}/songs/${songId}`;
-  return fetchTTML(catBase, headers);
+  return fetchTTML(catBase, headers, lang);
 }
 
 async function resolveCatalogId(

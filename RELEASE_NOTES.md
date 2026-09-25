@@ -1,47 +1,84 @@
-# Apple Music TV — v1.2
+# Release Notes — `feat/radio-artist-shazam-v2`
 
-- A big one. Standalone on-device playback is now the default, radio plays, and the whole Now Playing / Browse experience got a facelift.
+Everything in this branch (40 commits off `main`). Grouped by area, newest work first within each.
 
-*🎵 Playback & Audio*
-Fully standalone by default — catalog, library, search, lyrics, artwork and on-device audio decryption, no computer needed.
-Dead library songs now play — obscure/matched tracks that used to skip instantly fall back to the catalog copy on-device automatically.
-Live radio — Apple Music 1 / Hits / Country and station shows play, with live in-band track metadata, a LIVE badge, and per-station lyric offset.
-Radio stations — station cards play their rolling queue (cracked Apple's next-tracks endpoint).
-Volume leveling — optional RMS auto-gain so quiet masters aren't buried.
-Gapless & crossfade — same-album tracks stay gapless; everything else crossfades (tunable 1–15s).
-Add to Library / Add to Playlist from the song menu.
+## Now Playing — background
+- **New "Dynamic" look, more colourful.** Album-colour beat blobs with richer saturation/brightness
+  (base alpha 0.70, SAT_BOOST 1.55, VALUE_CEILING 0.84). Beat-reactive, smooth on Fire TV.
+- **No more green flash** when opening Now Playing — extracted artwork palettes are cached, so the
+  screen shows the song's real colours instantly instead of animating up from a seeded palette.
+- **Ambient / "lava lamp" mode** was built (blurred cover, then real colour-blobs matching Apple's
+  own `colorBlobs` mechanism) but **removed** — this MediaTek Fire TV can't render 3+ big animated
+  translucent layers without visible stutter. The colourfulness was folded into Dynamic instead.
+- Background modes: **Dynamic / Projector / Black**.
 
-*📺 Now Playing*
-Dynamic background — fluid color backdrop extracted live from the album art, beat-reactive (Normal / Strong / Insane), with motion (animated) covers.
-Projector mode — a calmer, slower ambient backdrop for the big screen.
-Screensaver — kicks in when idle so nothing burns in.
-Big-screen lyrics — full-screen, word-by-word synced lyrics with adjustable size.
-Scrub bar, sleep timer, shuffle/repeat, go-to-artist/album in the transport menu.
+## Now Playing — crossfade & playback
+- **Fixed: wrong song on screen during crossfade.** The display used to flip to the incoming track
+  when the fade *started*, so you'd see the next song while still hearing the current one. It now
+  flips at the fade **midpoint**, when the incoming track is actually the louder one.
+- **Fixed: two songs playing at once** when skipping/navigating mid-crossfade (the incoming crossfade
+  player is now fully torn down in `playQueueItem`).
+- **Progress bar / scrubber restored** and idle-transition cosmetics fixed (title/artist spacing no
+  longer collapses; the focused play/pause glow is no longer clipped while chrome fades).
 
-*🎬 Music Videos*
-Music videos and interviews play, grouped ("Music Videos", "Behind the Songs"), and now show on artist pages.
-Fixed the secure-surface bleed, HDCP quality traps, and A/V lip-sync.
+## Now Playing — lyrics
+- **First line is now reachable with the D-pad** (the up-escape guard no longer eats DirectionUp at
+  the top of the list).
+- **Fixed entry scroll** — lyrics land at their resting position on open instead of snapping on the
+  next line.
+- **Lyrics translation** — on-device translation, plus a native-first server route that prefers
+  Apple's own per-line translation and falls back to machine translation.
 
-*🗂️ Library — revamped*
-Left sidebar categories (Playlists / Albums / Artists / Songs), modernized.
-Sort via a round popup button — by name / artist / date, ascending/descending, remembered per playlist.
-Pin playlists to the top; instant load from cache.
+## Music videos
+- **Album "Music Videos" shelf** — a dedicated server route returns MVs that belong to *this* album
+  (matched by album name / track titles), no longer every video the artist ever made.
+- **MV picture "bleed" accepted as a hardware limit.** On this MTK Fire TV the secure video buffer
+  latches on the compositor and can linger across tabs; every app-side fix was tried and failed, so
+  the app hard-stops the video codec on leaving Now Playing and shows a "Press Back to return" toast
+  **only** when you switch to another tab with a video active. Audio keeps playing like a song.
+- **MV queue** — added videos appear under the current track and are cursor-selectable; interviews /
+  uploaded videos play as videos everywhere; better MV audio-quality selection; Library music videos.
 
-*🔎 Browse & Listen Now*
-Menu revamp — real Apple editorial shelves: Top Picks for You hero, the Featured "New" spotlight, Find Your Mood, genre/mood/decade tiles, "More to Explore".
-Personalization no longer vanishes during Apple's recommendation outages.
-Search — songs, categories, curators, multirooms, and editorial links.
-Loading skeletons that match the real layout.
+## Artist page (V2)
+- Redesigned artist page: full-bleed hero, scroll-driven dimming, top-songs/albums/featured/similar
+  shelves, stepwise focus-up navigation.
+- **editorialArtwork hero** — uses Apple's wide editorial banner (with its theming colours) when the
+  artist has one, falling back to the square photo.
 
-*⚙️ Settings — revamped*
-Reorganized Dev/Settings: background mode, orb speed, lyrics size, rounded/square art, motion toggle, reduce motion, Low Power Mode, beat intensity, crossfade, standalone toggle, PC server IP, and the in-app updater.
+## Popular ("best songs") dot
+- Uses Apple's real **`popularity`** attribute (`extend=popularity`). Shows the **grey** dot to the
+  **left of the track number**, only on the album's standout tracks (relative top-tier, not every
+  song), with an artist-top-songs fallback when the attribute is missing.
 
-*⚡ Performance*
-Smoother scrolling — motion covers wait before animating; background logging no longer stalls menus.
-Off-main-thread Home cache, capped bitmap memory, RGB_565 palette.
+## Radio
+- Radio tab, Shazam-style radio identification, station playback via Apple's working next-tracks
+  endpoint.
 
-*🐛 Fixes*
-Grey Now Playing background on colorful covers; missing-artwork songs get their own color.
-Editorial playlists showing "no songs"; double failure toasts; per-tab back-stack memory (every tab returns to its last page).
-Dev → Re-check Server / Refresh now actually reload Listen Now.
-Removed non-playable radio-show cards from Browse.
+## Navigation & UI
+- **Top bar hides only on Now Playing / lyrics / video** (route-based) — it now stays visible on
+  album and artist pages.
+- **Unified context menu** across the whole app (one `AmContextMenu`: icons, labels, artwork
+  preview), with the long-hold accidental-click fixed and Go-to-Artist/Album everywhere.
+- New V2 UI is the default (Home/New naming, Videos + Radio destinations).
+
+## Standalone (on-device playback)
+- Standalone decode-on-device path hardened: better diagnostics for a null source, and it no longer
+  hangs waiting on a dead proxy when the server is down.
+- The **Standalone toggle now lives only in the Dev menu** (removed from the :8080 phone page).
+- Still **default OFF** — some encodes have fMP4 segment gaps the PC remux repairs that chop on-device.
+
+## Server / build
+- New routes: album music-videos, native-first lyrics translation; `extend=popularity` and
+  `extend=editorialArtwork` on the relevant catalog calls.
+- CI: bumped `android-actions/setup-android` v3 → v4 (fixed the SDK licence / sdkmanager break).
+
+## Docs
+- `docs/apple-apk-findings.md` — reverse-engineering notes on Apple Music's popular dot, ambient
+  background mechanism, native lyrics translation, editorialArtwork, and Dolby Atmos/spatial
+  (parked: gamdl already downloads it via a wrapper; the open work is passthrough to the receiver).
+
+## Known limits / parked
+- MV picture bleed on this specific Fire TV (firmware, not app-fixable).
+- Ambient/lava-lamp background (too heavy for this device).
+- Dolby Atmos / spatial / hi-res playback (source is downloadable; passthrough not built).
+- Native lyrics **pronunciation** (romaji/pinyin) not built.

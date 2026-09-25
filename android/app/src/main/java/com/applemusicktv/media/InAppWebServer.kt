@@ -30,6 +30,7 @@ class InAppWebServer @Inject constructor(
     private val standalonePrefs: StandalonePreferences,
     private val serverPrefs: ServerPreferences,
     private val beatAnalyzer: BeatAnalyzer,
+    private val appleClient: AppleDirectClient,
 ) {
     private val logs = ArrayDeque<String>(300)
     private val sseClients = java.util.concurrent.CopyOnWriteArrayList<java.io.OutputStream>()
@@ -252,6 +253,7 @@ class InAppWebServer @Inject constructor(
         }
     }
 
+
     private fun handleEvent(socket: Socket) {
         try {
             socket.soTimeout = 0
@@ -422,7 +424,13 @@ function legacyCopy(text,done,b){
 </div>
 
 <div class=card>
-<h2>Set Token</h2>
+<h2>Sign in</h2>
+<div style="font-size:12px;color:#aaa">On the TV: <b>Dev → Account → Sign In</b>. It opens Apple's real login right on the TV and grabs your token automatically. Tip: use the <b>Amazon Fire TV app</b> on your phone as a keyboard to type your Apple ID with your thumbs.</div>
+<div style="font-size:10px;color:#555;margin-top:8px">(A phone-only web sign-in isn't possible without a paid Apple Developer account — Apple locks the token to its own site.)</div>
+</div>
+
+<div class=card>
+<h2>Set Token (manual)</h2>
 <form method=POST action=/set-token>
 <textarea name=mut placeholder="eyJra… paste your Music-User-Token here"></textarea>
 <button class="btn btn-p" type=submit>Save Token</button>
@@ -461,15 +469,8 @@ ${if(has)"<form method=POST action=/clear-token><button class='btn btn-s' type=s
 <div style="font-size:10px;color:#555;margin-top:8px">Port 3000 is assumed. Needed for browse, library, search and lyrics. Leave blank to use the built-in default.</div>
 </div>
 
-<div class=card>
-<h2>Standalone mode (no PC)</h2>
-<div class=row><div class=label>Status</div><div class=sub2 style="color:${if (standaloneOn) "#6bcb77" else "#aaa"}">${if (standaloneOn) "ON — everything on the TV" else "OFF — using the PC server"}</div></div>
-<form method=POST action=/set-standalone>
-<input type=hidden name=standalone value="${if (standaloneOn) "0" else "1"}">
-<button class="btn ${if (standaloneOn) "" else "btn-p"}" type=submit style=margin-top:8px>${if (standaloneOn) "Turn OFF" else "Turn ON"}</button>
-</form>
-<div style="font-size:10px;color:#555;margin-top:8px">Talks to Apple directly for browse, library, search, artwork, lyrics AND playback — the PC is not needed at all. Songs start in ~1s instead of 15-20s. Trade-off: some tracks have segment gaps the PC remux repairs, so audio can chop. Applies from the next song.</div>
-</div>
+<!-- Standalone toggle moved to the on-TV Dev menu (Settings → Standalone playback); removed here so
+     there's one source of truth. The footer still shows its current status. -->
 
 <div class=card>
 <h2>Volume Leveling</h2>

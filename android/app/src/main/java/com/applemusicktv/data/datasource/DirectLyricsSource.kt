@@ -37,6 +37,47 @@ class DirectLyricsSource @Inject constructor(
     }
     private fun store(songId: String, lines: List<LyricLine>) { cache[songId] = System.currentTimeMillis() to lines }
 
+    // ── On-device lyric translation ──────────────────────────────────────────────
+    // No proxy: call the keyless Google endpoint DIRECTLY from the app (same one the
+    // Apple Music web widget and our server use). All lines are joined with a rare
+    // sentinel so one request covers the whole song, then split back out. Returns the
+    // translations aligned to [lines]; empty on any failure so the UI shows originals.
+    private val translateCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    suspend fun translate(lines: List<String>, to: String): List<String> = withContext(Dispatchers.IO) {
+        if (lines.isEmpty()) return@withContext emptyList()
+        val out = arrayOfNulls<String>(lines.size)
+        val need = ArrayList<Pair<Int, String>>()
+        lines.forEachIndexed { i, raw ->
+            val text = raw.trim()
+            if (text.isEmpty()) { out[i] = raw; return@forEachIndexed }
+            val hit = translateCache["$to\n$raw"]
+            if (hit != null) out[i] = hit else need.add(i to raw)
+        }
+        if (need.isNotEmpty()) runCatching {
+            val SENT = "\n␞\n"
+            val joined = need.joinToString(SENT) { it.second }
+            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=" +
+                java.net.URLEncoder.encode(to, "UTF-8") + "&dt=t&q=" + java.net.URLEncoder.encode(joined, "UTF-8")
+            val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+            httpClient.newCall(req).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                // Response: [[[translatedChunk, originalChunk, ...], ...], ...]
+                val arr = JSONArray(body).getJSONArray(0)
+                val sb = StringBuilder()
+                for (k in 0 until arr.length()) sb.append(arr.getJSONArray(k).optString(0, ""))
+                val parts = sb.toString().split("␞").map { it.trim() }
+                need.forEachIndexed { k, (idx, orig) ->
+                    val t = parts.getOrNull(k)?.trim().takeUnless { it.isNullOrEmpty() } ?: orig
+                    out[idx] = t
+                    translateCache["$to\n$orig"] = t
+                }
+            }
+        }.onFailure { Log.w("DirectLyrics", "translate failed: ${it.message}") }
+        if (translateCache.size > 4000) translateCache.clear()
+        // If nothing translated (total failure), return empty so caller shows originals.
+        if (out.any { it == null }) emptyList() else out.map { it!! }
+    }
+
     suspend fun getLyrics(
         songId: String,
         storefront: String,

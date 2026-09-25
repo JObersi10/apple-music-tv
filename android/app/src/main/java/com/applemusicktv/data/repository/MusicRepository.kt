@@ -43,6 +43,7 @@ class MusicRepository @Inject constructor(
     private val directLyrics: DirectLyricsSource,
     private val directBrowse: com.applemusicktv.data.datasource.DirectBrowseSource,
     private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
+    private val directClient: com.applemusicktv.media.AppleDirectClient,
 ) {
     /**
      * Standalone means *everything* on device — browse, library, search, artwork and
@@ -104,6 +105,28 @@ class MusicRepository @Inject constructor(
     suspend fun getRelatedAlbums(id: String) =
         if (!useProxy) direct.relatedAlbums(id).map { it.map(::albumFromDto) }
         else apiCall { api.getRelatedAlbums(id).albums.map(::albumFromDto) }
+
+    // Music videos for an album. Proxy has a first-class route; standalone derives them from
+    // the album's artist feed (same shape) so the AlbumDetail shelf works on either path.
+    suspend fun getAlbumMusicVideos(id: String): Result<List<Song>> =
+        if (!useProxy) runCatching {
+            // Direct AlbumDto has no artist id, so derive it from a track (they carry artistId).
+            val tracks = direct.albumTracks(id).getOrNull()?.map(::songFromDto).orEmpty()
+            val artistId = tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
+                ?: return@runCatching emptyList<Song>()
+            val title = direct.album(id).getOrNull()?.title?.trim()?.lowercase().orEmpty()
+            val trackTitles = tracks.map { it.title.trim().lowercase() }.toSet()
+            val all = direct.artistFull(artistId).getOrNull()?.musicVideos?.map(::songFromDto).orEmpty()
+            // ONLY MVs from THIS album — album-name match OR the MV is for a track on the album.
+            // No "all the artist's MVs" fallback (that showed every video the artist ever made).
+            all.filter {
+                val vTitle = it.title.trim().lowercase()
+                val bare = vTitle.replace(Regex("\\s*\\(.*?(video|music video).*?\\)\\s*$"), "").trim()
+                (title.length > 2 && it.albumName.trim().lowercase() == title) ||
+                    vTitle in trackTitles || bare in trackTitles
+            }.take(12)
+        }
+        else apiCall { api.getAlbumMusicVideos(id).musicVideos.map(::songFromDto) }
 
     suspend fun getSong(id: String) =
         if (!useProxy) direct.song(id).map(::songFromDto)
@@ -174,6 +197,10 @@ class MusicRepository @Inject constructor(
     suspend fun getGrouping(id: String) =
         if (!useProxy) runCatching { direct.getGrouping(id) }
         else runCatching { api.getGrouping(id) }
+
+    /** Shazam song-ID for an internet-radio stream (proxy-only — needs the server + shazamio). */
+    suspend fun identifyStream(url: String): com.applemusicktv.data.network.IdentifyDto? =
+        runCatching { api.identifyStream(url) }.getOrNull()
 
     // Genre/mood/decade tile grid (each tile is a curator → category page).
     suspend fun getCategories(): Result<List<CategoryGroup>> =
@@ -262,6 +289,11 @@ class MusicRepository @Inject constructor(
         if (!useProxy) direct.librarySongs().map { it.songs.map(::songFromDto) }
         else apiCall { api.getLibrarySongs(limit, offset).songs.map(::songFromDto) }
 
+    /** Music videos in the user's library. Proxy-only (not on the standalone direct path yet). */
+    suspend fun getLibraryMusicVideos() =
+        if (!useProxy) Result.success(emptyList<Song>())
+        else apiCall { api.getLibraryMusicVideos().songs.map(::songFromDto) }
+
     suspend fun getLibraryAlbums(limit: Int = 25, offset: Int = 0) =
         if (!useProxy) direct.libraryAlbums().map { it.albums.map(::albumFromDto) }
         else apiCall { api.getLibraryAlbums(limit, offset).albums.map(::albumFromDto) }
@@ -282,9 +314,44 @@ class MusicRepository @Inject constructor(
 
     /** Append a song to one of the user's editable library playlists. */
     suspend fun addToPlaylist(playlistId: String, song: Song): Result<Unit> {
-        val type = if (song.isMusicVideo) "music-videos" else "songs"
+        // Apple's add-to-library-playlist body needs the RIGHT resource type for the id. A library id
+        // (`i.`/`l.`) is a library-songs / library-music-videos row; a catalog (numeric) id is
+        // songs / music-videos. Sending "songs" for an `i.` id 404s → "Couldn't add to playlist".
+        val lib = song.id.startsWith("i.") || song.id.startsWith("l.")
+        val type = when {
+            song.isMusicVideo && lib -> "library-music-videos"
+            song.isMusicVideo        -> "music-videos"
+            lib                      -> "library-songs"
+            else                     -> "songs"
+        }
         return if (!useProxy) direct.addToPlaylist(playlistId, song.id, type)
         else runCatching { api.addTrackToPlaylist(playlistId, mapOf("id" to song.id, "type" to type)); Unit }
+    }
+
+    /** Translate lyric lines to [to] (ISO code). Proxy-only (uses the server's keyless translator);
+     *  returns empty on failure so callers just show the originals. */
+    /** Native-first: when the proxy is reachable, ask Apple for its OWN per-line translation (falls to
+     *  server machine-translate if Apple has none). Only if the proxy is down do we use the on-device
+     *  keyless translator. Apple's translations read better and match the app's timing exactly. */
+    suspend fun translateLinesForSong(songId: String, lines: List<String>, to: String): List<String> {
+        if (serverPrefs.serverReachable) {
+            val native = runCatching {
+                api.getLyricTranslation(songId, to).lines
+            }.getOrDefault(emptyList())
+            if (native.isNotEmpty()) return native
+        }
+        return translateLines(lines, to)
+    }
+
+    suspend fun translateLines(lines: List<String>, to: String): List<String> {
+        // On-device FIRST: hit the keyless Google endpoint directly from the app so translation works
+        // with no proxy dependency (the user wants it on-device). Fall back to the proxy route only if
+        // the direct call comes back empty (e.g. the device can't reach Google but the proxy can).
+        val direct = directLyrics.translate(lines, to)
+        if (direct.isNotEmpty()) return direct
+        return runCatching {
+            api.translate(com.applemusicktv.data.network.TranslateRequest(lines, to)).lines
+        }.getOrDefault(emptyList())
     }
 
     suspend fun getPlaylistTracks(id: String) =
@@ -302,6 +369,12 @@ class MusicRepository @Inject constructor(
         api.setMUT(mapOf("mut" to token))
     }
     suspend fun syncMUTToServer(token: String) = api.setMUT(mapOf("mut" to token))
+    /** Developer token for the on-TV MusicKit "Connect to Apple Music" sign-in. Tries the proxy first,
+     *  then falls back to scraping the bearer on-device so sign-in works with no PC (standalone). */
+    suspend fun getDeveloperToken(): String? {
+        runCatching { api.getDeveloperToken()["token"] }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+        return runCatching { directClient.getBearer() }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
     suspend fun clearMUT() {
         mutPrefs.setMUT("")
         api.clearMUT()
@@ -314,6 +387,7 @@ class MusicRepository @Inject constructor(
         artistName     = dto.artistName,
         albumName      = dto.albumName,
         durationMs     = dto.durationMs,
+        popularity     = dto.popularity,
         artworkUrl     = dto.artworkUrl,
         artworkBgColor = dto.artworkBgColor,
         previewUrl     = dto.previewHlsUrl ?: dto.previewUrl,

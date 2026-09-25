@@ -54,15 +54,28 @@ fun TopNavBar(
     isPlaying: Boolean = false,
     updateAvailable: Boolean = false,
     beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null,
+    /** Auto-hide the bar (fade to 0 until focused). True ONLY on the actual Now Playing route —
+     *  which covers lyrics + fullscreen video too. Route-based, NOT selectedTab-based: detail
+     *  routes (album/artist) don't update selectedTab, so keying off `selected==NowPlaying` used to
+     *  keep the bar hidden on an album opened from Now Playing. */
+    autoHide: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // Apple's tab set: Home / New / Videos / Radio / Library / Search / Now Playing / Dev.
+    val tabs = listOf(TopNavTab.ListenNow, TopNavTab.Browse, TopNavTab.Videos, TopNavTab.Radio,
+               TopNavTab.Library, TopNavTab.Search, TopNavTab.NowPlaying, TopNavTab.Dev)
+    fun labelFor(tab: TopNavTab): String = when (tab) {
+        TopNavTab.ListenNow -> "Home"
+        TopNavTab.Browse    -> "New"
+        else -> tab.label
+    }
     var isFocused by remember { mutableStateOf(false) }
     // When the Now Playing screen is up, ANY upward entry into the nav bar (from the
     // ··· button, transport row, lyrics, etc.) must land on the Now Playing tab, not
     // whichever tab sits nearest the pressed control.
     val npTabFocus = remember { FocusRequester() }
     val alpha by animateFloatAsState(
-        targetValue = if (selected == TopNavTab.NowPlaying && !isFocused) 0f else 1f,
+        targetValue = if (autoHide && !isFocused) 0f else 1f,
         animationSpec = tween(500),
         label = "navBarAlpha"
     )
@@ -93,7 +106,7 @@ fun TopNavBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                TopNavTab.entries.forEach { tab ->
+                tabs.forEach { tab ->
                     val isSelected = tab == selected
                     val bgColor by animateColorAsState(
                         if (isSelected) Color.White else Color.Transparent, tween(180))
@@ -122,7 +135,7 @@ fun TopNavBar(
                                 )
                             } else {
                                 Text(
-                                    text       = tab.label,
+                                    text       = labelFor(tab),
                                     fontSize   = 13.sp,
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                                     letterSpacing = if (isSelected) (-0.1).sp else 0.sp,

@@ -360,11 +360,24 @@ class AppleDirectClient @Inject constructor() {
                 ?: variants.maxByOrNull { it.height } ?: error("No video variant in MV master")
             Log.i("AMMV", "quality cap=${maxHeight}p → picked ${vPick.height}p (avail=${variants.map { it.height }})")
 
-            // The audio group this variant references, else the first/highest audio rendition.
+            // Audio: pick the HIGHEST-quality rendition, NOT whatever the (maybe-480p) video
+            // variant references — Apple ties a low-bitrate audio group to the small video tier,
+            // so binding audio to the variant made picture AND sound low together. Score each
+            // rendition by the largest bitrate token in its GROUP-ID/NAME (…-stereo-256 > …-64);
+            // Atmos/binaural renditions ("atmos"/"binaural") are skipped as they don't decode on
+            // every TV. Fall back to the variant's own group, then the last rendition.
             val wantGroup = Regex("""AUDIO="([^"]+)"""").find(vPick.attrs)?.groupValues?.get(1)
             val audioLines = lines.filter { it.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") }
-            val aLine = audioLines.firstOrNull { wantGroup != null && it.contains("GROUP-ID=\"$wantGroup\"") }
+            fun bitrateScore(l: String): Int {
+                val id = (Regex("""GROUP-ID="([^"]+)"""").find(l)?.groupValues?.get(1) ?: "") + " " +
+                         (Regex("""NAME="([^"]+)"""").find(l)?.groupValues?.get(1) ?: "")
+                if (id.contains("atmos", true) || id.contains("binaural", true)) return -1
+                return Regex("""\d+""").findAll(id).map { it.value.toIntOrNull() ?: 0 }.maxOrNull() ?: 0
+            }
+            val aLine = audioLines.filter { bitrateScore(it) > 0 }.maxByOrNull { bitrateScore(it) }
+                ?: audioLines.firstOrNull { wantGroup != null && it.contains("GROUP-ID=\"$wantGroup\"") }
                 ?: audioLines.lastOrNull() ?: error("No audio rendition in MV master")
+            Log.i("AMMV", "audio rendition picked: ${Regex("""GROUP-ID="([^"]+)"""").find(aLine)?.groupValues?.get(1)} (avail=${audioLines.mapNotNull { Regex("""GROUP-ID="([^"]+)"""").find(it)?.groupValues?.get(1) }})")
             val aUri = Regex("""URI="([^"]+)"""").find(aLine)?.groupValues?.get(1) ?: error("No audio URI")
 
             val video = rewriteMvMedia(abs(vPick.uri))
