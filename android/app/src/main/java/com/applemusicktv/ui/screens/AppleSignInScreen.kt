@@ -53,10 +53,31 @@ import kotlinx.coroutines.delay
 @OptIn(ExperimentalTvMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun AppleSignInScreen(onToken: (String) -> Unit, onClose: () -> Unit) {
+fun AppleSignInScreen(
+    onToken: (String) -> Unit,
+    onClose: () -> Unit,
+    /** Fetches the MusicKit developer token (scraped web bearer) from the proxy. Null → fall back to
+     *  loading the full music.apple.com login site instead of the "Connect" page. */
+    fetchDevToken: (suspend () -> String?)? = null,
+) {
     var status by remember { mutableStateOf("Loading Apple Music…") }
     var captured by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    // Resolve the developer token before building the WebView so the factory knows which page to load.
+    var devToken by remember { mutableStateOf<String?>(null) }
+    var devTokenResolved by remember { mutableStateOf(fetchDevToken == null) }
+    LaunchedEffect(Unit) {
+        if (fetchDevToken != null) {
+            devToken = runCatching { fetchDevToken() }.getOrNull()
+            devTokenResolved = true
+        }
+    }
+    if (!devTokenResolved) {
+        Box(Modifier.fillMaxSize().background(Color.Black), Alignment.Center) {
+            Text("Preparing sign-in…", color = Color.White, fontSize = 14.sp)
+        }
+        return
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         Column(Modifier.fillMaxSize()) {
@@ -65,7 +86,7 @@ fun AppleSignInScreen(onToken: (String) -> Unit, onClose: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Sign in to Apple Music", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Connect to Apple Music", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     Text(status, color = Color(0xFFAAAAAA), fontSize = 12.sp)
                 }
                 Button(onClick = onClose) { Text("Close") }
@@ -91,7 +112,8 @@ fun AppleSignInScreen(onToken: (String) -> Unit, onClose: () -> Unit) {
                                 status = "Loading…"
                             }
                             override fun onPageFinished(view: WebView?, url: String?) {
-                                status = "Sign in with your Apple ID"
+                                status = if (devToken != null) "Press Connect, then sign in with your Apple ID"
+                                         else "Sign in with your Apple ID"
                             }
                         }
                         // Route MusicKit's auth popup (window.open → idmsa.apple.com) into THIS WebView
@@ -106,7 +128,15 @@ fun AppleSignInScreen(onToken: (String) -> Unit, onClose: () -> Unit) {
                                 return true
                             }
                         }
-                        loadUrl(LOGIN_URL)
+                        val dt = devToken
+                        if (dt != null) {
+                            // Host our own MusicKit "Connect" page, but with music.apple.com as the base
+                            // URL so the document origin matches the developer token + cookies. Then
+                            // music.authorize() opens Apple's official consent/login and returns the MUT.
+                            loadDataWithBaseURL("https://music.apple.com/", connectHtml(dt), "text/html", "UTF-8", null)
+                        } else {
+                            loadUrl(LOGIN_URL)
+                        }
                         webView = this
                     }
                 },
@@ -147,12 +177,63 @@ private const val SAFARI_UA =
 private const val LOGIN_URL = "https://music.apple.com/us/login"
 
 /**
+ * The on-TV "Connect to Apple Music" page: loads MusicKit JS v3, configures it with the scraped web
+ * developer token, and on button press calls `music.authorize()` — Apple's official consent + sign-in
+ * flow — which resolves with the media-user-token. We stash it on `window.MusicKit` where [TOKEN_JS]
+ * (the poller) already looks. Big remote-friendly button; the Apple ID / 2FA screen that opens is
+ * Apple's own, typed with the on-screen keyboard.
+ */
+private fun connectHtml(devToken: String): String = """
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:-apple-system,Helvetica,Arial,sans-serif}
+  .wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:22px;text-align:center;padding:24px}
+  h1{font-size:26px;margin:0;font-weight:600}
+  p{font-size:15px;color:#bbb;margin:0;max-width:640px;line-height:1.4}
+  #go{font-size:20px;font-weight:600;color:#fff;background:#FA233B;border:none;border-radius:40px;padding:16px 42px;cursor:pointer}
+  #go:focus{outline:3px solid #fff;outline-offset:3px}
+  #err{color:#ff8a8a;font-size:13px;min-height:16px}
+</style></head><body>
+<div class="wrap">
+  <h1>Connect to Apple Music</h1>
+  <p>Press Connect, then sign in with your Apple ID. A verification code may be sent to your other Apple devices.</p>
+  <button id="go" autofocus>Connect</button>
+  <div id="err"></div>
+</div>
+<script src="https://js-cdn.music.apple.com/musickit/v3/musickit.js" data-web-components async></script>
+<script>
+  var DEV_TOKEN = "${devToken.replace("\"", "\\\"")}";
+  function setErr(m){ document.getElementById('err').textContent = m || ''; }
+  async function ensure(){
+    if(!window.MusicKit) throw new Error('MusicKit not loaded');
+    return await MusicKit.configure({
+      developerToken: DEV_TOKEN,
+      app: { name: 'Apple Music TV', build: '1.0' }
+    });
+  }
+  document.addEventListener('musickitloaded', function(){ setErr(''); });
+  document.getElementById('go').addEventListener('click', async function(){
+    setErr('Connecting…');
+    try {
+      var music = await ensure();
+      var mut = await music.authorize();       // opens Apple sign-in, resolves with the MUT
+      if (mut) { window.__amMut = mut; }        // TOKEN_JS also reads MusicKit.getInstance().musicUserToken
+      setErr(mut ? 'Signed in' : 'No token returned');
+    } catch(e){ setErr('' + (e && e.message ? e.message : e)); }
+  });
+</script>
+</body></html>
+"""
+
+/**
  * Reads the media-user-token from wherever the web player left it: the `media-user-token` cookie
  * (visible to JS when not HttpOnly), any localStorage key containing it, or MusicKit's live instance.
  * Returns "" until present. Kept as a single expression so evaluateJavascript returns the value.
  */
 private const val TOKEN_JS = """
 (function(){
+  try { if (window.__amMut && (''+window.__amMut).length > 20) return window.__amMut; } catch(e){}
   try { var m = document.cookie.match(/media-user-token=([^;]+)/); if (m && m[1]) return m[1]; } catch(e){}
   try {
     for (var i=0;i<localStorage.length;i++){

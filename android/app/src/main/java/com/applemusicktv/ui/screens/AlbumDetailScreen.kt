@@ -58,6 +58,17 @@ fun AlbumDetailScreen(
     var addToSong by remember { mutableStateOf<Song?>(null) }
     // Per-row focus requesters → closing the context menu returns focus to the long-pressed row.
     val rowFocus = remember { mutableMapOf<String, FocusRequester>() }
+    // Down from the top nav bar / on entry lands on Play, not the artist-name link (which sits higher
+    // in the left column and used to win the focus search).
+    val playFocus = remember { FocusRequester() }
+    var didFocusPlay by remember { mutableStateOf(false) }
+    LaunchedEffect(state.tracks.isNotEmpty()) {
+        if (state.tracks.isNotEmpty() && !didFocusPlay) {
+            kotlinx.coroutines.delay(80)
+            runCatching { playFocus.requestFocus() }
+            didFocusPlay = true
+        }
+    }
     var refocusId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(refocusId) {
         val id = refocusId ?: return@LaunchedEffect
@@ -116,7 +127,8 @@ fun AlbumDetailScreen(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    PillButton(Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54)) {
+                    PillButton(Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54),
+                        modifier = Modifier.focusRequester(playFocus)) {
                         playerVm.playAlbum(state.tracks)
                     }
                     PillButton(Glyph.SHUFFLE, "Shuffle", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) {

@@ -293,49 +293,29 @@ fun AppShell(modifier: Modifier = Modifier) {
                 .padding(top = if (isOnNowPlaying) 0.dp else navBarHeight),
         ) {
             composable(Screen.Home.route) {
-                val newUi = playerVm.state.collectAsState().value.newUiEnabled
                 val onAlbum: (String) -> Unit = { navController.navigate(Screen.AlbumDetail.route(it)) }
                 val onPlaylist: (String, String, String) -> Unit = { id, name, artworkUrl ->
                     navController.navigate(Screen.PlaylistDetail.route(id, name, artworkUrl))
                 }
                 // "Find Your Mood" cards are already prefixed (ac-/c-/mr-) for CategoryScreen.
                 val onCategory: (String) -> Unit = { navController.navigate(Screen.Category.route(it)) }
-                if (newUi) {
-                    com.applemusicktv.ui.screens.HomeScreenV2(
-                        playerVm = playerVm, vm = homeVm,
-                        onAlbumClick = onAlbum, onPlaylistClick = onPlaylist, onCategoryClick = onCategory,
-                    )
-                } else {
-                    HomeScreen(
-                        playerVm = playerVm, vm = homeVm,
-                        onAlbumClick = onAlbum, onPlaylistClick = onPlaylist, onCategoryClick = onCategory,
-                    )
-                }
+                com.applemusicktv.ui.screens.HomeScreenV2(
+                    playerVm = playerVm, vm = homeVm,
+                    onAlbumClick = onAlbum, onPlaylistClick = onPlaylist, onCategoryClick = onCategory,
+                )
             }
             composable(Screen.Browse.route) {
-                val newUi = playerVm.state.collectAsState().value.newUiEnabled
                 val onAlbum: (String) -> Unit = { navController.navigate(Screen.AlbumDetail.route(it)) }
                 val onPlaylist: (String, String, String) -> Unit = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) }
                 val onCurator: (String) -> Unit = { navController.navigate(Screen.Category.route(it)) }
                 // "More" at the end of a shelf → that shelf's full editorial room page.
                 val onSeeAll: (String) -> Unit = { navController.navigate(Screen.Category.route("room-$it")) }
-                if (newUi) {
-                    com.applemusicktv.ui.screens.BrowseScreenV2(
-                        playerVm = playerVm,
-                        onAlbumClick = onAlbum, onPlaylistClick = onPlaylist,
-                        onCuratorClick = onCurator, onSeeAll = onSeeAll,
-                        onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
-                    )
-                } else {
-                    BrowseScreen(
-                        playerVm       = playerVm,
-                        onAlbumClick   = onAlbum,
-                        onPlaylistClick = onPlaylist,
-                        onGenreClick   = { id, name -> navController.navigate(Screen.Genre.route(id, name)) },
-                        onCuratorClick = onCurator,
-                        onSeeAll       = onSeeAll,
-                    )
-                }
+                com.applemusicktv.ui.screens.BrowseScreenV2(
+                    playerVm = playerVm,
+                    onAlbumClick = onAlbum, onPlaylistClick = onPlaylist,
+                    onCuratorClick = onCurator, onSeeAll = onSeeAll,
+                    onArtistClick = { navController.navigate(Screen.ArtistDetail.route(it)) },
+                )
             }
             composable(
                 route     = Screen.Genre.route,
@@ -438,19 +418,12 @@ fun AppShell(modifier: Modifier = Modifier) {
                 route     = Screen.ArtistDetail.route,
                 arguments = listOf(navArgument("artistId") { type = NavType.StringType }),
             ) {
-                val newUi = playerVm.state.collectAsState().value.newUiEnabled
                 val onAlbum: (String) -> Unit = { navController.navigate(Screen.AlbumDetail.route(it)) }
                 val onArtist: (String) -> Unit = { navController.navigate(Screen.ArtistDetail.route(it)) }
-                if (newUi) {
-                    com.applemusicktv.ui.screens.ArtistDetailScreenV2(
-                        playerVm = playerVm, onAlbumClick = onAlbum, onArtistClick = onArtist,
-                        onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
-                    )
-                } else {
-                    ArtistDetailScreen(
-                        playerVm = playerVm, onAlbumClick = onAlbum, onArtistClick = onArtist,
-                    )
-                }
+                com.applemusicktv.ui.screens.ArtistDetailScreenV2(
+                    playerVm = playerVm, onAlbumClick = onAlbum, onArtistClick = onArtist,
+                    onPlaylistClick = { id, name, art -> navController.navigate(Screen.PlaylistDetail.route(id, name, art)) },
+                )
             }
             composable(
                 route     = Screen.PlaylistDetail.route,
@@ -727,7 +700,6 @@ fun AppShell(modifier: Modifier = Modifier) {
                 isPlaying = playerState.isPlaying || (videoActive && mvState.playing),
                 updateAvailable = pendingUpdate != null,
                 beatAnalyzer = playerVm.beatAnalyzer,
-                newUi = playerState.newUiEnabled,
                 // Auto-hide only on the real Now Playing route (covers lyrics + fullscreen video).
                 // Detail routes (album/artist) keep the bar visible even when reached from Now Playing.
                 autoHide = isOnNowPlaying,

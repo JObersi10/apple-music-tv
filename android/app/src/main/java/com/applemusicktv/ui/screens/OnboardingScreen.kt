@@ -145,6 +145,7 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
             AppleSignInScreen(
                 onToken = { token -> vm.signInWithToken(token); showSignIn = false },
                 onClose = { showSignIn = false },
+                fetchDevToken = { vm.developerToken() },
             )
         }
     }
@@ -178,7 +179,7 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
             Spacer(Modifier.height(16.dp))
             // Alternative to the phone paste: sign in with Apple ID right here in an in-app browser.
             androidx.tv.material3.Button(onClick = { showSignIn = true }) {
-                Text("Or sign in on this TV")
+                Text("Connect to Apple Music on this TV")
             }
         }
 

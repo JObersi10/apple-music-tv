@@ -368,6 +368,9 @@ class MusicRepository @Inject constructor(
         api.setMUT(mapOf("mut" to token))
     }
     suspend fun syncMUTToServer(token: String) = api.setMUT(mapOf("mut" to token))
+    /** Developer token for the on-TV MusicKit "Connect to Apple Music" sign-in. Null if unavailable. */
+    suspend fun getDeveloperToken(): String? =
+        runCatching { api.getDeveloperToken()["token"] }.getOrNull()?.takeIf { it.isNotBlank() }
     suspend fun clearMUT() {
         mutPrefs.setMUT("")
         api.clearMUT()

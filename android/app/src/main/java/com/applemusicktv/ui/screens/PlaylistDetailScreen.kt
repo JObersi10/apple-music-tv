@@ -373,12 +373,13 @@ private fun PlaylistContextItem(icon: Glyph, label: String, onClick: () -> Unit,
 /** Rounded Apple-style action pill with a drawn leading glyph. Grows + brightens on focus. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-internal fun PillButton(glyph: Glyph, label: String, base: Color, focusColor: Color, onClick: () -> Unit) {
+internal fun PillButton(glyph: Glyph, label: String, base: Color, focusColor: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(24.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = base, focusedContainerColor = focusColor),
         scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        modifier = modifier,
     ) {
         Row(
             Modifier.padding(horizontal = 26.dp, vertical = 11.dp),

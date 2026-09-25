@@ -303,8 +303,10 @@ fun NowPlayingScreen(
                 ) {
                     // Cross-fade the cover instead of hard-swapping it on song change. Live radio
                     // paused → show the station's own cover (there's no "current track" while paused).
+                    // 456px is plenty for this HDCP-capped (~432p) panel; 600 was ~45% more bytes to
+                    // fetch+decode for no visible gain, which is part of the "cover loads slow" delay.
                     val coverUrl = if (state.isLiveRadio && !state.isPlaying && state.radioStationArt != null)
-                        state.radioStationArt else song.artworkUrl(600)
+                        state.radioStationArt else song.artworkUrl(456)
                     // Fallback FIRST (drawn under the image): many internet-radio stations have no
                     // favicon in the directory, so guarantee something branded shows — the station's
                     // initial on a tinted tile. The real logo crossfades in on top when it exists.
@@ -1553,7 +1555,9 @@ private fun LyricsPanel(
             // instrumentals / untranslatable lines). Dimmer + italic so it reads as a gloss.
             translations.getOrNull(idx)?.takeIf { it.isNotBlank() && !it.equals(line.text, ignoreCase = true) }?.let { tr ->
                 // Grows + brightens with the active line (mirrors the main lyric), fades back when past.
-                val trAlpha by animateFloatAsState(if (isActive) 0.90f else if (isPast) 0.28f else 0.40f, label = "trA")
+                // Indented + noticeably dimmer than the main lyric when inactive, so the gloss reads as
+                // secondary and doesn't sit uniform with the top text.
+                val trAlpha by animateFloatAsState(if (isActive) 0.82f else if (isPast) 0.16f else 0.24f, label = "trA")
                 val trScale by animateFloatAsState(if (isActive) 1f else 0.92f, label = "trS")
                 Text(
                     tr,
@@ -1563,7 +1567,7 @@ private fun LyricsPanel(
                         color = Color.White.copy(alpha = trAlpha)),
                     modifier = Modifier.fillMaxWidth()
                         .graphicsLayer { scaleX = trScale; scaleY = trScale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) }
-                        .padding(end = 16.dp, top = 5.dp, bottom = 6.dp),
+                        .padding(start = 18.dp, end = 16.dp, top = 5.dp, bottom = 6.dp),
                 )
             }
         }

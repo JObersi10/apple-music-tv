@@ -374,6 +374,10 @@ interface ProxyApi {
     @DELETE("auth/token")
     suspend fun clearMUT(): Map<String, Any>
 
+    // Developer token for on-TV MusicKit sign-in ("Connect to Apple Music").
+    @GET("auth/developer-token")
+    suspend fun getDeveloperToken(): Map<String, String>
+
     @GET("health")
     suspend fun health(): Map<String, Boolean>
 

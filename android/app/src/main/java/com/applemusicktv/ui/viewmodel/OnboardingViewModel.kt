@@ -126,6 +126,9 @@ class OnboardingViewModel @Inject constructor(
 
     fun stopMutPolling() { mutPollJob?.cancel(); mutPollJob = null }
 
+    /** Developer token used to init MusicKit JS in the on-TV "Connect to Apple Music" WebView. */
+    suspend fun developerToken(): String? = runCatching { repo.getDeveloperToken() }.getOrNull()
+
     /** Store a token captured by the in-app Apple Music sign-in WebView; the poll above then advances. */
     fun signInWithToken(token: String) = viewModelScope.launch {
         runCatching { repo.setMUT(token) }

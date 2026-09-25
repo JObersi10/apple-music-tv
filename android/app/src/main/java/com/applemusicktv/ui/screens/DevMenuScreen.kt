@@ -183,13 +183,6 @@ fun DevMenuScreen(
                 onInc = { playerVm.stepCacheCap(1) },
             )
 
-            SectionLabel("Interface")
-            Toggle(
-                label = "New UI (preview)", on = pstate.newUiEnabled,
-                sub = if (pstate.newUiEnabled) "Apple-style rebuilt Home (v2, in progress)" else "Current UI",
-                onToggle = { playerVm.toggleNewUi() },
-            )
-
             SectionLabel("Remote")
             var remote by remember { mutableStateOf(playerVm.remoteOverride()) }
             val remoteOrder = listOf(

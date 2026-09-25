@@ -54,8 +54,6 @@ fun TopNavBar(
     isPlaying: Boolean = false,
     updateAvailable: Boolean = false,
     beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null,
-    /** New-UI flag (Dev → Interface). Renames Listen Now→Home, Browse→New and reveals Videos + Radio. */
-    newUi: Boolean = false,
     /** Auto-hide the bar (fade to 0 until focused). True ONLY on the actual Now Playing route —
      *  which covers lyrics + fullscreen video too. Route-based, NOT selectedTab-based: detail
      *  routes (album/artist) don't update selectedTab, so keying off `selected==NowPlaying` used to
@@ -63,16 +61,12 @@ fun TopNavBar(
     autoHide: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    // New UI adds the Videos + Radio destinations (Apple's tab set); classic UI keeps the original five.
-    val tabs = if (newUi)
-        listOf(TopNavTab.ListenNow, TopNavTab.Browse, TopNavTab.Videos, TopNavTab.Radio,
+    // Apple's tab set: Home / New / Videos / Radio / Library / Search / Now Playing / Dev.
+    val tabs = listOf(TopNavTab.ListenNow, TopNavTab.Browse, TopNavTab.Videos, TopNavTab.Radio,
                TopNavTab.Library, TopNavTab.Search, TopNavTab.NowPlaying, TopNavTab.Dev)
-    else
-        listOf(TopNavTab.ListenNow, TopNavTab.Browse,
-               TopNavTab.Library, TopNavTab.Search, TopNavTab.NowPlaying, TopNavTab.Dev)
-    fun labelFor(tab: TopNavTab): String = when {
-        newUi && tab == TopNavTab.ListenNow -> "Home"
-        newUi && tab == TopNavTab.Browse    -> "New"
+    fun labelFor(tab: TopNavTab): String = when (tab) {
+        TopNavTab.ListenNow -> "Home"
+        TopNavTab.Browse    -> "New"
         else -> tab.label
     }
     var isFocused by remember { mutableStateOf(false) }
