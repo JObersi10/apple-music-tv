@@ -80,14 +80,9 @@ private const val CAPTURE_PCM = false
  *   edge, so a projected image has no visible boundary. Halo brightness stays constant with the
  *   beat — only size moves — so the black never pumps.
  * - [BLACK]: plain black, no blobs, no beat.
- * - [AMBIENT]: "Dynamic v2" — Apple's own Now Playing look. The album's motion art (editorialVideo)
- *   fills the screen, cover-cropped + dimmed + ambient-tinted; when there's no motion art it falls
- *   back to the album cover upscaled soft (Modifier.blur is a no-op on this Fire TV) under the same
- *   scrim. One decoder only — the small motion cover on the card is suppressed while this is active.
  */
 enum class NowPlayingBackground(val label: String) {
     DYNAMIC("Dynamic"),
-    AMBIENT("Ambient"),
     PROJECTOR("Projector"),
     BLACK("Black"),
     ;
@@ -2317,13 +2312,11 @@ class PlayerViewModel @Inject constructor(
                         cfExo.addListener(errListener)
                         crossfadeExo = cfExo
                         val oldPlayer = player
-                        _state.update { it.copy(
-                            currentSong = nextSong, song = nextSong, lyrics = emptyList(), motionUrl = null,
-                            queue = newQueue, queueIndex = actualNextIdx, userQueue = newUserQueue,
-                            progressMs = 0L,
-                        )}
-                        loadLyrics(nextSong.id); loadMotion(nextSong.id)
-                        if (nextSong.artistId == null || nextSong.albumId == null) enrichSongIds(nextSong.id)
+                        // DO NOT flip the on-screen song here. The old track is still the AUDIBLE one for
+                        // the first half of the fade — flipping now showed the incoming song's art/title/
+                        // lyrics while you still heard the outgoing song ("playing Ice Cube with Michael
+                        // Jackson on screen"). The display + queue flip happens at the fade MIDPOINT below,
+                        // once the incoming track is the louder one (same point the beat bus hands over).
                         val fadeDurationMs = remaining.coerceIn(300L, crossfadeDurationMs)
                         // Cancel the song-start fade-in first. On a track shorter than
                         // ~2x the crossfade length the two windows overlap, and without
@@ -2338,15 +2331,34 @@ class PlayerViewModel @Inject constructor(
                             // one. Otherwise the visuals pulse to the outgoing song's tail
                             // (often a quiet outro) for the whole crossfade and read as dead.
                             var beatPromoted = false
+                            var displayFlipped = false
+                            // Flip the on-screen song (art/title/lyrics/motion/queue) to the incoming track
+                            // once it's the dominant one — matches what you HEAR, no more wrong-song-on-screen.
+                            fun flipDisplay() {
+                                if (displayFlipped) return
+                                displayFlipped = true
+                                _state.update { it.copy(
+                                    currentSong = nextSong, song = nextSong, lyrics = emptyList(), motionUrl = null,
+                                    queue = newQueue, queueIndex = actualNextIdx, userQueue = newUserQueue,
+                                    progressMs = 0L,
+                                )}
+                                loadLyrics(nextSong.id); loadMotion(nextSong.id)
+                                if (nextSong.artistId == null || nextSong.albumId == null) enrichSongIds(nextSong.id)
+                            }
                             for (i in 1..steps) {
                                 val frac = i.toFloat() / steps
                                 oldPlayer.volume = (startVol * (1f - frac)).coerceAtLeast(0f)
                                 cfExo.volume = frac.coerceAtMost(1f)
-                                if (!beatPromoted && frac >= 0.5f && cfExo.playbackState == Player.STATE_READY) {
-                                    promoteCrossfadeBeat(); beatPromoted = true
+                                if (frac >= 0.5f) {
+                                    flipDisplay()
+                                    if (!beatPromoted && cfExo.playbackState == Player.STATE_READY) {
+                                        promoteCrossfadeBeat(); beatPromoted = true
+                                    }
                                 }
                                 delay(stepMs)
                             }
+                            // Guarantee the flip even if the loop exited early / never crossed 0.5.
+                            flipDisplay()
                             if (!crossfadeInProgress || crossfadeExo == null) {
                                 webServer.addLog("CFXO", "cfExo released during fade — aborting swap")
                                 return@launch

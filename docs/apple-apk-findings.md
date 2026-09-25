@@ -36,7 +36,15 @@ client does, and what we can borrow. Source of truth for the features below.
   motion off when the backdrop is on). NOTE: user first saw a raw version and disliked it as the
   default — that's why it must be an opt-in toggle, not forced.
 
-- **BUILT:** `NowPlayingBackground.AMBIENT` ("Dynamic v2"), selectable in the Dev/Settings background
+- **REMOVED (2026-09-24):** the standalone `AMBIENT` mode was cut. Every faithful version (blurred
+  cover, then real colour blobs) needs ≥3 large translucent animated full-screen layers, and on this
+  MediaTek Fire TV that is 60–100% janky (~6–32fps) no matter the technique — Screen-blend and
+  `graphicsLayer{alpha}` both force per-frame offscreen compositing passes the GPU can't sustain.
+  Apple's own Android app looks the same way here. Instead the "more colourful" feel was folded into
+  the existing **Dynamic** mode (higher blob base alpha + saturation/value), which stays smooth because
+  it's already tuned to this device's budget. Motion video as a backdrop also read as "the zoomed
+  album", so it's gone too. Superseded note below kept for history.
+- **(superseded) was BUILT:** `NowPlayingBackground.AMBIENT` ("Dynamic v2"), selectable in the Dev/Settings background
   cycle. `AmbientBackground` in `NowPlayingScreen.kt` renders the album's motion art (`/api/motion`)
   fullscreen cover-cropped + ambient-colour tint + dark scrim; no motion art → album cover upscaled
   from a 120px fetch (soft, since `Modifier.blur` is a no-op on this Fire TV). One decoder: the small
@@ -95,6 +103,9 @@ client does, and what we can borrow. Source of truth for the features below.
   `AudioAttributes`/passthrough, let the receiver render) it could be a real feature. Blocked on: the
   Atmos asset is a different (non-Widevine `ctrp`) flavour we'd have to decrypt+remux without
   transcoding, and the user has no Atmos equipment to verify against yet. Park it; don't delete.
+- **Download note (user):** gamdl already grabs Atmos/spatial via a **wrapper**, so obtaining the
+  source files isn't the blocker — the open work is selecting that flavour and passing the E-AC-3 JOC
+  bitstream through ExoPlayer/passthrough to the receiver.
 
 ## Auth (unchanged from what we already do)
 - Same amp-api model: `Authorization: Bearer <JWT>` + `Music-User-Token` + `Origin:

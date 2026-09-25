@@ -154,16 +154,7 @@ fun NowPlayingScreen(
         val chromeAlpha = 1f - idle
         val backgroundMode = if (screensaverOn && !state.screensaverKeepBackground)
             NowPlayingBackground.BLACK else state.nowPlayingBackground
-        if (backgroundMode == NowPlayingBackground.AMBIENT) {
-            // Dynamic v2 — Apple's own Now Playing backdrop (EditorialVideo previewFrame model): a
-            // heavily-blurred, slowly-drifting version of the motion art / cover, tinted by the
-            // artwork's ambient colour. No beat reactivity — that's the v1 "Dynamic" blobs.
-            AmbientBackground(motionUrl = state.motionUrl, artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "",
-                playing = state.isPlaying, reduceMotion = state.reduceMotion,
-                beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity)
-        } else {
-            DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying, orbSpeed = state.orbSpeed, reduceMotion = state.reduceMotion, lowPower = state.lowPowerMode)
-        }
+        DynamicBackground(artworkUrlTemplate = song?.artworkUrl, songKey = song?.id ?: "", beatAnalyzer = playerVm.beatAnalyzer, beatMultiplier = state.beatIntensity, mode = backgroundMode, playing = state.isPlaying, orbSpeed = state.orbSpeed, reduceMotion = state.reduceMotion, lowPower = state.lowPowerMode)
 
         if (song == null) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -347,11 +338,8 @@ fun NowPlayingScreen(
                     // In PiP, drop the motion decoder entirely: it's a whole second ExoPlayer/video
                     // decoder, and holding it alive through the PiP transition is a memory spike that
                     // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
-                    // Skip the small card cover when Dynamic v2 is already playing the SAME motion art
-                    // fullscreen — two decoders of the same HEVC loop is a needless memory/GPU hit.
                     @Suppress("ConstantConditionIf")
-                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode &&
-                        backgroundMode != NowPlayingBackground.AMBIENT) {
+                    if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
                         MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
                     }
                 }
@@ -901,97 +889,6 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
     )
 }
 
-/**
- * Dynamic v2 — Apple's fullscreen Now Playing backdrop. The album's motion art fills the screen
- * (cover-cropped, dimmed); with no motion art the album cover is upscaled from a tiny fetch so it
- * reads soft (Modifier.blur is a no-op on this Fire TV, API < 31 — a small image stretched fullscreen
- * is a free approximation). An ambient colour scrim pulled from the artwork tints it, and a dark
- * scrim (heavier on the right) keeps the lyrics legible — same readability strategy as DynamicBackground.
- */
-@Composable
-private fun AmbientBackground(
-    motionUrl: String?, artworkUrlTemplate: String?, songKey: String,
-    playing: Boolean = true, reduceMotion: Boolean = false,
-    beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null, beatMultiplier: Float = 1f,
-) {
-    val paletteUrl = artworkUrlTemplate?.replace("{w}", "300")?.replace("{h}", "300")?.replace("{f}", "jpg")
-    val palette = rememberArtworkPalette(paletteUrl, seed = songKey)
-    // Apple's `ambientColor` — the artwork's dominant hue. We derive it the same way (palette lead).
-    val tint = animateColorAsState(palette.firstOrNull() ?: Color(0xFF101010), tween(1500), label = "ambientTint").value
-
-    // Apple's ambient backdrop drifts slowly and continuously (a Ken-Burns pan/zoom), NOT to the beat.
-    val move = playing && !reduceMotion
-    // Beat: Apple blooms the ambient COLOUR outward on each hit (the glow expands), it does NOT zoom
-    // the image. Damped so each beat lands once. Read inside drawBehind so only the draw re-runs.
-    val rawEnergy by (beatAnalyzer?.energy?.collectAsState() ?: remember { mutableStateOf(0f) })
-    val energyState = animateFloatAsState(
-        (if (move) rawEnergy else 0f).coerceIn(0f, 1f),
-        androidx.compose.animation.core.spring(dampingRatio = 1f, stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow),
-        label = "ambientBeat",
-    )
-    val amp = beatMultiplier.coerceIn(0.4f, 3.5f)
-    val inf = rememberInfiniteTransition(label = "ambientDrift")
-    // Independent slow clocks — each blob rides its own so the field never repeats and the colours
-    // slowly flow past each other (the lava-lamp morph). Apple's `colorBlobsBlurEffect`.
-    val t1 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(19000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t1")
-    val t2 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(24000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t2")
-    val t3 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(29000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t3")
-    val t4 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(34000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t4")
-    val t5 by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(27000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "t5")
-    val frozen = remember { FloatArray(5) }
-    LaunchedEffect(move) { if (!move) { frozen[0]=t1;frozen[1]=t2;frozen[2]=t3;frozen[3]=t4;frozen[4]=t5 } }
-    // Vivid blob colours from the artwork palette (distinct hues — NOT the whole cover averaged to mud).
-    val blobColors = palette.mapIndexed { i, c -> animateColorAsState(c, tween(1500), label = "ambBlob$i").value }
-
-    Box(Modifier.fillMaxSize().background(Color(0xFF060606))) {
-        if (motionUrl != null) {
-            // Apple uses the motion video when the album has one — over-scanned + blurred so it reads
-            // as flowing colour, not a sharp square. (The 640-cap upscaled ~4× is already soft.)
-            Box(Modifier.fillMaxSize().graphicsLayer {
-                val s = 1.5f + (if (move) t1 else frozen[0]) * 0.12f; scaleX = s; scaleY = s
-            }) { MotionCover(url = motionUrl, modifier = Modifier.fillMaxSize()) }
-            Box(Modifier.fillMaxSize().background(tint.copy(alpha = 0.14f)))
-        } else {
-            // LAVA LAMP: big soft colour blobs from the palette, drifting on independent clocks, Screen-
-            // blended so overlaps brighten and the colours melt together. Beat energy swells them. This
-            // is Apple's real mechanism (colour blobs + blur), not a blurred photo — which just went muddy.
-            Box(Modifier.fillMaxSize().drawBehind {
-                val w = size.width; val h = size.height
-                val e = energyState.value
-                val cols = blobColors.ifEmpty { listOf(tint) }
-                val n = cols.size.coerceAtLeast(1)
-                val twoPi = (2.0 * Math.PI).toFloat()
-                // Anchors spread across the frame; each drifts on a small ellipse via its own clock.
-                val ax = floatArrayOf(0.28f, 0.68f, 0.45f, 0.80f, 0.18f)
-                val ay = floatArrayOf(0.35f, 0.30f, 0.68f, 0.62f, 0.75f)
-                val clk = floatArrayOf(
-                    if (move) t1 else frozen[0], if (move) t2 else frozen[1],
-                    if (move) t3 else frozen[2], if (move) t4 else frozen[3], if (move) t5 else frozen[4],
-                )
-                val ph = floatArrayOf(0f, 1.7f, 3.1f, 4.6f, 5.5f)
-                for (i in 0 until 5) {
-                    val col = cols[i % n]
-                    val cx = ax[i] * w + cos(clk[i] * twoPi + ph[i]) * 0.14f * w
-                    val cy = ay[i] * h + sin(clk[i] * twoPi + ph[i]) * 0.12f * h
-                    val c = Offset(cx, cy)
-                    // Big soft blobs (radius ~0.6 of the frame) so they overlap heavily and melt.
-                    val r = maxOf(w, h) * (0.55f + 0.10f * clk[i]) * (1f + e * 0.15f * amp)
-                    val a = (0.5f + e * 0.18f * amp).coerceAtMost(0.85f)
-                    drawCircle(
-                        brush = Brush.radialGradient(listOf(col.copy(alpha = a), col.copy(alpha = 0f)), center = c, radius = r),
-                        radius = r, center = c, blendMode = BlendMode.Screen,
-                    )
-                }
-            })
-        }
-        // Darken for lyric legibility (overall + vertical falloff + heavier right column).
-        Box(Modifier.fillMaxSize().background(
-            Brush.verticalGradient(listOf(Color(0x4D000000), Color(0x1A000000), Color(0x80000000)))))
-        Box(Modifier.fillMaxSize().background(
-            Brush.horizontalGradient(0.30f to Color(0x00000000), 1f to Color(0x99000000))))
-    }
-}
-
 private fun Color.hsvHue(): Float {
     val r = red; val g = green; val b = blue
     val max = maxOf(r, g, b); val min = minOf(r, g, b)
@@ -1074,9 +971,9 @@ private fun spreadByValue(colors: List<Color>, n: Int, minGap: Float = 0.13f): L
 // Backdrop vibrancy. Raising SAT_* makes colors read as colors rather than tints;
 // VALUE_CEILING is the safety rail that keeps them from turning pale and competing
 // with the white lyrics on the right half of the screen. Don't push it past ~0.85.
-private const val SAT_BOOST = 1.45f
+private const val SAT_BOOST = 1.55f
 private const val SAT_FLOOR = 0.55f
-private const val VALUE_CEILING = 0.80f
+private const val VALUE_CEILING = 0.84f
 
 /** Extracts a dark base color + a vibrant accent color from the artwork. */
 @Composable
@@ -1337,7 +1234,9 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
                 band0State.value,   // bot-right → bass
             )
             val beatScale = 1f + eAmp * 0.25f
-            val beatAlpha = (0.60f + eAmp * 0.20f).coerceAtMost(0.95f)
+            // A touch more colour presence at rest (user liked the more-colourful ambient experiment) —
+            // base alpha up from 0.60; still Screen-blended over near-black so it stays readable.
+            val beatAlpha = (0.70f + eAmp * 0.20f).coerceAtMost(0.97f)
             // Smaller than the old 0.62 so blobs overlap less and stay recognisably separate colours.
             val r = maxOf(w, h) * 0.42f * beatScale
             val nudge = eAmp * maxOf(w, h) * 0.02f
