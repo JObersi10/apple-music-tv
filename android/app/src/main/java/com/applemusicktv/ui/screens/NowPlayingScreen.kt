@@ -971,6 +971,9 @@ private fun spreadByValue(colors: List<Color>, n: Int, minGap: Float = 0.13f): L
 // Backdrop vibrancy. Raising SAT_* makes colors read as colors rather than tints;
 // VALUE_CEILING is the safety rail that keeps them from turning pale and competing
 // with the white lyrics on the right half of the screen. Don't push it past ~0.85.
+// Extracted artwork palettes keyed by artwork URL — survives Now Playing remounts so re-entering the
+// screen shows the song's real colours instantly instead of flashing the seeded (greenish) palette.
+private val paletteCache = java.util.concurrent.ConcurrentHashMap<String, List<Color>>()
 private const val SAT_BOOST = 1.55f
 private const val SAT_FLOOR = 0.55f
 private const val VALUE_CEILING = 0.84f
@@ -997,9 +1000,14 @@ private fun rememberArtworkPalette(artworkUrl: String?, seed: String = ""): List
             }
         }
     }
-    var colors by remember(artworkUrl) { mutableStateOf(seeded) }
+    // Cache the EXTRACTED palette per artwork URL. Without this, every time you navigate INTO Now
+    // Playing the composable remounts, `colors` starts at the seeded hash palette (often greenish),
+    // and animateColorAsState visibly crossfades from that to the real colours — the "green flash".
+    // Seeding from the cache means re-entry starts on the real colours with no flash.
+    var colors by remember(artworkUrl) { mutableStateOf(artworkUrl?.let { paletteCache[it] } ?: seeded) }
     LaunchedEffect(artworkUrl) {
         if (artworkUrl == null) { colors = seeded; return@LaunchedEffect }
+        paletteCache[artworkUrl]?.let { colors = it; return@LaunchedEffect }  // already extracted → no re-decode, no flash
         try {
             // Decode a SMALL bitmap for the palette — Palette downsamples internally anyway, so a
             // 1200² ARGB bitmap (~5.7 MB, kept in RAM with allowHardware off) was pure waste on a
@@ -1069,6 +1077,7 @@ private fun rememberArtworkPalette(artworkUrl: String?, seed: String = ""): List
                     listOf(dom, light, dark, dom, light, dark)
                 }
             }
+            paletteCache[artworkUrl] = colors   // remember for instant, flash-free re-entry
         } catch (_: Exception) {}
     }
     return colors
