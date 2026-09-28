@@ -1,5 +1,17 @@
 # Release Notes
 
+## Unreleased (post-1.3, lyrics polish)
+- **Karaoke lyrics reworked to match Apple Music.** Words do a left→right gradient wipe and rise a
+  small **uniform** amount (rises fast, then holds). **Held words** (≥1s) swell and their letters glow
+  in sequence, then settle at the same level as the rest — no reflow of the lines below, no end-jump.
+  The swell/glow respects Low Power / Reduce Motion.
+- **Background vocals fixed** — no longer show up pre-lifted/lit before their turn or stay frozen lifted
+  on already-sung lines; more gap above them.
+- **"No Lyrics Found"** shows only after the fetch completes; **real lyrics stay on idle** (queue and
+  the message fade); **next song's lyrics are prefetched**; lyrics + motion reload on cold reopen.
+- **Standalone lyrics** now merge syllable spans ("fa vo rite" → "favorite").
+- Motion cover fills the box (no black gap on fast skip); translated lyrics dimmer + left-aligned.
+
 ## v1.3
 
 ### Sign-in / getting your token

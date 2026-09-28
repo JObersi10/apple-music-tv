@@ -1622,7 +1622,7 @@ private fun MusicalDots(fraction: Float, outerAlpha: Float = 1f, modifier: Modif
  *  held words in "Don't Stop Me Now" — myself 1808ms, inside 1216ms, out 1167ms — just under the
  *  shortest of them so all the held words qualify while ordinary quick words (e.g. "good" ~620ms) stay
  *  flat. */
-private const val SLOW_WORD_MS = 1100L
+private const val SLOW_WORD_MS = 1000L
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1689,32 +1689,32 @@ private fun WordWipe(
     if (rich && slow && (isCurrent || sung) && text.trim().length > 3) {
         val n = text.length.coerceAtLeast(1)
         val head = if (sung) n.toFloat() else f * n        // fill position, in letters (sung = all done)
-        val holdFrac = (4f / fontSize.value).coerceIn(0.05f, 0.30f)   // baselineShift == the 4dp plain lift
-        // Swell up then settle back to size, eased in/out so the start and END are smooth.
+        // The whole word rises with the SAME uniform translateY lift as every other word (so it sits at
+        // the exact same level as the rest — a per-letter baselineShift lift made it land lower/uneven).
+        // On top of that it swells (draw-only scale) and each letter glows as the fill passes it.
+        val rise  = (f / 0.35f).coerceIn(0f, 1f)
+        val amt   = if (sung) 1f else rise * rise * (3f - 2f * rise)   // rise fast, hold — matches normal
         val fs = f * f * (3f - 2f * f)                     // smoothstep on the word fill
-        val wordGrow = 1f + 0.22f * kotlin.math.sin(fs * Math.PI.toFloat()).coerceIn(0f, 1f)
+        val wordGrow = 1f + 0.20f * kotlin.math.sin(fs * Math.PI.toFloat()).coerceIn(0f, 1f)
         val ann = buildAnnotatedString {
             text.forEachIndexed { idx, ch ->
-                val local = (head - idx).coerceIn(0f, 1f)              // 0 → not yet, 1 → done (held up)
-                val eased = local * local * (3f - 2f * local)          // smooth rise, holds at 1
+                val local = (head - idx).coerceIn(0f, 1f)
                 val bump  = kotlin.math.sin(local * Math.PI.toFloat()).coerceIn(0f, 1f)  // glow bloom per letter
                 val sungHere = idx < head
                 val sh = if (bump > 0.05f) Shadow(Color.White.copy(alpha = 0.9f * bump), blurRadius = 20f) else null
-                pushStyle(SpanStyle(
-                    color = if (sungHere) sungColor else unsungColor,
-                    baselineShift = androidx.compose.ui.text.style.BaselineShift(holdFrac * eased),
-                    shadow = sh,
-                ))
+                pushStyle(SpanStyle(color = if (sungHere) sungColor else unsungColor, shadow = sh))
                 append(ch.toString())
                 pop()
             }
         }
         Text(
             ann,
-            // Grow from the bottom so it swells upward; draw-only, no reflow of the lines below.
+            // Uniform lift (same as normal words) + swell from the bottom. Both draw-only → no reflow,
+            // and the lift height is identical to the rest of the line.
             modifier = Modifier.graphicsLayer {
+                translationY = -liftPx * amt
                 scaleX = wordGrow; scaleY = wordGrow
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
             },
             style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp),
         )
