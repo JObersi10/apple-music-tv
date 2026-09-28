@@ -299,7 +299,7 @@ fun DevMenuScreen(
                                     textStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
                                     cursorBrush = SolidColor(Color(0xFFFA233B)),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }),
+                                    keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme(); vm.recheckServer(playerVm, onDone = onDataRefresh) }),
                                     modifier = Modifier.fillMaxWidth().focusRequester(pcIpFocus),
                                     decorationBox = { inner ->
                                         if (pcIpDraft.isEmpty()) Text("192.168.x.x", fontSize = 13.sp, color = Color(0xFF444444), fontFamily = FontFamily.Monospace)
@@ -307,7 +307,7 @@ fun DevMenuScreen(
                                     },
                                 )
                             }
-                            ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }
+                            ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme(); vm.recheckServer(playerVm, onDone = onDataRefresh) }
                         } else {
                             // Idle: a plain button. Focus can land here with no IME. OK opens the editor.
                             Surface(
@@ -324,7 +324,7 @@ fun DevMenuScreen(
                                 )
                             }
                         }
-                        if (pcIpDraft.isNotEmpty()) ActionBtn("Clear", Color(0xFF3A1A1A), small = true) { pcIpDraft = ""; vm.setPcServerIp("") }
+                        if (pcIpDraft.isNotEmpty()) ActionBtn("Clear", Color(0xFF3A1A1A), small = true) { pcIpDraft = ""; vm.setPcServerIp(""); vm.recheckServer(playerVm, onDone = onDataRefresh) }
                     }
                     if (state.pcServerIp.isNotEmpty())
                         Text("Active: ${state.pcServerIp}:3000", fontSize = 10.sp, color = Color(0xFF6BCB77), fontFamily = FontFamily.Monospace)

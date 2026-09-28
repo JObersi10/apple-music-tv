@@ -68,7 +68,11 @@ class PlaylistDetailViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            repo.getPlaylistTracks(playlistId).onSuccess { songs ->
+            repo.getPlaylistTracks(playlistId).onSuccess { raw ->
+                // Apple's playlist feed includes rows that aren't real playable songs (blank id/title
+                // placeholders for pulled/region-locked entries). They inflated the "N songs" count vs
+                // what actually renders/plays. Drop them so the count matches reality.
+                val songs = raw.filter { it.id.isNotBlank() && it.title.isNotBlank() }
                 val newState = PlaylistDetailState(
                     tracks     = songs,
                     artworkUrl = initialArtworkUrl ?: songs.firstOrNull()?.artworkUrl,

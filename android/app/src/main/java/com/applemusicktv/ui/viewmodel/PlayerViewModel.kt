@@ -724,6 +724,16 @@ class PlayerViewModel @Inject constructor(
                 usingStandalone = false
                 standaloneFailures++
                 webServer.addLog("PLR", "standalone failed for $song — retrying via proxy (#$standaloneFailures)")
+                // With no reachable server there's nothing to fall back TO — disabling standalone
+                // would just flip the toggle off while it keeps being the only path (useStandalone()
+                // returns true when the server is down anyway). Only auto-disable when the proxy is a
+                // real alternative. This was the "standalone keeps turning itself off" bug.
+                if (!serverPrefs.serverReachable) {
+                    webServer.addLog("PLR", "standalone failed for $song and no server — skipping (toggle kept on)")
+                    toast("Can't play \"$song\" on-device, and no server to fall back to")
+                    advanceQueue()
+                    return
+                }
                 // If it fails repeatedly it's not the track, it's the device or the
                 // scheme — stop paying the failed-attempt cost on every single song.
                 if (standaloneFailures >= 3 && standalonePrefs.isEnabled()) {
