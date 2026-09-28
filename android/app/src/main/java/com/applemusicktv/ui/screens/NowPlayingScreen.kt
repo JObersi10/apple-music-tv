@@ -1618,10 +1618,11 @@ private fun MusicalDots(fraction: Float, outerAlpha: Float = 1f, modifier: Modif
     }
 }
 
-/** A word must be held at least this long to earn the per-letter grow/glow — roughly the average
- *  duration of the held words in "Don't Stop Me Now" (myself / alive / inside out). Ordinary
- *  quick words stay flat. */
-private const val SLOW_WORD_MS = 900L
+/** A word must be held at least this long to earn the per-letter grow/glow. Set from the measured
+ *  held words in "Don't Stop Me Now" — myself 1808ms, inside 1216ms, out 1167ms — just under the
+ *  shortest of them so all the held words qualify while ordinary quick words (e.g. "good" ~620ms) stay
+ *  flat. */
+private const val SLOW_WORD_MS = 1100L
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1683,10 +1684,12 @@ private fun WordWipe(
     // the fill passes it and holds up, and the whole word swells a little — then settles. Crucially the
     // grow is a draw-only graphicsLayer SCALE and the rise is baselineShift, so NEITHER changes layout:
     // the lines below stay put (a per-letter fontSize grow was reflowing them up/down).
-    if (rich && slow && isCurrent && text.trim().length > 3) {
+    // Rendered for the current word AND once it's sung, so it never switches to the plain path (which
+    // lifts a different way) — that path swap made the word jump to a new height when it finished.
+    if (rich && slow && (isCurrent || sung) && text.trim().length > 3) {
         val n = text.length.coerceAtLeast(1)
-        val head = f * n                                   // fill position, in letters
-        val holdFrac = (5f / fontSize.value).coerceIn(0.05f, 0.32f)   // baselineShift ≈ the lift
+        val head = if (sung) n.toFloat() else f * n        // fill position, in letters (sung = all done)
+        val holdFrac = (4f / fontSize.value).coerceIn(0.05f, 0.30f)   // baselineShift == the 4dp plain lift
         // Swell up then settle back to size, eased in/out so the start and END are smooth.
         val fs = f * f * (3f - 2f * f)                     // smoothstep on the word fill
         val wordGrow = 1f + 0.22f * kotlin.math.sin(fs * Math.PI.toFloat()).coerceIn(0f, 1f)
@@ -1718,8 +1721,12 @@ private fun WordWipe(
         return
     }
 
-    // Normal word: feathered left→right gradient wipe + the same uniform rise-and-hold lift.
-    val amt = when { sung -> 1f; isCurrent -> f; else -> 0f }
+    // Normal word: feathered left→right gradient wipe + the same uniform rise-and-hold lift. The lift
+    // rises QUICKLY (reaches full by ~1/3 through the word) then holds, so the word is already at its
+    // risen spot while it's being sung — not still creeping up as the next word starts.
+    val rise = (f / 0.35f).coerceIn(0f, 1f)
+    val eased = rise * rise * (3f - 2f * rise)
+    val amt = when { sung -> 1f; isCurrent -> eased; else -> 0f }
     val feather = 0.22f
     val lo = (f - feather).coerceIn(0f, 1f)
     val hi = (f + feather).coerceIn(0f, 1f)
