@@ -246,6 +246,7 @@ fun NowPlayingScreen(
                 onNext = playerVm::next,
                 translations = state.lyricsTranslation,
                 lyricsScale = state.lyricsScale,
+                richMotion = !state.lowPowerMode && !state.reduceMotion,
             )
             else -> {
         Row(
@@ -536,6 +537,7 @@ fun NowPlayingScreen(
                             playFocus = playFocus,
                             fontScale = state.lyricsScale,
                             translations = state.lyricsTranslation,
+                            richMotion = !state.lowPowerMode && !state.reduceMotion,
                         )
                     } else if (state.lyricsLoaded) {
                         // Lyrics view, fetch finished, and this song genuinely has none — say so in the
@@ -653,6 +655,7 @@ private fun FullScreenLyrics(
     onNext: () -> Unit,
     translations: List<String> = emptyList(),
     lyricsScale: Float = 1f,
+    richMotion: Boolean = true,
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
@@ -688,6 +691,7 @@ private fun FullScreenLyrics(
                 fontScale = 1.3f * lyricsScale,
                 autoReturnMs = 5_000L,
                 translations = translations,
+                richMotion = richMotion,
             )
         }
         // Now-playing chip, bottom-left — same placement as the screensaver.
@@ -1336,6 +1340,7 @@ private fun LyricsPanel(
     fontScale: Float = 1f,
     autoReturnMs: Long = 7000L,
     translations: List<String> = emptyList(),
+    richMotion: Boolean = true,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -1553,6 +1558,7 @@ private fun LyricsPanel(
                     isPast = isPast,
                     progress = progressProvider,
                     fontScale = fontScale,
+                    richMotion = richMotion,
                     focusRequester = if (isActive) activeLineFocus else null,
                     onSeek = { onSeek(line.startMs) },
                     onFocused = { focusedLineIndex = idx },
@@ -1619,6 +1625,7 @@ private fun WordWipeLine(
     activeIdx: Int,
     progressMs: Long,
     live: Boolean = true,
+    rich: Boolean = true,
     fontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
@@ -1635,15 +1642,13 @@ private fun WordWipeLine(
                 isCurrent -> ((progressMs - word.startMs).toFloat() / dur).coerceIn(0f, 1f)
                 else      -> 0f
             }
-            // Apple Music web (see the pasted amp-lyrics DOM): each sung word RISES a few px
-            // (transform translateY) as its gradient fills, and holds up while the line is current —
-            // NOT a scale bounce. Every word rises at the same speed; the AMOUNT differs by how long the
-            // word is held (longer word → a bit more lift). Slow/held words get a per-letter rising wave.
-            val emph  = ((dur - 300f) / 1300f).coerceIn(0f, 1f)   // 0 (short) .. 1 (long/held)
-            val glowA = when { isCurrent -> 0.30f * frac * emph; sung -> 0.30f * emph; else -> 0f }
+            // EVERY word rises the SAME uniform amount (Apple's constant translateY) — the amount does
+            // NOT vary by word, which was making the baseline jagged. `emphasis` (how long the word is
+            // held) only decides whether it gets the extra per-letter grow/glow, not the lift height.
+            val emph = ((dur - 300f) / 1300f).coerceIn(0f, 1f)
             WordWipe(
                 text  = word.text + if (i < words.lastIndex) " " else "",
-                frac  = frac, sung = sung, isCurrent = isCurrent, emphasis = emph, glowAlpha = glowA,
+                frac  = frac, sung = sung, isCurrent = isCurrent, emphasis = emph, rich = rich,
                 fontSize = fontSize, lineHeight = lineHeight, weight = weight,
                 sungColor = sungColor, unsungColor = unsungColor,
             )
@@ -1658,7 +1663,7 @@ private fun WordWipe(
     sung: Boolean,
     isCurrent: Boolean,
     emphasis: Float,
-    glowAlpha: Float,
+    rich: Boolean = true,
     fontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
@@ -1666,40 +1671,38 @@ private fun WordWipe(
     unsungColor: Color = Color(0xFF76767C),
 ) {
     val f = frac.coerceIn(0f, 1f)
-    // Lift amount: a few px, more for longer-held words. Same rise SPEED for all (driven by frac);
-    // holds up once sung (amt = 1) while the line stays current.
-    val liftPx = with(androidx.compose.ui.platform.LocalDensity.current) { (2.5f + 4.5f * emphasis).dp.toPx() }
-    val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 14f) else null
+    val liftPx = with(androidx.compose.ui.platform.LocalDensity.current) { 4.dp.toPx() }  // uniform lift for all
 
-    // Per-letter rising wave for slow/held words: each letter lifts as the fill reaches it and holds
-    // up, leading letters first — "highest first letter, then the next", Apple-style. Built as ONE
-    // AnnotatedString with per-letter BaselineShift so the word keeps its normal kerning (rendering
-    // each letter as a separate Text spaced the word out — that was the "stretch").
-    if (isCurrent && emphasis > 0.5f && text.trim().length > 3) {
+    // Slow/held words (skipped in low-power / reduce-motion via `rich`): each letter GROWS + GLOWS as
+    // the fill passes it, then SHRINKS back to normal size but STAYS lifted at the top — "grow, glow,
+    // then settle up". One AnnotatedString (per-letter fontSize + baselineShift) so kerning is intact.
+    if (rich && isCurrent && emphasis > 0.5f && text.trim().length > 3) {
         val n = text.length.coerceAtLeast(1)
-        val head = f * n            // fill position, in letters
+        val head = f * n                                   // fill position, in letters
+        val holdFrac = (4f / fontSize.value).coerceIn(0.05f, 0.30f)   // baselineShift ≈ the 4dp lift
         val ann = buildAnnotatedString {
             text.forEachIndexed { idx, ch ->
-                val local = (head - idx).coerceIn(0f, 1f)          // 0 → not yet, 1 → fully risen (held)
-                val eased = local * local * (3f - 2f * local)      // smoothstep — no sharp corner
-                val bloom = kotlin.math.sin(local.coerceIn(0f, 1f) * Math.PI.toFloat())
+                val local = (head - idx).coerceIn(0f, 1f)              // 0 → not yet, 1 → done (held up)
+                val eased = local * local * (3f - 2f * local)          // smooth rise, holds at 1
+                val bump  = kotlin.math.sin(local * Math.PI.toFloat()).coerceIn(0f, 1f)  // grow→settle
                 val sungHere = idx < head
-                val sh = if (glowAlpha > 0f && bloom > 0.05f)
-                    Shadow(Color.White.copy(alpha = glowAlpha * bloom), blurRadius = 14f) else null
+                val grow = 1f + 0.28f * bump                            // grow mid-transition, back to 1
+                val sh = if (bump > 0.05f) Shadow(Color.White.copy(alpha = 0.6f * bump), blurRadius = 16f) else null
                 pushStyle(SpanStyle(
                     color = if (sungHere) sungColor else unsungColor,
-                    baselineShift = androidx.compose.ui.text.style.BaselineShift(0.16f * eased),
+                    fontSize = fontSize * grow,
+                    baselineShift = androidx.compose.ui.text.style.BaselineShift(holdFrac * eased),
                     shadow = sh,
                 ))
                 append(ch.toString())
                 pop()
             }
         }
-        Text(ann, style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp))
+        Text(ann, style = TextStyle(fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp))
         return
     }
 
-    // Normal word: feathered left→right gradient wipe + rise-and-hold lift for the whole word.
+    // Normal word: feathered left→right gradient wipe + the same uniform rise-and-hold lift.
     val amt = when { sung -> 1f; isCurrent -> f; else -> 0f }
     val feather = 0.22f
     val lo = (f - feather).coerceIn(0f, 1f)
@@ -1712,7 +1715,7 @@ private fun WordWipe(
     Text(
         text,
         modifier = if (amt > 0f) Modifier.graphicsLayer { translationY = -liftPx * amt } else Modifier,
-        style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp, brush = brush, shadow = glow),
+        style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp, brush = brush),
     )
 }
 
@@ -1725,6 +1728,7 @@ private fun LyricLineRow(
     progress: () -> Long,
     onSeek: () -> Unit,
     fontScale: Float = 1f,
+    richMotion: Boolean = true,
     focusRequester: FocusRequester? = null,
     onFocused: (() -> Unit)? = null,
 ) {
@@ -1764,7 +1768,7 @@ private fun LyricLineRow(
                     // Karaoke wipe: each word fills left→right as it's sung, current word
                     // grows + glows on slow/held words. Apple Music style.
                     val activeIdx = line.words.indexOfLast { it.startMs <= progressMs }
-                    WordWipeLine(words = line.words, activeIdx = activeIdx, progressMs = progressMs, fontSize = (24f * fontScale).sp, lineHeight = (30f * fontScale).sp)
+                    WordWipeLine(words = line.words, activeIdx = activeIdx, progressMs = progressMs, rich = richMotion, fontSize = (24f * fontScale).sp, lineHeight = (30f * fontScale).sp)
                 } else {
                     // Apple Music look: the active line is large + white; every other line is smaller
                     // and dim, so the sung line clearly stands out. (Inactive lines share one smaller
@@ -1780,7 +1784,7 @@ private fun LyricLineRow(
 
                 val bg = line.background
                 if (bg != null && bg.text.isNotEmpty()) {
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(10.dp))   // more gap so a lifted bg line doesn't crowd the lead
                     val bgProgress = progressMs + 300L  // -300ms early start
                     val bgLive = bgProgress in bg.startMs..(bg.endMs + 600L)
                     val bgTargetScale = if (bgLive) 1.08f else 0.93f
@@ -1793,11 +1797,14 @@ private fun LyricLineRow(
                         }
                     ) {
                         if (bg.words.isNotEmpty()) {
-                            // Same soft left→right wipe as the lead line, just smaller/dimmer.
-                            val bgActiveIdx = bg.words.indexOfLast { it.startMs <= bgProgress }
+                            // Same soft left→right wipe as the lead line, just smaller/dimmer. Only mark
+                            // words sung/active while the bg is actually LIVE — otherwise the line showed
+                            // up pre-lifted with words already highlighted before its turn, and after it
+                            // finished it stayed lit instead of reverting. -1 = nothing sung (flat/dim).
+                            val bgActiveIdx = if (bgLive) bg.words.indexOfLast { it.startMs <= bgProgress } else -1
                             WordWipeLine(
                                 words = bg.words, activeIdx = bgActiveIdx, progressMs = bgProgress,
-                                live = bgLive,
+                                live = bgLive, rich = richMotion,
                                 fontSize = 19.sp, lineHeight = 24.sp, weight = FontWeight.SemiBold,
                                 sungColor = Color(0xFFE0E0E0), unsungColor = Color(0xFF6E6E73),
                             )
