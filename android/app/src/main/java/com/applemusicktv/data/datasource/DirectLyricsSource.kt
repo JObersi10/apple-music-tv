@@ -226,28 +226,27 @@ class DirectLyricsSource @Inject constructor(
             val begin = attr(p.attrs, "begin") ?: continue
             val startMs = parseTime(begin)
             val endMs = attr(p.attrs, "end")?.let { parseTime(it) } ?: (startMs + 5000)
-            val words = mutableListOf<LyricWord>()
             var background: LyricBackground? = null
             for (span in childSpans(p)) {
                 if (isBgSpan(span.attrs)) {
-                    val bgWords = childSpans(span).mapNotNull { spanToWord(it) }.toMutableList()
-                    if (bgWords.isEmpty()) spanToWord(span)?.let { bgWords.add(it) }
+                    val bgEntries = mutableListOf<WEntry>()
+                    collectLeafEntries(span, bgEntries)
+                    val bgWords = if (bgEntries.isNotEmpty()) mergeSyllables(bgEntries)
+                                  else listOfNotNull(spanToWord(span))
                     if (bgWords.isNotEmpty()) {
                         val bgBegin = attr(span.attrs, "begin")?.let { parseTime(it) } ?: bgWords.first().startMs
                         val bgEnd = attr(span.attrs, "end")?.let { parseTime(it) } ?: bgWords.last().endMs
-                        background = LyricBackground(bgBegin, bgEnd, bgWords.joinToString(" ") { it.text.trim() }, bgWords)
+                        background = LyricBackground(bgBegin, bgEnd, bgWords.joinToString(" ") { it.text.trim() }, bgWords.toMutableList())
                     }
-                } else {
-                    // Word-timed TTML nests differently per song: sometimes each word is a
-                    // direct <span> under <p>, sometimes they're wrapped in a line-level
-                    // <span>. Recurse to the LEAF timed spans so we always get per-word
-                    // timing instead of collapsing the whole line into one "word".
-                    val leaves = mutableListOf<Node>()
-                    collectLeafSpans(span, leaves)
-                    if (leaves.isEmpty()) spanToWord(span)?.let { words.add(it) }
-                    else leaves.forEach { s -> spanToWord(s)?.let { words.add(it) } }
                 }
             }
+            // Word-timed TTML separates syllables of ONE word with adjacent <span>s and NO
+            // whitespace ("fa"+"vo"+"rite"); real word breaks have a space text node between
+            // spans. Collect leaf spans WITH that boundary info, then merge syllables — else
+            // the line renders "fa vo rite" instead of "favorite".
+            val entries = mutableListOf<WEntry>()
+            collectLeafEntries(p, entries)
+            val words = mergeSyllables(entries).toMutableList()
             val text = if (words.isNotEmpty()) words.joinToString(" ") { it.text.trim() } else flatText(p)
             if (text.isBlank()) continue
             lines.add(LyricLine(startMs, endMs, text, words, background))
@@ -303,13 +302,56 @@ class DirectLyricsSource @Inject constructor(
     private fun childSpans(node: Node) =
         node.children.filterIsInstance<Node>().filter { it.tag == "span" || it.tag.endsWith(":span") }
 
-    // Descend to the innermost timed spans (one per word). A span with no child spans is a
-    // leaf word; otherwise recurse into its children.
-    private fun collectLeafSpans(node: Node, out: MutableList<Node>) {
-        for (span in childSpans(node)) {
-            val inner = childSpans(span)
-            if (inner.isEmpty()) out.add(span) else collectLeafSpans(span, out)
+    private data class WEntry(val word: LyricWord, val endsWord: Boolean)
+
+    // Descend to the innermost timed spans, recording for each whether a real word break follows
+    // it — i.e. whitespace sits between this span and the next span among its siblings. Background
+    // (x-bg) spans are skipped; the caller handles them separately.
+    private fun collectLeafEntries(node: Node, out: MutableList<WEntry>) {
+        val kids = node.children
+        for (i in kids.indices) {
+            val c = kids[i] as? Node ?: continue
+            if (!(c.tag == "span" || c.tag.endsWith(":span"))) continue
+            if (isBgSpan(c.attrs)) continue
+            val inner = childSpans(c).filter { !isBgSpan(it.attrs) }
+            if (inner.isEmpty()) {
+                val w = spanToWord(c) ?: continue
+                // A word break = whitespace text node between this span and the next span.
+                var endsWord = false
+                var j = i + 1
+                while (j < kids.size) {
+                    val nx = kids[j]
+                    if (nx is Node && (nx.tag == "span" || nx.tag.endsWith(":span"))) break
+                    if (nx is String && nx.any { it.isWhitespace() }) { endsWord = true; break }
+                    j++
+                }
+                out.add(WEntry(w, endsWord))
+            } else {
+                collectLeafEntries(c, out)
+            }
         }
+    }
+
+    // Merge consecutive syllable spans (no whitespace between them) into whole words.
+    private fun mergeSyllables(entries: List<WEntry>): List<LyricWord> {
+        val out = mutableListOf<LyricWord>()
+        var i = 0
+        while (i < entries.size) {
+            var cur = entries[i].word
+            var ends = entries[i].endsWord
+            while (!ends && i + 1 < entries.size) {
+                i++
+                val nx = entries[i]
+                cur = LyricWord(cur.startMs, nx.word.endMs, (cur.text + nx.word.text))
+                ends = nx.endsWord
+            }
+            out.add(cur.copy(text = cur.text.trim()))
+            i++
+        }
+        // Safety net: if no whitespace boundaries were found at all the whole line collapses into
+        // one "word" — worse than not merging, so hand back the unmerged spans.
+        if (out.size == 1 && entries.size > 3) return entries.map { it.word.copy(text = it.word.text.trim()) }
+        return out
     }
 
     private fun isBgSpan(attrs: String) =

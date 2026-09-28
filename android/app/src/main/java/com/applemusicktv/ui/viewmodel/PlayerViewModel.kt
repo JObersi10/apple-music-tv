@@ -1040,8 +1040,17 @@ class PlayerViewModel @Inject constructor(
             // was the "song autoplays on open". Stash it and load only on the user's first play press.
             webServer.addLog("PLR", "restoreState idx=$idx posMs=$posMs song=${song.title} — deferred (paused)")
             pendingRestore = RestoreInfo(song, posMs, full)
-            // Lyrics/motion are just display — safe (and nice) to warm now.
-            if (full) loadLyrics(song.id)
+            // Lyrics/motion are just display — safe (and nice) to warm now. On a cold reopen the
+            // bearer scrape / server-reachability check may not be settled yet, so the first fetch
+            // can come back empty (and empty isn't cached). Retry a few times while this song is
+            // still the current one — otherwise lyrics never appear until you skip tracks.
+            launch {
+                repeat(4) {
+                    loadLyrics(song.id)
+                    kotlinx.coroutines.delay(1500)
+                    if (_state.value.lyrics.isNotEmpty() || _state.value.currentSong?.id != song.id) return@launch
+                }
+            }
             loadMotion(song.id)
         } catch (_: Exception) {}
     }

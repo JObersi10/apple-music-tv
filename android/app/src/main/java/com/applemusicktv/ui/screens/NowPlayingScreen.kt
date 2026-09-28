@@ -1557,8 +1557,10 @@ private fun LyricsPanel(
                 // Grows + brightens with the active line (mirrors the main lyric), fades back when past.
                 // Indented + noticeably dimmer than the main lyric when inactive, so the gloss reads as
                 // secondary and doesn't sit uniform with the top text.
+                // Size is carried by fontSize (not a graphicsLayer scale). An earlier scale animation
+                // used transformOrigin top-left, which made the line visibly grow toward the
+                // bottom-right — the "lyrics warping diagonally" glitch. Font-size + alpha only now.
                 val trAlpha by animateFloatAsState(if (isActive) 0.82f else if (isPast) 0.16f else 0.24f, label = "trA")
-                val trScale by animateFloatAsState(if (isActive) 1f else 0.92f, label = "trS")
                 Text(
                     tr,
                     style = TextStyle(fontSize = ((if (isActive) 16.5f else 14f) * fontScale).sp,
@@ -1566,7 +1568,6 @@ private fun LyricsPanel(
                         fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                         color = Color.White.copy(alpha = trAlpha)),
                     modifier = Modifier.fillMaxWidth()
-                        .graphicsLayer { scaleX = trScale; scaleY = trScale; transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f) }
                         .padding(start = 18.dp, end = 16.dp, top = 5.dp, bottom = 6.dp),
                 )
             }
