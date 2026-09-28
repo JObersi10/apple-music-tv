@@ -1618,6 +1618,11 @@ private fun MusicalDots(fraction: Float, outerAlpha: Float = 1f, modifier: Modif
     }
 }
 
+/** A word must be held at least this long to earn the per-letter grow/glow — roughly the average
+ *  duration of the held words in "Don't Stop Me Now" (myself / alive / inside out). Ordinary
+ *  quick words stay flat. */
+private const val SLOW_WORD_MS = 900L
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun WordWipeLine(
@@ -1643,12 +1648,13 @@ private fun WordWipeLine(
                 else      -> 0f
             }
             // EVERY word rises the SAME uniform amount (Apple's constant translateY) — the amount does
-            // NOT vary by word, which was making the baseline jagged. `emphasis` (how long the word is
-            // held) only decides whether it gets the extra per-letter grow/glow, not the lift height.
-            val emph = ((dur - 300f) / 1300f).coerceIn(0f, 1f)
+            // NOT vary by word. A word only gets the extra per-letter grow/glow when it's held at least
+            // SLOW_WORD_MS — tuned to the average duration of the held words in "Don't Stop Me Now"
+            // (myself / alive / inside out), so short words never trigger it.
+            val slow = dur >= SLOW_WORD_MS
             WordWipe(
                 text  = word.text + if (i < words.lastIndex) " " else "",
-                frac  = frac, sung = sung, isCurrent = isCurrent, emphasis = emph, rich = rich,
+                frac  = frac, sung = sung, isCurrent = isCurrent, slow = slow, rich = rich,
                 fontSize = fontSize, lineHeight = lineHeight, weight = weight,
                 sungColor = sungColor, unsungColor = unsungColor,
             )
@@ -1662,7 +1668,7 @@ private fun WordWipe(
     frac: Float,
     sung: Boolean,
     isCurrent: Boolean,
-    emphasis: Float,
+    slow: Boolean,
     rich: Boolean = true,
     fontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
@@ -1673,24 +1679,24 @@ private fun WordWipe(
     val f = frac.coerceIn(0f, 1f)
     val liftPx = with(androidx.compose.ui.platform.LocalDensity.current) { 4.dp.toPx() }  // uniform lift for all
 
-    // Slow/held words (skipped in low-power / reduce-motion via `rich`): each letter GROWS + GLOWS as
-    // the fill passes it, then SHRINKS back to normal size but STAYS lifted at the top — "grow, glow,
-    // then settle up". One AnnotatedString (per-letter fontSize + baselineShift) so kerning is intact.
-    if (rich && isCurrent && emphasis > 0.5f && text.trim().length > 3) {
+    // Slow/held words (skipped in low-power / reduce-motion via `rich`): each letter rises + glows as
+    // the fill passes it and holds up, and the whole word swells a little — then settles. Crucially the
+    // grow is a draw-only graphicsLayer SCALE and the rise is baselineShift, so NEITHER changes layout:
+    // the lines below stay put (a per-letter fontSize grow was reflowing them up/down).
+    if (rich && slow && isCurrent && text.trim().length > 3) {
         val n = text.length.coerceAtLeast(1)
         val head = f * n                                   // fill position, in letters
-        val holdFrac = (4f / fontSize.value).coerceIn(0.05f, 0.30f)   // baselineShift ≈ the 4dp lift
+        val holdFrac = (4f / fontSize.value).coerceIn(0.05f, 0.28f)   // baselineShift ≈ the 4dp lift
+        val wordGrow = 1f + 0.10f * kotlin.math.sin(f * Math.PI.toFloat()).coerceIn(0f, 1f)  // swell→settle
         val ann = buildAnnotatedString {
             text.forEachIndexed { idx, ch ->
                 val local = (head - idx).coerceIn(0f, 1f)              // 0 → not yet, 1 → done (held up)
                 val eased = local * local * (3f - 2f * local)          // smooth rise, holds at 1
-                val bump  = kotlin.math.sin(local * Math.PI.toFloat()).coerceIn(0f, 1f)  // grow→settle
+                val bump  = kotlin.math.sin(local * Math.PI.toFloat()).coerceIn(0f, 1f)  // glow bloom
                 val sungHere = idx < head
-                val grow = 1f + 0.28f * bump                            // grow mid-transition, back to 1
                 val sh = if (bump > 0.05f) Shadow(Color.White.copy(alpha = 0.6f * bump), blurRadius = 16f) else null
                 pushStyle(SpanStyle(
                     color = if (sungHere) sungColor else unsungColor,
-                    fontSize = fontSize * grow,
                     baselineShift = androidx.compose.ui.text.style.BaselineShift(holdFrac * eased),
                     shadow = sh,
                 ))
@@ -1698,7 +1704,15 @@ private fun WordWipe(
                 pop()
             }
         }
-        Text(ann, style = TextStyle(fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp))
+        Text(
+            ann,
+            // Grow from the bottom so it swells upward; draw-only, no reflow of the lines below.
+            modifier = Modifier.graphicsLayer {
+                scaleX = wordGrow; scaleY = wordGrow
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)
+            },
+            style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp),
+        )
         return
     }
 
