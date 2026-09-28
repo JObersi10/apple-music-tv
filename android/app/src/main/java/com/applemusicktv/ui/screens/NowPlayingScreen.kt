@@ -1686,15 +1686,17 @@ private fun WordWipe(
     if (rich && slow && isCurrent && text.trim().length > 3) {
         val n = text.length.coerceAtLeast(1)
         val head = f * n                                   // fill position, in letters
-        val holdFrac = (4f / fontSize.value).coerceIn(0.05f, 0.28f)   // baselineShift ≈ the 4dp lift
-        val wordGrow = 1f + 0.10f * kotlin.math.sin(f * Math.PI.toFloat()).coerceIn(0f, 1f)  // swell→settle
+        val holdFrac = (5f / fontSize.value).coerceIn(0.05f, 0.32f)   // baselineShift ≈ the lift
+        // Swell up then settle back to size, eased in/out so the start and END are smooth.
+        val fs = f * f * (3f - 2f * f)                     // smoothstep on the word fill
+        val wordGrow = 1f + 0.22f * kotlin.math.sin(fs * Math.PI.toFloat()).coerceIn(0f, 1f)
         val ann = buildAnnotatedString {
             text.forEachIndexed { idx, ch ->
                 val local = (head - idx).coerceIn(0f, 1f)              // 0 → not yet, 1 → done (held up)
                 val eased = local * local * (3f - 2f * local)          // smooth rise, holds at 1
-                val bump  = kotlin.math.sin(local * Math.PI.toFloat()).coerceIn(0f, 1f)  // glow bloom
+                val bump  = kotlin.math.sin(local * Math.PI.toFloat()).coerceIn(0f, 1f)  // glow bloom per letter
                 val sungHere = idx < head
-                val sh = if (bump > 0.05f) Shadow(Color.White.copy(alpha = 0.6f * bump), blurRadius = 16f) else null
+                val sh = if (bump > 0.05f) Shadow(Color.White.copy(alpha = 0.9f * bump), blurRadius = 20f) else null
                 pushStyle(SpanStyle(
                     color = if (sungHere) sungColor else unsungColor,
                     baselineShift = androidx.compose.ui.text.style.BaselineShift(holdFrac * eased),
@@ -1800,7 +1802,10 @@ private fun LyricLineRow(
                 if (bg != null && bg.text.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))   // more gap so a lifted bg line doesn't crowd the lead
                     val bgProgress = progressMs + 300L  // -300ms early start
-                    val bgLive = bgProgress in bg.startMs..(bg.endMs + 600L)
+                    // Only ever live on the ACTIVE line. A PAST line's static progress is its endMs,
+                    // which still falls inside the bg window — that left every already-sung line's
+                    // background vocals frozen lifted/lit ("already risen up, not its turn").
+                    val bgLive = isActive && bgProgress in bg.startMs..(bg.endMs + 600L)
                     val bgTargetScale = if (bgLive) 1.08f else 0.93f
                     val bgScale by animateFloatAsState(bgTargetScale, tween(250), label = "bgScale")
 
