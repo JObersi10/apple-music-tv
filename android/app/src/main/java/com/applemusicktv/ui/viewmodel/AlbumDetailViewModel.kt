@@ -22,7 +22,11 @@ data class AlbumDetailUiState(
     val album:         Album?      = null,
     val tracks:        List<Song>  = emptyList(),
     val relatedAlbums: List<Album> = emptyList(),
+    val musicVideos:   List<Song>  = emptyList(),
     val motionUrl:     String?     = null,
+    // Lowercased titles of the album's tracks that are also in the artist's top-songs — Apple's
+    // "popular"/best-songs dot. Matched by title so library vs catalog ids don't matter.
+    val popularTitles: Set<String> = emptySet(),
     val error:         String?     = null,
 )
 
@@ -58,12 +62,54 @@ class AlbumDetailViewModel @Inject constructor(
                 val relatedD = async { repo.getRelatedAlbums(albumId) }
                 val tracks = tracksD.await().getOrDefault(emptyList())
                 val motionUrl = tracks.firstOrNull()?.id?.let { repo.getMotion(it).getOrNull() }
+                val album = albumD.await().getOrNull()
+                // Album music videos via the dedicated repo path (proxy route, or artist-feed
+                // derivation on standalone). Best-effort — never fails the page.
+                val videos = repo.getAlbumMusicVideos(albumId).getOrDefault(emptyList())
+                android.util.Log.i("AMAlbumMV", "albumId=$albumId MVs=${videos.size} album='${album?.title}'")
+                // Popular ("best songs") dot — Apple's own signal. Prefer the per-track popularity
+                // attribute (from ?extend=popularity): dot tracks at/above a threshold (scale-aware:
+                // 0..1 → 0.5, 0..100 → 50). If popularity isn't present (older cache / no extend),
+                // fall back to matching the artist's top-songs by title.
+                val withPop = tracks.mapNotNull { t -> t.popularity?.let { t to it } }
+                val popularTitles: Set<String> = if (withPop.size >= 3) {
+                    // Apple only dots the few standout tracks (the singles), NOT every track above a
+                    // flat threshold — 0.5 dotted almost everything. So pick RELATIVE to this album:
+                    // the top quartile by popularity, capped at 5, AND strictly above the album median
+                    // (a flat "greatest hits" album where every track is equally popular gets no dots).
+                    val vals = withPop.map { it.second }.sorted()
+                    val median = vals[vals.size / 2]
+                    val topN = (withPop.size + 3) / 4  // ceil(size/4)
+                    withPop.sortedByDescending { it.second }
+                        .take(topN.coerceIn(1, 5))
+                        .filter { it.second > median }
+                        .map { it.first.title.trim().lowercase() }
+                        .toSet()
+                } else if (withPop.isNotEmpty()) {
+                    // Tiny album (1–2 tracks): dot the single clear leader only if it out-pops the rest.
+                    val max = withPop.maxOf { it.second }
+                    withPop.filter { it.second >= max && withPop.size == 1 }
+                        .map { it.first.title.trim().lowercase() }.toSet()
+                } else {
+                    val artistIdForTop = album?.artistId?.takeIf { it.isNotBlank() }
+                        ?: tracks.firstOrNull { !it.artistId.isNullOrBlank() }?.artistId
+                    artistIdForTop?.let { aid ->
+                        runCatching {
+                            repo.getArtistFull(aid).getOrNull()?.topSongs
+                                ?.map { it.title.trim().lowercase() }?.toSet()
+                        }.getOrNull()
+                    }?.let { top -> tracks.map { it.title.trim().lowercase() }.filter { it in top }.toSet() }
+                        ?: emptySet()
+                }
+                android.util.Log.i("AMPopular", "album='${album?.title}' withPop=${withPop.size} dots=${popularTitles.size}")
                 val newState = AlbumDetailUiState(
                     isLoading     = false,
-                    album         = albumD.await().getOrNull(),
+                    album         = album,
                     tracks        = tracks,
                     relatedAlbums = relatedD.await().getOrDefault(emptyList()),
+                    musicVideos   = videos,
                     motionUrl     = motionUrl,
+                    popularTitles = popularTitles,
                 )
                 _state.value = newState
                 writeCache(albumId, newState)

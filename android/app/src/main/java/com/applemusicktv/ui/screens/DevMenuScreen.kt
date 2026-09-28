@@ -47,6 +47,7 @@ fun DevMenuScreen(
     var pcIpDraft by remember(state.pcServerIp) { mutableStateOf(state.pcServerIp) }
     var showDev by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+    var showSignIn by remember { mutableStateOf(false) }
     // PC IP is a press-to-edit button, not a live field: a focused BasicTextField pops the
     // Fire TV IME by itself the moment D-pad focus lands on it.
     var pcIpEditing by remember { mutableStateOf(false) }
@@ -172,6 +173,16 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
 
+            SectionLabel("Storage")
+            val cacheCap by playerVm.cacheCapBytes.collectAsState()
+            Stepper(
+                label = "Media cache",
+                value = cacheLabel(cacheCap),
+                sub = "Cap for downloaded audio/video (album artwork is capped separately)",
+                onDec = { playerVm.stepCacheCap(-1) },
+                onInc = { playerVm.stepCacheCap(1) },
+            )
+
             SectionLabel("Remote")
             var remote by remember { mutableStateOf(playerVm.remoteOverride()) }
             val remoteOrder = listOf(
@@ -234,6 +245,8 @@ fun DevMenuScreen(
                 StatusChip("Music-User-Token", state.hasMUT, state.mutSetAt?.let { "Set $it" } ?: if (!state.hasMUT) "Set via phone web server" else "Active")
                 StatusChip("Server", state.serverOk, if (state.serverOk) "Reachable" else "Unreachable — standalone")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Sign in via an in-app Apple Music browser window — captures the token, no paste.
+                    ActionBtn("Sign In", Color(0xFF1A2233), small = true) { showSignIn = true }
                     ActionBtn("Re-check Server", Color(0xFF1A2A1A), small = true) { vm.recheckServer(playerVm, onDone = onDataRefresh) }
                     ActionBtn("Refresh", Color(0xFF2A2A2A), small = true) { vm.refresh(onDone = onDataRefresh) }
                     ActionBtn("Replay Setup", Color(0xFF2A2A1A), small = true) { playerVm.resetOnboarding() }
@@ -242,6 +255,18 @@ fun DevMenuScreen(
                     ActionBtn("Force Quit", Color(0xFF3A1A1A), small = true) {
                         playerVm.stopPlayback()
                         android.os.Process.killProcess(android.os.Process.myPid())
+                    }
+                }
+                // In-app Apple Music sign-in: full-screen WebView that captures the media-user-token.
+                if (showSignIn) {
+                    androidx.compose.ui.window.Dialog(
+                        onDismissRequest = { showSignIn = false },
+                        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+                    ) {
+                        AppleSignInScreen(
+                            onToken = { token -> vm.setMUT(token); showSignIn = false; onDataRefresh() },
+                            onClose = { showSignIn = false },
+                        )
                     }
                 }
 
@@ -274,7 +299,7 @@ fun DevMenuScreen(
                                     textStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
                                     cursorBrush = SolidColor(Color(0xFFFA233B)),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }),
+                                    keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme(); vm.recheckServer(playerVm, onDone = onDataRefresh) }),
                                     modifier = Modifier.fillMaxWidth().focusRequester(pcIpFocus),
                                     decorationBox = { inner ->
                                         if (pcIpDraft.isEmpty()) Text("192.168.x.x", fontSize = 13.sp, color = Color(0xFF444444), fontFamily = FontFamily.Monospace)
@@ -282,7 +307,7 @@ fun DevMenuScreen(
                                     },
                                 )
                             }
-                            ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }
+                            ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme(); vm.recheckServer(playerVm, onDone = onDataRefresh) }
                         } else {
                             // Idle: a plain button. Focus can land here with no IME. OK opens the editor.
                             Surface(
@@ -299,7 +324,7 @@ fun DevMenuScreen(
                                 )
                             }
                         }
-                        if (pcIpDraft.isNotEmpty()) ActionBtn("Clear", Color(0xFF3A1A1A), small = true) { pcIpDraft = ""; vm.setPcServerIp("") }
+                        if (pcIpDraft.isNotEmpty()) ActionBtn("Clear", Color(0xFF3A1A1A), small = true) { pcIpDraft = ""; vm.setPcServerIp(""); vm.recheckServer(playerVm, onDone = onDataRefresh) }
                     }
                     if (state.pcServerIp.isNotEmpty())
                         Text("Active: ${state.pcServerIp}:3000", fontSize = 10.sp, color = Color(0xFF6BCB77), fontFamily = FontFamily.Monospace)
@@ -551,6 +576,13 @@ internal fun orbSpeedLabel(f: Float): String = when {
     f < 0.85f -> "Slow"
     f < 1.3f  -> "Normal"
     else      -> "Fast"
+}
+
+internal fun cacheLabel(bytes: Long): String = when {
+    bytes <= 0L -> "Off"
+    // OPTIONS uses 1000*MB / 2000*MB (MB = 1024²), so label those as 1 GB / 2 GB.
+    bytes >= 1000L * 1024 * 1024 -> "${bytes / (1000L * 1024 * 1024)} GB"
+    else -> "${bytes / (1024 * 1024)} MB"
 }
 
 internal fun lyricsScaleLabel(f: Float): String = when {

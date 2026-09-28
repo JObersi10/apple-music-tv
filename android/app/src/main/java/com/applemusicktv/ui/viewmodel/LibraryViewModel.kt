@@ -32,6 +32,7 @@ data class LibraryState(
     val albums: List<Album> = emptyList(),
     val artists: List<Artist> = emptyList(),
     val songs: List<Song> = emptyList(),
+    val videos: List<Song> = emptyList(),
     val error: String? = null,
     val sort: SortState = SortState(),
 )
@@ -75,8 +76,9 @@ class LibraryViewModel @Inject constructor(
             val albums    = cachePrefs.getString("albums", null)?.let { albumsAdapter.fromJson(it) } ?: emptyList()
             val artists   = cachePrefs.getString("artists", null)?.let { artistsAdapter.fromJson(it) } ?: emptyList()
             val songs     = cachePrefs.getString("songs", null)?.let { songsAdapter.fromJson(it) } ?: emptyList()
+            val videos    = cachePrefs.getString("videos", null)?.let { songsAdapter.fromJson(it) } ?: emptyList()
             if (playlists.isNotEmpty() || albums.isNotEmpty() || songs.isNotEmpty()) {
-                _state.value = _state.value.copy(hasMut = true, playlists = playlists, albums = albums, artists = artists, songs = songs)
+                _state.value = _state.value.copy(hasMut = true, playlists = playlists, albums = albums, artists = artists, songs = songs, videos = videos)
             }
         } catch (_: Exception) {}
     }
@@ -207,6 +209,12 @@ class LibraryViewModel @Inject constructor(
                 repo.getLibrarySongs().onSuccess { s ->
                     _state.update { it.copy(songs = s) }
                     cachePrefs.edit { putString("songs", songsAdapter.toJson(s)) }
+                }
+            }
+            launch {
+                repo.getLibraryMusicVideos().onSuccess { v ->
+                    _state.update { it.copy(videos = v) }
+                    cachePrefs.edit { putString("videos", songsAdapter.toJson(v)) }
                 }
             }
         }

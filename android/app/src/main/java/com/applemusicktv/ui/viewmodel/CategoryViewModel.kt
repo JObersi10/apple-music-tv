@@ -17,6 +17,8 @@ data class CategoryUiState(
     val artworkUrl:  String? = null,
     val sections:    List<HomeSection> = emptyList(),
     val error:       String? = null,
+    /** Grouping pages (Videos, Radio-as-category) get no big title header — the nav bar names them. */
+    val hideHeader:  Boolean = false,
 )
 
 /** An Apple editorial "multiroom" category page — a title, a blurb, and several playlist/album shelves. */
@@ -51,7 +53,7 @@ class CategoryViewModel @Inject constructor(
             .onSuccess { d ->
                 _state.value = CategoryUiState(
                     isLoading = false, title = d.title, description = d.description,
-                    artworkUrl = d.artworkUrl, sections = d.sections,
+                    artworkUrl = d.artworkUrl, sections = d.sections, hideHeader = isGrouping,
                 )
             }
             .onFailure { _state.value = CategoryUiState(isLoading = false, error = it.message) }

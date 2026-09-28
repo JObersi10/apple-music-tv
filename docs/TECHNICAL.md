@@ -26,7 +26,9 @@ Toggle in **⚙ Settings → Playback → Standalone**, or point the app at a PC
 
 The TV runs a small web server on port **8080**. Open `http://<TV_IP>:8080` on your phone and paste your Music-User-Token. It's stored on-device (and synced to the proxy server if you use one).
 
-To find the token:
+**Easiest way — the companion phone app.** [AM MUT Extractor](https://github.com/JObersi10/am-mut-extractor) is a tiny Android app that logs into Apple Music in a WebView and reads the token back for you. Install it on your phone, sign in, tap **Copy token**, then paste it into the `:8080` page above. This avoids the DevTools steps and works well because a phone keyboard handles the Apple ID login cleanly (the Fire TV on-screen keyboard mangles WebView password fields).
+
+To find the token manually instead:
 1. Open `music.apple.com` in a browser.
 2. DevTools → Network tab.
 3. Click anything that loads music content.

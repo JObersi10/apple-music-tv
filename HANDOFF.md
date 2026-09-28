@@ -1,6 +1,234 @@
 # Handoff — Apple Music TV
 
-Last updated: 2026-08-30
+Last updated: 2026-09-08 (evening, on-device)
+
+## Session 2026-09-09 (part 3) — ARTIST REDESIGN, PLAYLISTS, SKELETONS, FIXES
+
+- **Artist redesign** (iPad ref): near-full-bleed 480dp hero, big centred name, **centred circular controls** (Shuffle · big Play · Station via new `HeroCircle`). No artist video — Apple exposes no `editorialVideo` for artists (probed), so image hero.
+- **Artist Playlists/Essentials shelf**: artist `playlists` view added (proxy `artists.ts` + direct `catalogArtistFull` + `ArtistFullDto`/VM/screen). Renders "Playlists" shelf (The Weeknd Essentials, etc.) → opens PlaylistDetail.
+- **About dialog**: converted from a same-tree Box overlay to a real `Dialog` window so D-pad focus is actually TRAPPED (the Box version still let focus reach the list behind). Up/Down scrolls, OK/Back closes.
+- **Radio/Videos page headers removed**: RadioScreen dropped its "Radio" title item; CategoryScreen skips the title hero when `hideHeader` (= isGrouping, set in CategoryViewModel). NOTE: a shelf literally named "Music Videos" inside grouping-34 is content, not the page header.
+- **Skeletons**: Videos (CategoryScreen) + Radio now show `ShelfSkeleton` while loading instead of a spinner.
+- **Shazam**: CONFIRMED working (server + app polling). Now **pauses when playback is paused** (`if (!isPlaying) delay; continue`), reverts to the station name/logo on a miss, station logo passed via `playInternetRadio(logoUrl)`. Log tag `AMRadioID`.
+- **Video bleed** into Library/Videos: FIXED — `detachVideo` now does a full audio-only REBUILD (releases the secure decoder+surface) instead of track-disable; AppShell frees it on leaving Now Playing + `delay(120)` before unmounting.
+- **STILL OPEN:**
+  - **MV "Go to Artist" → jumps to Home** (artist IS pushed, but foreground shows Home). NOT yet fixed. Diagnostic logs added: `AMNav` (destination changes) + `AMMV` (openArtist). Repro with user driving, read logcat to find the hardcoded/side-effect Home nav.
+  - Internet-radio: can't skip to next station from the list; can't open artist from Now Playing during radio (needs station-list queue + Shazam→Apple-artist lookup).
+  - Margins: user wants soft edges (content visible behind the top bar / no hard cut), not just no-clip. Not done.
+  - Shazam can show a song that lags what's actually airing (inherent to radio capture timing).
+
+## Session 2026-09-09 (part 2) — ARTIST POLISH, SHAZAM, BLEED/MV FIXES
+
+- **Artist page**: About moved to bottom (above Similar Artists); bio HTML stripped (`stripHtml` kills the literal `<i>`); About card is now **tappable → full-bio scrollable overlay** ("Read more", Back/Close to dismiss); hero retuned to 430dp + centre-crop of a square source (520dp wide-crop showed only the forehead); Similar Artists = circle-only focus (white ring, no boxy halo) with 2-line centred names.
+- **Radio margins**: RadioScreen LazyColumn no longer double-pads horizontally — shelves own start=24/end=0 like Home/New.
+- **Video bleed (Library/Videos)**: AppShell now ALWAYS frees the secure decoder when leaving Now Playing, and waits `delay(120)` after `detachVideo()` before unmounting the SurfaceView so `clearVideoSurface()` lands first (the same-frame unmount orphaned the protected frame = the bleed).
+- **MV→Go to Artist "jumps to Home"**: `MusicVideoViewModel.openArtist` now only navigates with a NON-BLANK artist id — a blank id built a malformed ArtistDetail route and NavController fell back to the start destination (Home).
+- **Shazam song-ID for internet radio**: `server/shazam_identify.py` (ffmpeg grabs ~6s → shazamio recognize) + `server/src/routes/identify.ts` (`GET /api/identify?url=`, 25s cache, single-flight) + Android `identifyStream` (ProxyApi/repo) polled every 20s in `PlayerViewModel.startRadioIdentify`, folding title/artist/artwork into Now Playing. **CONFIRMED WORKING** (live test → `{"title":"Still","artist":"KAROL G & Bruno Mars",...}`). Setup recipe (gamdl's PYTHON_BIN is 3.14 with no shazamio-core wheel + Rust build fails, so Shazam runs in its OWN venv): `python3.13 -m venv server/.shazam-venv` → `.shazam-venv/bin/pip install shazamio-core==1.2.0 shazamio audioop-lts`. Key gotchas: shazamio-core 1.2.0 ships a **cp310-abi3 wheel** (works on 3.13, no Rust); pydub needs **audioop-lts** because `audioop` was removed in Python 3.13. `identify.ts` auto-detects `.shazam-venv/bin/python3` (override with `SHAZAM_PYTHON`). `.shazam-venv/` is gitignored. Capture is 8s (6s missed some tracks).
+- **STILL OPEN:** full artist redesign to the iPad reference (centred circular Play/info/star controls, artist **video** hero, signature logo); artist Essentials/playlists shelf; internet-radio station logo in Now Playing.
+
+## Session 2026-09-09 — RADIO SCREEN, ARTIST ABOUT, V2 CONSISTENCY
+
+- **Dedicated `RadioScreen`** (no longer routes to CategoryScreen): Apple Music Radio shelves on top (via `RadioViewModel.getGrouping("168577")`), then a **"Local Radio"** section = the internet-radio directory (search + country chips + station list). Shelves use the SAME grammar as Home/New (`SectionHeader` + `AmCard` 156 + contentPadding start=24/end=0 → first card at margin, bleeds off right).
+- **Live "Apple Music Radio" section** seeded by id on BOTH paths: proxy `browse.ts /grouping/168577` and direct `DirectMusicDataSource.getGrouping` (6 marquee `ra.` ids). Title forced to "Radio", "Watch Interviews" shelf dropped on both. The app was on the DIRECT path (standalone), which is why these were missing before — fixed there too.
+- **Radio show/episode playback**: `playStation` no longer falls through to the broken live-DRM path (itsradio license 500s, errorCode -1003). Shows a toast "This radio show can't be played yet".
+- **Videos tab (CategoryScreen)** converted to `SectionHeader` + `AmCard` (LazyColumn horizontal padding removed; shelves own start=24/end=0) so it matches Home/New. This also makes ALL category pages consistent.
+- **Artist About**: FROM (`origin`) + BORN (`bornOrFormed`) + GENRE facts + richer `artistBio`. Added on BOTH paths (proxy `artists.ts` extend + direct `catalogArtistFull` extend + DTO/VM/screen). About box given `heightIn(min=130.dp)` so it fits a paragraph.
+- **V2 flag default**: `prefs.getBoolean("new_ui", false)` in PlayerViewModel (lines ~838 and ~1015). Flip both to `true` to make V2 the default once confirmed.
+- **STILL OPEN:**
+  - **MV→artist bug** — needs USER-DRIVEN repro (music-video secure surface makes adb screencaps black, can't blind-drive its controls). User drives, Claude watches logcat.
+  - **More to Explore** genre text-list + genre→sub-station drilldown — Apple's kind-391 element is empty via `include=tabs` and the radio-genre sub-station rooms aren't cleanly exposed; "Stations by Genre" shelf covers the intent for now.
+  - Library/Search still use `AlbumCard` (12dp radius) vs `AmCard` (14dp) — 2dp difference, left as-is.
+  - phone→TV keyboard relay — deferred (ask first).
+
+## Session 2026-09-08 (late) — RADIO POPULATED
+
+- **Radio tab now = Apple Music Radio grouping `168577`** (`AppShell.kt`: `TopNavTab.Radio -> Category.route("grouping-168577")`, like Videos=grouping-34). Renders via existing CategoryScreen. Fully populated: Apple Music Radio (live stations), Artists Take Over, Latest Radio Episodes, Listen/Watch Interviews, In-Studio Performances, Best Club DJ Mixes, Shows Hosted by Artists, Our Radio Hosts, All Shows, Local + International Broadcasters, Top Stations, Stations by Genre.
+- **Server**: `browse.ts /grouping/:id` special-cases id `168577` — prepends a live-station section (6 marquee `ra.` ids: Music 1 `978194965`, Hits `1498155548`, Country `1498157166`, Música Uno `1740613864`, Club `1740613859`, Chill `1740614260`), since the live-grid editorial kind 316 doesn't expand children via `include=tabs`. Kinds 316/488/391 are skipped by the generic 326/327 shelf loop.
+- Built + installed to 192.168.1.246. Only Android change = AppShell 1-liner.
+- **DEFERRED (not done, low usage this run):**
+  - Internet-radio (radio-browser `RadioSource`/old `RadioScreen`) NOT appended below Apple content yet. User wants: [Apple shelves … Local Broadcasters] → [my internet-radio section] → [More to Explore]. Needs a dedicated RadioScreen that fetches the grouping AND appends internet radio + a genre text-list drilldown (kind 391 → genre → station list, pic 3).
+  - Radio talk-shows/episodes are `ra.` → `playStation`; may not play (only music stations have working next-tracks). Live music stations = itsradio DRM (still uncracked, see memory `live-radio-probe`).
+  - **from/born artist attrs, album two-pane polish, Library/Search V2 polish, MV→artist nav bug — NOT started this run.**
+  - Watch Interviews playback bug + phone→TV keyboard relay — user said ASK before doing.
+
+## Session 2026-09-08 (evening) — ON-DEVICE: margins, nav rename + Videos/Radio, Browse V2, sign-in dead-end
+
+Fire TV reachable this session (192.168.1.246), verified live. Gradle/SDK live on the SABRENT
+external drive — **mount it** (`diskutil mount /dev/disk4s2`) before building or the build fails
+with "SDK location not found" / gradle lock errors.
+
+### Done + verified on the TV
+- **Margins fixed (all shelf pages).** Card rows now `contentPadding start=24, end=0` (V2 shelves use
+  a `Modifier.padding(start=24)` column): first card sits at the title margin, row bleeds off the
+  RIGHT edge (seamless). Titles keep their indent. Applied to Home/Browse/Genre/Search/Category/Radio
+  + both V2 screens + Skeleton. NOTE: scrolled rows still clip partial cards at x=0 (normal carousel);
+  a permanent left gutter is a possible future tweak.
+- **New-UI nav (behind flag): rename + two tabs.** `TopNavBar` takes `newUi`; when on, Listen Now→
+  **Home**, Browse→**New**, and **Videos** + **Radio** tabs appear (`TopNavTab` gained Videos/Radio).
+  Videos → `Category.route("grouping-34")` (Music Videos grouping); Radio → `Screen.Radio`. Route→tab
+  sync added for Radio. Confirmed: nav renders, all 8 tabs work, Videos/Radio open, playback works.
+- **Home V2 + Browse(New) V2** on the AmCard/Shelf kit, behind the flag (`HomeScreenV2`,
+  `BrowseScreenV2`, branched in AppShell on `newUiEnabled`). Text sizes shrunk in `AmTokens.Type`
+  (Header 22→17, Title 15→13, Subtitle 13→11) per user ("Home too big").
+- **Flag toggle**: Dev → Interface → New UI (default OFF). To flip via adb:
+  `run-as com.applemusicktv` edit `shared_prefs/player_state.xml` `<boolean name="new_ui" .../>`.
+
+### Sign-in — RESOLVED as a dead-end for the web flow (important)
+Tried a phone web sign-in: `:8080/signin` page (later HTTPS `:8443` with a bundled self-signed
+`signin.p12`) loading **MusicKit JS v3** configured with our **scraped bearer**. Result, proven by the
+user's console + HAR: **Apple origin-locks the anonymous bearer to `music.apple.com`.** MusicKit
+loads and the Apple login popup succeeds, but `authorize()` → `GET /v1/me/storefront` returns **401**
+(Origin header is our IP, not Apple's) → `webPlayerLogout` 403. Fails on Chrome desktop too (not an
+iOS/HTTPS issue). **MusicKit-web sign-in needs a PAID developer token (registered origins) — not
+possible for this project.** All of that web/HTTPS/keystore code was **removed** (InAppWebServer:
+`/signin`, `/musickit-token`, the SSL server, `signin.p12` asset, the `:8080` button; onboarding
+alert reverted). **The working sign-in is the on-TV WebView** (`AppleSignInScreen`, Dev → Account →
+Sign In) — it loads the real `music.apple.com` (same origin, no lock) and auto-reads the MUT. To
+avoid remote typing, use the **Amazon Fire TV phone app as a keyboard**. (Reference: Music Assistant's
+"free" button uses a maintainer's bundled *paid* developer token.)
+
+### Round 3 (same evening) — stage-2 redesign, done + installed
+- **3-column song grid** (`AmComponents.SongGridRow`, generic) — Apple's "Best New Songs" / "Top
+  Songs" layout: horizontally-scrolling columns of 3 song rows (art + title + subtitle). Wired into
+  **Browse V2** (shelves whose `albums.first().type == "songs"`) and **Artist V2** top songs.
+- **Artist V2 About box** — `HeaderV2("About {name}")` + `GlassSurface` bio (5 lines) on the left,
+  **GENRE** metadata on the right. FROM/BORN not shown — the data layer (`ArtistDetailState`) only has
+  `bio` + `genres`; adding FROM/BORN needs artist-attribute parsing in `/artists/:id/full` + DTO + VM.
+- **Lyric word-grow smoothness restored** — reverted from per-frame `fontSize` (relaid out the whole
+  line every frame → choppy on Fire TV) back to a **`graphicsLayer` scale** (GPU, smooth), via a new
+  `grow` param on `WordWipe`. Trade-off: the word scales over neighbours instead of nudging the line
+  (the earlier reflow ask). A both-smooth-and-nudge version would need animated space reservation.
+- **Library / Search** already use `AlbumCard` grids (4-col) — already close to Home. Full AmCard
+  swap is minor polish, not done (AlbumCard = 12dp radius vs AmCard 14 + label-above).
+
+### Round 2 (same evening) — done + installed
+- **V2 shelf cut-off fixed**: Home/Browse/Artist V2 shelves now use `LazyRow contentPadding
+  (start=24, top=6, end=0, bottom=6)` + `SectionHeader(padding start=24,end=24)` instead of a
+  column `padding(start=24)` — the column form clipped the focused first card (no room for the 1.06
+  focus scale to overflow left). This is the correct pattern for all V2 shelves.
+- **Card roundness fixed**: `AmCard` now sets `border = CardDefaults.border(focusedBorder = Border(2dp
+  white55, RoundedCornerShape(Radius.Card=14)))`. The default focus border's corners didn't match the
+  14dp art radius (the "roundness mismatch" on Home). Fixes every V2 shelf (all use AmCard).
+- **Artist V2 wired**: `ArtistDetailScreenV2` (full-bleed hero + Play/Shuffle/Station overlaid, bio,
+  top-songs list, album/featured AmCard shelves, similar-artist circles) branched in AppShell on
+  `newUiEnabled`. Text sizes shrunk in `AmTokens.Type`.
+- **Queue grab-move fixed**: it already existed (`moveQueueItem` wired) but Up escaped to the nav bar
+  — switched the moving row from `onKeyEvent` to **`onPreviewKeyEvent`** (intercepts D-pad before
+  focus search) + a `FocusRequester` re-requested on each reorder (row re-keys on move), and allowed
+  picking up the first up-next row. Interaction: long-press a queue row = pick up, Up/Down = move,
+  OK/Back = drop. **Still not discoverable** — add a visible hint/affordance.
+
+### Still open (user wants; some are new features)
+- **MV → artist nav bug**: from a music video, opening the artist "goes to Home"; artist loads on the
+  Now Playing stack. Not root-caused — needs a live repro + logcat (do NOT guess-patch nav).
+- **Accurate Apple redesigns (user gave reference photos — match these):**
+  - **Best New Songs / song shelves = 3-column GRID of song rows** (art + title + artist), not a
+    single card row. This is the `SongGridRow` from the roadmap. Applies to Browse + artist top songs.
+  - **Artist page**: About box with **FROM / BORN / GENRE** metadata on the right; Similar Artists
+    circles; full-bleed hero with ▶ + name overlaid; Top Songs as the 3-col grid. (ArtistV2 is close
+    but uses a list + no FROM/BORN/GENRE box yet.)
+  - **Album/playlist detail = two-pane**: big art left; title, editorial quote + MORE, Play/Shuffle/
+    +/···, numbered tracklist right.
+- **Whole-app V2 consistency**: Library V2, Search V2 still on the old look — swap onto AmCard/AmTokens.
+- **Radio full redesign (clarified)**: make the Radio tab look like **Browse/Videos** — populated
+  with **Apple Music radio** as card shelves (stations + radio shows, rendered like albums/video
+  cards), and the existing internet/regional radio as a section **at the bottom**. Needs an
+  Apple-radio DATA source: probe for an editorial Radio room/grouping id (same pattern as Videos =
+  `grouping-34`) and render its shelves; station cards already play via `playStation` (next-tracks).
+  Note: Apple Music 1 *live* streams are Widevine-DRM'd and not playable yet, so show the playable
+  station/show cards, not live dials. This is a feature (data + UI), not a reorder.
+- **Lyric word-grow smoothness**: the real-`fontSize` reflow (added for line-nudge) is choppier than
+  the old `graphicsLayer` scale on Fire TV. Need a smoother approach that still nudges the line
+  (e.g. GPU scale + animated space reservation, or a cheaper fontSize spec).
+- **Phone→TV keyboard relay ("my idea")**: type on phone `:8080` → inject into the on-TV sign-in
+  WebView via its `InputConnection` (works through Apple's login iframe; JS can't). Not built —
+  Amazon Fire TV app keyboard covers it for now.
+
+## Session 2026-09-08 — cache caps, shuffle/repeat memory, lyric nudge, crossfade pause, in-app sign-in, UI Phase 0
+
+**STATUS: compiles clean (`assembleDebug` BUILD SUCCESSFUL 2026-09-08), but NOT run on device** —
+the Fire TV was on a different network all session, so nothing below is verified on hardware.
+Everything type-checks and links; behaviour (especially the sign-in WebView and the lyric-nudge
+factor) still needs on-TV verification. Diagnose on the Fire TV next session.
+
+### Bug fixes (roadmap batch)
+- **Cache exceeded 150 MB → now capped.** Root cause: standalone in-app decrypt writes whole
+  `clear_<id>.mp4` files (4–65 MB each) to `cacheDir` with **no eviction** (plus `standalone_*.m3u8`
+  and MV files); Coil's 150 MB image cap never governed those, so total grew past 300 MB. New
+  `util/MediaCacheManager.trim()` LRU-evicts (mtime, byte-based) the app's media scratch — top-level
+  `cacheDir` files only, so `image_cache/` and `updates/` are untouched — never deleting the newest
+  (active) file. Called after every decrypt write (`PlayerViewModel`) and on app start (`AppleMusicApp`).
+- **User-settable cache cap** — `data/CachePreferences` (StateFlow, options Off/50/100/150/250/500/
+  1000/2000 MB, default 150). `PlayerViewModel.stepCacheCap` applies it immediately (trims on lower);
+  new **Dev → Storage → Media cache** stepper. Artwork (Coil) stays capped separately at 150 MB.
+- **Shuffle/repeat now remembered globally.** `toggleShuffle`/`toggleRepeat` persist to prefs
+  (`shuffle_on` / `repeat_mode`); restored at init + `restoreState`; `playAlbum`'s `shuffle` param now
+  defaults to the remembered state, so every album/playlist AND music-video list (`playVideos`) opens
+  in the last-chosen shuffle. Repeat already carried via state.
+- **Lyric word-grow now nudges the line.** Was a `graphicsLayer` scale (visual only — neighbours
+  didn't move). Now the active word grows via **real `fontSize`** in the FlowRow, so the rest of that
+  line reflows right to make room and settles back. Kept subtle (~5.5%), `lineHeight` fixed so it
+  swells sideways only. `WordWipe`'s `scale` param removed. (Verify no held word wraps a trailing
+  word to the next line; tune the 0.055 factor on device.)
+- **Pause during a crossfade now stops.** `pause()`/`togglePlayPause` only paused the outgoing
+  `player`; the incoming `crossfadeExo` kept playing. New `collapseCrossfade(resumePlaying)` folds the
+  crossfade to the incoming track (promotes it like the STATE_ENDED snap) and applies the play/pause
+  intent to it, so audio actually stops and resume is clean.
+
+### In-app Apple Music sign-in (automatic MUT capture)
+- New `ui/screens/AppleSignInScreen.kt` — full-screen **WebView** loading `music.apple.com/us/login`.
+  User signs in with Apple ID (2FA and all) inside the in-app browser; a JS poller extracts the
+  **media-user-token** from `document.cookie` / `localStorage` / `MusicKit.getInstance().musicUserToken`
+  and hands it back. Stored + synced via the existing `DevMenuViewModel.setMUT` → `repo.setMUT`.
+- Launch points: **Dev → Account → Sign In** AND **first-run onboarding step 1** ("Or sign in on this
+  TV" button → same WebView dialog → `OnboardingViewModel.signInWithToken`, and the existing MUT poll
+  auto-advances the step). Both full-screen Dialogs.
+- **Why WebView, verified by research:** the token lives in music.apple.com's own origin, so only a
+  surface we host can read it back (a plain external browser tab can't). Android `CookieManager` can't
+  read HttpOnly cookies, so extraction is via injected JS (which is how MusicKit itself reads it).
+- **On-device tuning points (expect to iterate):** Apple may refuse embedded WebViews — a desktop
+  Safari UA is set to get past it; MusicKit's auth popup (`window.open` → idmsa.apple.com) is routed
+  back into the same WebView via `onCreateWindow`; widen the extractor JS if the token key differs.
+  This is the least-certain piece — test the actual login end-to-end first.
+
+### UI overhaul — Phase 0 foundation + Phase 2 Home flagship (behind a flag)
+- `ui/theme/AmTokens.kt` — colour roles, radii, spacing, type ramp, focus scale.
+- `ui/components/AmComponents.kt` — `AmCard` (label-above / own-aspect art / title+subtitle),
+  `SectionHeader`, generic `Shelf`, `GlassSurface` (tinted scrim, no `Modifier.blur` < API 31).
+- **New-UI flag** (`PlayerState.newUiEnabled`, pref `new_ui`, `toggleNewUi`) — **Dev → Interface →
+  New UI (preview)**, default off. Exactly the roadmap's guardrail: flag off = current UI, zero risk.
+- `ui/screens/HomeScreenV2.kt` — Home rebuilt on `AmCard`/`SectionHeader`, same `HomeViewModel`, same
+  click routing. `AppShell` picks V2 when the flag is on, else the old `HomeScreen`. Fully revertible.
+- Still just cards + shelves; ambient wash / parallax / shared-element motion are later phases.
+
+### True no-PC audit — RESULT: functionally complete, nothing structural missing
+- Every `MusicRepository` data method has a `!useProxy` standalone branch (search, library
+  songs/albums/playlists/artists, album/artist/playlist detail + tracks, home, browse, curators,
+  rooms, multirooms, groupings, categories, genres + content, related songs/albums, lyrics, motion
+  song/playlist/card, stations, apple-status, storefront). Only auth/token/health are proxy-only and
+  they're inherently server-side (moot with no server; MUT is used on-device directly).
+- **CLAUDE.md is stale**: it says related-albums and apple-status aren't ported — both ARE
+  (`direct.relatedAlbums`, `direct.appleStatus`). Only real residual is cosmetic: the multiroom hero
+  blurb (a string|object union) is dropped standalone.
+- TODO on device: confirm the mappings actually render with the server OFF (structure is there;
+  untested paths could have field-mapping bugs). Update CLAUDE.md's "KNOWN LIMIT" once verified.
+
+### Not done / deferred — best done WITH the Fire TV in the loop (heavy UX, compile ≠ correct)
+These are intentionally left for a device session — they're visual/interaction-heavy and need
+on-TV iteration, not more blind code. Priority order for next session:
+1. **Verify everything above on the TV** (sign-in end-to-end first; then cache/shuffle/pause/lyric).
+2. **Browse V2** behind the flag (mirror `HomeScreenV2`, but Browse has spotlight + video shelves —
+   reuse `SpotlightHeroCard` + the video card; `BrowseShelf`/`BrowseViewModel` are private in
+   `BrowseScreen.kt`, so V2 goes in that file or make them `internal`).
+3. **Nav rename/expand** (Phase 3): Listen Now→Home, Browse→New, add Videos/Radio + search/settings
+   glyphs; update back-behaviour + exit-dialog strings that say "Listen Now".
+4. Two-pane album/playlist detail (Phase 4); artist full-bleed hero + bio box + similar circles.
+5. Now Playing/video chrome (Phase 5); motion — ambient wash/parallax/shared-element (Phase 6).
+- Sign-in from the :8080 phone page is NOT viable (cross-origin — the phone page can't read
+  music.apple.com's token); the in-app WebView is the route. Don't chase it.
+- Uneven vertical focus bug (needs device to repro/tune).
+- Queue editing UI (`moveQueueItem` exists), lyrics translation, autoplay/infinite mix — untouched.
+
 
 ## Session 2026-08-30 — dead-song fallback, Listen Now resilience, scroll perf (v1.2)
 
@@ -507,3 +735,175 @@ Ground-truth tool: `server/ref_key.py <songId>`.
   skip.
 - **Prefetching track 1 when an album or playlist is merely opened.** Wasted decrypts for
   browsing.
+
+---
+
+## Session 2026-09-09 (part 4) — bug batch + video-bleed dead end
+
+### FIXED (built + installed, on branch `feat/radio-artist-shazam-v2`, uncommitted)
+- **MV → "Go to Artist" jumped to Home.** Root cause (found via `AMNav`/`AMHome` traces):
+  the artist page shows a non-focusable spinner while loading, so D-pad focus escapes UP to
+  the nav bar and the SAME OK press that selected "Go to Artist" bleeds a click onto the
+  leftmost tab (Listen Now) → `onSelect(ListenNow)` → `navigate(Home)`. Same NavController
+  (nav# identical in the trace → NOT a recreation). Fix: `AppShell` records
+  `lastVideoNavAwayMs` in the video's `onArtistClick`, and `TopNavBar.onSelect` swallows any
+  select within 700 ms of it (`return@onSelect`, logs `AMHome: nav-bar select(..) swallowed`).
+  User confirms jump is gone. **RESIDUAL:** user says "focuses to home tho, doesnt open" —
+  verify the artist page actually gains focus/opens after the guard (may need the artist
+  screen to hold focus during load instead of relying on the swallow).
+- **Context-menu focus restore** (`PlaylistDetailScreen`, `AlbumDetailScreen`): per-row
+  `FocusRequester` map + `refocusId`; `dismissMenu` sets it, a `LaunchedEffect` refocuses the
+  long-pressed row after 60 ms. Closing Add-to-Queue/Play-Next returns focus to the song, not
+  the top. User confirmed queue-add works.
+- **Queue persistence**: `saveState`/`restoreState` now persist `user_queue` (was dropped on
+  restart); `addToQueue`/`playNext` call `saveState()` immediately. AND `playAlbum`/`playSong`
+  now clear `userQueue` (starting a fresh song shouldn't carry the old added items; restore
+  plays via `pendingRestore`, not these, so persistence still works). User confirmed both.
+- **Internet-radio logo**: many radio-browser stations have no `favicon`; `NowPlayingScreen`
+  now draws a tinted tile with the station initial under the (crossfaded) logo so something
+  always shows. List rows already had a 📻 fallback.
+- **Home "is gone" after updates**: Apple `/me/recommendations` 500s in streaks; a fresh
+  install has no cache, so `HomeViewModel.load()` gave up after 4 tries → empty. Now on total
+  empty-with-no-cache it keeps retrying in the background (15×, 4s→30s backoff) so Home
+  self-heals once Apple recovers. Server `home.ts` + `DirectBrowseSource` both already have
+  the moods/charts fallback.
+
+### STILL BROKEN — needs a real rethink, not another patch
+- **Video player bleeds across tabs.** Repro: NowPlaying → Radio → Videos → (auto to
+  NowPlaying) → back to Videos → the video picture is STILL rendered on the Videos tab.
+  Everything tried and FAILED to kill it reliably: audio-only rebuild on detach
+  (`MusicVideoViewModel.detachVideo`), `awaitDetach()` so unmount waits for the secure decoder
+  to release, `setKeepContentOnPlayerReset(false)` off NowPlaying, forcing the inner
+  `SurfaceView` to `GONE`/`INVISIBLE` in the `AndroidView` update lambda, unmounting the
+  PlayerView. The secure (HDCP, `setSecure(true)`) SurfaceView's SurfaceFlinger plane keeps
+  its last protected frame latched fullscreen on Fire TV regardless.
+  **USER WANTS THIS RECODED.** Proposed direction: stop the "one ExoPlayer, video keeps
+  playing across tabs" model. Options — (a) when leaving NowPlaying, fully RELEASE the video
+  player and hand its audio to the main audio ExoPlayer (no secure surface exists off
+  NowPlaying at all); or (b) only ever create the secure PlayerView while `isOnNowPlaying`, and
+  a video that isn't on NowPlaying plays audio through the normal audio path. Either removes
+  the secure surface from every non-NowPlaying tab entirely. Note the video already correctly
+  opens on NowPlaying first now (autoOpen via `videoRequest`).
+
+### Temp instrumentation still in code (remove after)
+- `AppShell`: `AMNav` OnDestinationChanged listener (logs route + `nav#` identity),
+  `AMHome` logs in `onExit` / `goToNowPlaying` / nav-bar swallow.
+- Build: `cd android && JAVA_HOME=".../Android Studio.app/Contents/jbr/Contents/Home" ./gradlew assembleDebug --no-daemon`
+  then `adb -s 192.168.1.246:5555 install -r app/build/outputs/apk/debug/app-debug.apk`.
+
+### Still queued (features, not started)
+- Lyrics translation (server translate + NowPlaying toggle) — user said do it, not yet done.
+- Artist video hero + collapsing hero that resets on scroll.
+- Radio/Videos card-size + accent consistency with Home/New.
+- Soft margins (fade under top bar, no hard cutoff).
+
+---
+
+## Session 2026-09-09 (part 5) — artist long-press, focus, MV regression revert
+
+### DONE in code (NOT yet built — SABRENT was unmounted at build time; rebuild pending)
+- **Artist page long-press context menu** (`ArtistDetailScreenV2`): `SongGridRow`/`SongCell`
+  (`AmComponents.kt`) gained an `onLongClick`; Top Songs long-press opens a Dialog menu
+  (Play Next / Add to Queue / Add to… / Go to Album) with 500 ms click-block + focus. `AddToDialog`
+  reused. New helper `ArtistMenuItem`.
+- **MV → artist "focuses on Home, doesn't open"**: artist hero **Play button** now grabs focus
+  ~120 ms after Top Songs load (`heroPlayFocus`, `HeroCircle` gained a `focusRequester` param).
+  Combined with the part-4 nav-bar swallow, the page opens AND focus lands on Play.
+- **Reverted the SurfaceView-`GONE` bleed attempt** in `AppShell` AndroidView update lambda — it
+  did NOT reap the plane and risked faulting the live secure decoder (suspected cause of the "MVs
+  fail to play a lot now" regression). Back to `visibility=VISIBLE` + `setKeepContentOnPlayerReset(isOnNowPlaying)`.
+
+### Still NOT done (usage ran low) — requested this session
+- **Long-press context menu EVERYWHERE** (user: "ADD IT EVERYWHERE AGAIN"): V2 lost it on
+  Home/New **spotlight** cards, **Videos tab** MV cards, Browse `AmCard`s. Needs a shared
+  song/video/album context-menu triggered from `AmCard` + the video shelves (CategoryScreen video
+  rows, BrowseScreenV2, HomeScreenV2). Scope: add `onLongClick` to `AmCard` and the 16:9 video
+  Surfaces, route to a shared menu. MV cards want Go to Artist / Add to Queue etc.
+- **"Couldn't add to playlist" error**: not reproduced in logs yet (scrolled off). Check
+  `AddToDialog` → `playerVm` add-to-playlist → server `POST /api/library/playlists/:id/tracks`
+  (or the library add route). Likely a `p.` vs `pl.` id or MUT/library-write issue.
+- **MV audio-only rebuild is slow** (detach on leaving Now Playing): user wants it optimised.
+  It rebuilds from on-disk playlists (no network) but still re-inits ExoPlayer+DRM. Consider
+  track-disable-without-rebuild ONLY paired with the video-model recode, or caching the audio-only
+  MediaSource.
+- **Queued features (never started)**: lyrics translation, artist video hero + collapsing hero,
+  radio/videos card consistency, soft margins.
+
+---
+
+## Session 2026-09-09 (part 6) — long-press everywhere, add-to-playlist fix, lyrics translation
+
+### DONE + built + installed (branch feat/radio-artist-shazam-v2, uncommitted)
+- **Artist page long-press** context menu (Top Songs) — Play Next / Add to Queue / Add to… /
+  Go to Album. `SongGridRow`/`SongCell` (`AmComponents.kt`) gained `onLongClick`.
+- **MV → artist focus**: artist hero **Play button** grabs focus ~120 ms after Top Songs load
+  (`heroPlayFocus`, `HeroCircle` `focusRequester` param) — opens AND focuses Play, not the nav bar.
+- **Reverted the SurfaceView-GONE bleed attempt** (was the likely "MVs fail to play a lot" regression).
+- **Add-to-playlist error**: `MusicRepository.addToPlaylist` now sends the correct resource `type`
+  — `library-songs`/`library-music-videos` for `i.`/`l.` ids, else `songs`/`music-videos`. Sending
+  "songs" for a library id was 404ing → "Couldn't add". Error toast now shows the real message
+  (`AMAddToPl` log) if it still fails.
+- **Long-press context menu EVERYWHERE** via a shared `CardContextMenu` (`AmComponents.kt`):
+  adapts options to item type (song / music-video / album·playlist). Wired into:
+  - **CategoryScreen** (Videos tab + category shelves): AmCard + 16:9 video Surfaces.
+  - **BrowseScreenV2** ("New"): spotlight hero cards (`SpotlightHeroCard` got `onLongClick`),
+    video rows, regular shelves, song grids. New `onArtistClick` param (wired in AppShell).
+  - Home already shuffled playlists on long-press (left as-is).
+- **Lyrics translation** (server + client):
+  - Server `POST /api/translate` (`server/src/routes/translate.ts`, registered in index.ts) —
+    keyless Google `translate_a/single`, batches all lines in one call, in-memory cache, falls
+    back to originals on failure. **Server must reload** (bun --watch picks it up).
+  - Client: `ProxyApi.translate` + `TranslateRequest/Response`, `MusicRepository.translateLines`,
+    `PlayerViewModel.toggleTranslateLyrics()` + `translateLyrics`/`lyricsTranslation` state
+    (persisted `translate_lyrics` pref; target = device language). Now Playing ··· menu →
+    "Translate Lyrics" toggle; translated line renders italic/dim under each lyric line (both the
+    side panel and full-screen lyrics). Proxy-only (no offline translation).
+
+### Build/infra note
+- **Main disk filled to 0 B mid-session** — build died with "No space left on device". Freed via:
+  `pkill -f gradle`, `tmutil thinlocalsnapshots / … 4`, and clearing `~/Library/Caches/{Google,Homebrew,pip,node-gyp}`
+  (~1.5 GB). Data volume is ~207 GB used / ~1.6 GB free now — **user is very low on disk**; builds
+  will keep failing until they free real space. Deleted `android/app/build` (regenerable).
+
+### Still queued (NOT done)
+- **Soft margins** (content fades under the top bar, no hard cutoff): needs the NavHost top-padding
+  removed and per-screen top contentPadding + a top fade scrim across Home/Browse/Radio/Category/
+  detail screens. Too broad to do blind safely — scoped for next session.
+- **Artist video hero** + collapsing hero that resets on scroll (part of artist polish).
+- **Radio/Videos card-size + accent consistency** with Home/New (subjective; needs on-device eyeballing).
+- **MV audio-only rebuild is slow** — tied to the video-model recode (see video-surface-bleed memory).
+- **Video bleed across tabs** — still needs the recode.
+
+---
+
+## Session 2026-09-09 (part 7) — one context menu, MV audio/queue, Library videos, V2 default
+
+All committed + pushed to `origin/feat/radio-artist-shazam-v2`.
+
+### DONE
+- **Single context menu everywhere** (`AmContextMenu` in `AmComponents.kt`): artwork header +
+  subtitle + divider + icon/label rows. Library/Album/Playlist/Artist/Category/Browse/Search all
+  route through it. `AmMenuAction(label, glyph, destructive)`. See `DESIGN_LANGUAGE.md` +
+  memory `canonical-context-menu`.
+  - **Long-hold no longer auto-selects**: a held OK auto-repeats KeyDowns, so the menu now consumes
+    ALL key events until the first KeyUp (the long-press release), then arms. Robust at any hold length.
+  - Artwork resolves Apple's `{w}x{h}bb.{f}` template inside the menu (Library rows were blank before).
+  - Card menus (New/Browse/Category) resolve artist/album ids via `lookupSongIds` so **Go to Artist**
+    shows there too.
+  - Search menu gained Create Station + Go to Artist/Album (id resolution).
+- **MV audio quality**: pick highest-bitrate audio rendition, not the one tied to the 480p video tier
+  (`AppleDirectClient.buildMaster`). Skips atmos/binaural.
+- **MV Up-Next panel**: auto-scrolls to the cursor; shows current + upcoming only (drops played);
+  shows userQueue (Play Next / Add to Queue) as a "Playing Next" section.
+- **Library → Videos tab**: `/api/library/music-videos` + client wiring + 16:9 grid → plays on Now Playing.
+- **V2 UI is now the default** (`new_ui` pref defaults true); Dev toggle still flips to V1.
+- **Add-to-playlist type fix**, **lyrics translation** (proxy `/api/translate`).
+
+### STILL OPEN (tracked, not done — need real work, not wrap-up patches)
+- **Video bleed to Library/Videos** — NOT a z-order flag (already `setZOrderMediaOverlay(false)`).
+  It's `setSecure(true)` (needed for HD; without it → 480p) latching its last protected frame. The
+  real cure is the video-decoder-lifecycle recode (see memory `video-surface-bleed`). Do not rush.
+- **Lyrics translation on-device (no proxy)** — needs ML Kit Translate (`com.google.mlkit:translate`):
+  offline after a one-time per-language model download. Dependency + model-download UX; a real change.
+- **MV queue from a mixed playlist** already unifies (row onClick → `playAlbum(tracks, idx)`), so songs
+  DO show. The Videos-tab launch is videos-only by nature. Retest if songs seem missing.

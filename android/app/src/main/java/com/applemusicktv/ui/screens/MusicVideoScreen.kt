@@ -55,13 +55,27 @@ fun MusicVideoScreen(
     showOnScreenControls: Boolean = false,   // Google TV remotes: draw prev/play/next on screen
     queue: List<com.applemusicktv.data.model.Song> = emptyList(),
     queueIndex: Int = 0,
+    userQueue: List<com.applemusicktv.data.model.Song> = emptyList(),
     onPickQueueItem: (Int) -> Unit = {},
+    onPickUserQueue: (Int) -> Unit = {},
     focusRequester: FocusRequester,
 ) {
     val state by vm.state.collectAsState()
     val cues by vm.cues.collectAsState()
     val showQueue by vm.showQueue.collectAsState()
-    var queueCursor by remember(showQueue) { mutableIntStateOf(queueIndex.coerceAtLeast(0)) }
+    // Flat list of navigable targets in VISUAL order: current track, then the userQueue (Play-Next)
+    // rows, then the upcoming queue. Encoding: value >= 0 is a queue index; value < 0 is a userQueue
+    // index encoded as -(uqIndex + 1). The cursor is an index INTO this list, so D-pad Up/Down can
+    // land on the added songs too (before, the cursor only walked the main queue and skipped them).
+    val navTargets = remember(queue, queueIndex, userQueue.size) {
+        buildList {
+            if (queueIndex in queue.indices) add(queueIndex)
+            userQueue.indices.forEach { add(-(it + 1)) }
+            for (i in queueIndex + 1 until queue.size) add(i)
+        }
+    }
+    var queueCursor by remember(showQueue) { mutableIntStateOf(0) }
+    val selTarget = navTargets.getOrNull(queueCursor)
 
     var controls by remember { mutableStateOf(true) }
     var focus by remember { mutableStateOf(MvTarget.SCRUB) }
@@ -127,11 +141,16 @@ fun MusicVideoScreen(
                     when (ev.key) {
                         Key.Back, Key.Menu -> { vm.hideQueue(); poke(); true }
                         Key.DirectionUp -> { if (queueCursor > 0) queueCursor--; true }
-                        Key.DirectionDown -> { if (queueCursor < queue.size - 1) queueCursor++; true }
-                        Key.DirectionCenter, Key.Enter -> { onPickQueueItem(queueCursor); vm.hideQueue(); poke(); true }
+                        Key.DirectionDown -> { if (queueCursor < navTargets.lastIndex) queueCursor++; true }
+                        Key.DirectionCenter, Key.Enter -> {
+                            navTargets.getOrNull(queueCursor)?.let { t ->
+                                if (t >= 0) onPickQueueItem(t) else onPickUserQueue(-t - 1)
+                            }
+                            vm.hideQueue(); poke(); true
+                        }
                         else -> true
                     }
-                } else if (ev.key == Key.Menu) { queueCursor = queueIndex.coerceAtLeast(0); vm.toggleQueue(); true }
+                } else if (ev.key == Key.Menu) { queueCursor = 0; vm.toggleQueue(); true }
                 else if (picker != MvPicker.NONE) {
                     val count = if (picker == MvPicker.AUDIO) auds.size else qualities.size
                     when (ev.key) {
@@ -146,7 +165,10 @@ fun MusicVideoScreen(
                         else -> true
                     }
                 } else when (ev.key) {
-                    Key.Back -> if (controls) { controls = false; true } else { onExit(); true }
+                    // Back always leaves in one press. (It used to hide the transport controls first
+                    // and only exit on a second Back — but the controls show on any remote input, so
+                    // it always felt like a double-back to leave the video.)
+                    Key.Back -> { onExit(); true }
                     Key.DirectionUp -> { poke(); scrub = null; moveRow(-1) }
                     Key.DirectionDown -> { poke(); scrub = null; moveRow(1) }
                     Key.DirectionLeft -> {
@@ -281,6 +303,7 @@ fun MusicVideoScreen(
             }
         }
 
+        // (QueueRow is defined below.)
         // ── Up-Next queue panel (right side) — translucent, rounded, slides in ──
         AnimatedVisibility(
             visible = showQueue,
@@ -289,30 +312,50 @@ fun MusicVideoScreen(
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             Box(Modifier.fillMaxHeight().padding(14.dp).width(360.dp).clip(RoundedCornerShape(22.dp)).background(Color(0xF21C1C1E)).padding(vertical = 22.dp)) {
-                LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                val queueListState = androidx.compose.foundation.lazy.rememberLazyListState()
+                // Order: "Up Next" header, the CURRENT track, then "Playing Next" (userQueue — the
+                // Play-Next / Add-to-Queue songs, which genuinely play before the rest), then the
+                // upcoming queue. userQueue sits right UNDER the current track so added songs are
+                // always visible — the old layout put it above the current track and the auto-scroll
+                // (which pins the current track near the top) pushed it off the top of the panel, so
+                // added songs were there but never on screen.
+                val uqBlockRows = if (userQueue.isNotEmpty()) userQueue.size + 2 else 0  // label + rows + spacer
+                // Item index of the current track = 1 (after the header). Keep it near the top so the
+                // "Playing Next" block below it is visible.
+                LaunchedEffect(queueCursor, showQueue, userQueue.size) {
+                    if (!showQueue) return@LaunchedEffect
+                    // Map the selected target to its LazyColumn item index (0 header, 1 current,
+                    // 2 "Playing Next" label, 3.. userQueue rows, then upcoming after the spacer).
+                    val item = when {
+                        selTarget == null -> 0
+                        selTarget == queueIndex -> 1
+                        selTarget < 0 -> 3 + (-selTarget - 1)
+                        else -> 2 + uqBlockRows + (selTarget - queueIndex - 1)
+                    }
+                    runCatching { queueListState.animateScrollToItem(item.coerceAtLeast(0)) }
+                }
+                LazyColumn(state = queueListState, contentPadding = PaddingValues(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     item {
                         Text("Up Next", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold,
                             letterSpacing = (-0.3).sp, modifier = Modifier.padding(bottom = 14.dp))
                     }
-                    itemsIndexed(queue) { i, song ->
-                        val sel = i == queueCursor
-                        val nowPlaying = i == queueIndex
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                .background(if (sel) Color(0x26FFFFFF) else Color.Transparent)
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            if (song.isMusicVideo)
-                                Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 5.dp, vertical = 1.dp)) {
-                                    Text("MV", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                                }
-                            Column(Modifier.weight(1f)) {
-                                Text(song.title, color = if (nowPlaying) Color(0xFFFA233B) else Color.White, fontSize = 14.sp,
-                                    fontWeight = if (nowPlaying) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
-                                Text(song.artistName, color = Color(0x99FFFFFF), fontSize = 11.sp, maxLines = 1)
-                            }
+                    // Current track.
+                    if (queueIndex in queue.indices) {
+                        item(key = "cur_${queue[queueIndex].id}") { QueueRow(queue[queueIndex], nowPlaying = true, selected = selTarget == queueIndex) }
+                    }
+                    // Playing Next (userQueue) — right under the current track, now cursor-selectable.
+                    if (userQueue.isNotEmpty()) {
+                        item {
+                            Text("Playing Next", color = Color(0x99FFFFFF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.5.sp, modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
                         }
+                        itemsIndexed(userQueue, key = { i, s -> "uq_${s.id}_$i" }) { j, song -> QueueRow(song, nowPlaying = false, selected = selTarget == -(j + 1)) }
+                        item { Spacer(Modifier.height(8.dp)) }
+                    }
+                    // Upcoming queue (after the current track).
+                    items(maxOf(0, queue.size - queueIndex - 1)) { rel ->
+                        val i = queueIndex + 1 + rel
+                        QueueRow(queue[i], nowPlaying = false, selected = selTarget == i)
                     }
                 }
             }
@@ -337,6 +380,26 @@ fun MusicVideoScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun QueueRow(song: com.applemusicktv.data.model.Song, nowPlaying: Boolean, selected: Boolean) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(if (selected) Color(0x26FFFFFF) else Color.Transparent)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (song.isMusicVideo)
+            Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFFA233B)).padding(horizontal = 5.dp, vertical = 1.dp)) {
+                Text("MV", fontSize = 8.sp, color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        Column(Modifier.weight(1f)) {
+            Text(song.title, color = if (nowPlaying) Color(0xFFFA233B) else Color.White, fontSize = 14.sp,
+                fontWeight = if (nowPlaying) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+            Text(song.artistName, color = Color(0x99FFFFFF), fontSize = 11.sp, maxLines = 1)
         }
     }
 }

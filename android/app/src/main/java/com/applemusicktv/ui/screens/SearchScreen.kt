@@ -77,12 +77,12 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
     // carry their own horizontal contentPadding so rows bleed to the screen edge.
     Column(modifier = modifier.fillMaxSize().padding(top = 28.dp)) {
         Text("Search", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
-            modifier = Modifier.padding(start = 48.dp))
+            modifier = Modifier.padding(start = 24.dp))
         Spacer(Modifier.height(10.dp))
 
         if (editing) {
             Row(
-                modifier = Modifier.padding(start = 48.dp).fillMaxWidth(0.5f).height(40.dp)
+                modifier = Modifier.padding(start = 24.dp).fillMaxWidth(0.5f).height(40.dp)
                     .background(Color(0xFF1C1C1E), RoundedCornerShape(10.dp))
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -126,7 +126,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             }
         } else {
             Row(
-                modifier = Modifier.padding(start = 48.dp).fillMaxWidth(0.5f),
+                modifier = Modifier.padding(start = 24.dp).fillMaxWidth(0.5f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -164,25 +164,27 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
 
         val ms = menuSong
         if (ms != null) {
-            val firstFocus = remember { FocusRequester() }
-            LaunchedEffect(ms) {
-                kotlinx.coroutines.delay(800)
-                clickBlocked = false
-                runCatching { firstFocus.requestFocus() }
-            }
-            androidx.compose.ui.window.Dialog(onDismissRequest = { menuSong = null }) {
-                Column(
-                    Modifier.width(320.dp).clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF1C1C1E)).padding(vertical = 4.dp),
-                ) {
-                    Text(ms.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium,
-                        maxLines = 1, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                    SearchContextItem("▶", "Play Next", { if (!clickBlocked) { playerVm.playNext(ms); menuSong = null } }, Modifier.focusRequester(firstFocus))
-                    SearchContextItem("+", "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(ms); menuSong = null } })
-                    if (ms.artistId != null) SearchContextItem("♪", "Go to Artist", { if (!clickBlocked) { onArtistClick(ms.artistId); menuSong = null } })
-                    if (ms.albumId != null) SearchContextItem("◉", "Go to Album", { if (!clickBlocked) { onAlbumClick(ms.albumId); menuSong = null } })
+            // Search songs arrive without artist/album ids — resolve them so Go to Artist/Album show.
+            LaunchedEffect(ms.id) {
+                if (ms.artistId == null || ms.albumId == null) {
+                    val (aId, alId) = playerVm.lookupSongIds(ms.id)
+                    if (aId != null || alId != null) menuSong = ms.copy(artistId = aId ?: ms.artistId, albumId = alId ?: ms.albumId)
                 }
             }
+            com.applemusicktv.ui.components.AmContextMenu(
+                title = ms.title,
+                subtitle = ms.artistName,
+                artworkUrl = ms.artworkUrl,
+                isVideoArt = ms.type.contains("music-video"),
+                onDismiss = { menuSong = null },
+                actions = buildList {
+                    add(com.applemusicktv.ui.components.AmMenuAction("Play Next", com.applemusicktv.ui.components.Glyph.PLAY_NEXT) { playerVm.playNext(ms); menuSong = null })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", com.applemusicktv.ui.components.Glyph.QUEUE_ADD) { playerVm.addToQueue(ms); menuSong = null })
+                    add(com.applemusicktv.ui.components.AmMenuAction("Create Station", com.applemusicktv.ui.components.Glyph.RADIO) { playerVm.createSongStation(ms); menuSong = null })
+                    ms.artistId?.let { aid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", com.applemusicktv.ui.components.Glyph.ARTIST) { onArtistClick(aid); menuSong = null }) }
+                    ms.albumId?.let { alid -> add(com.applemusicktv.ui.components.AmMenuAction("Go to Album", com.applemusicktv.ui.components.Glyph.ALBUM) { onAlbumClick(alid); menuSong = null }) }
+                },
+            )
         }
 
         Spacer(Modifier.height(16.dp))
@@ -193,7 +195,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             }
             state.results != null && (state.results!!.songs.isNotEmpty() || state.results!!.albums.isNotEmpty() || state.results!!.artists.isNotEmpty() || state.results!!.playlists.isNotEmpty() || state.results!!.curators.isNotEmpty()) -> {
                 val results = state.results!!
-                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 4.dp, bottom = 102.dp)) {
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 102.dp)) {
                     // Top Results — the strongest hit of each kind up front, the way Apple Music leads
                     // its search page. Editorial playlists first (what the user missed), then artist,
                     // album and the #1 song, so the best match is one focus move away.
@@ -372,7 +374,7 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
             state.query.length < 2 -> {
                 // Category tiles + recents when not searching
                 if (state.categories.isNotEmpty() || recents.isNotEmpty()) {
-                    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 4.dp, bottom = 102.dp)) {
+                    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 102.dp)) {
                         // Recent searches first — retyping on a remote is the slow part.
                         if (recents.isNotEmpty()) {
                             item {

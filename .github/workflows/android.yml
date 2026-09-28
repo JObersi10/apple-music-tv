@@ -31,7 +31,7 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Provide default proxy URL for CI build
         run: echo "proxyBaseUrl=http://10.0.2.2:3000/" > local.properties
