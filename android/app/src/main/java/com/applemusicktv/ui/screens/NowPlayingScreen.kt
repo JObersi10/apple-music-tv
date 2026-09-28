@@ -497,9 +497,10 @@ fun NowPlayingScreen(
             var rightFocused by remember { mutableStateOf(false) }
             val hintAlpha by animateFloatAsState(
                 if (state.showNowPlayingInfo && rightFocused) 1f else 0f, tween(250), label = "panelHint")
-            // Fade the whole right panel (lyrics, "No Lyrics Found", or queue) out on idle, like the
-            // rest of the chrome — the user wants a clean art-only idle state.
-            Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = chromeAlpha }) {
+            // Real lyrics are content — they stay put on idle. The queue and the "No Lyrics Found"
+            // message are chrome, so they fade out with the rest on idle.
+            val showingLyrics = !showQueue && state.lyrics.isNotEmpty()
+            Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (showingLyrics) 1f else chromeAlpha }) {
                 val label = when {
                     state.isLiveRadio -> ""       // live radio has no queue/lyrics panel
                     showQueue -> "Queue  •  Menu = Lyrics"
@@ -536,9 +537,9 @@ fun NowPlayingScreen(
                             fontScale = state.lyricsScale,
                             translations = state.lyricsTranslation,
                         )
-                    } else {
-                        // Lyrics view, but this song has none — say so in the middle (the queue is one
-                        // Menu press away). Fades on idle with the rest of the panel.
+                    } else if (state.lyricsLoaded) {
+                        // Lyrics view, fetch finished, and this song genuinely has none — say so in the
+                        // middle (queue is one Menu press away). Only after loading, never while fetching.
                         Text(
                             "No Lyrics Found",
                             fontSize = 16.sp,
@@ -547,6 +548,7 @@ fun NowPlayingScreen(
                             modifier = Modifier.align(Alignment.Center),
                         )
                     }
+                    // else: still fetching lyrics — show nothing (no premature "No Lyrics Found").
                 }
             }
         }
@@ -1669,24 +1671,31 @@ private fun WordWipe(
     val liftPx = with(androidx.compose.ui.platform.LocalDensity.current) { (2.5f + 4.5f * emphasis).dp.toPx() }
     val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 14f) else null
 
-    // Per-letter rising wave for slow/held words: leading letters rise first and stay up, trailing
-    // letters follow as the fill sweeps across — "highest first letter, then the next", Apple-style.
+    // Per-letter rising wave for slow/held words: each letter lifts as the fill reaches it and holds
+    // up, leading letters first — "highest first letter, then the next", Apple-style. Built as ONE
+    // AnnotatedString with per-letter BaselineShift so the word keeps its normal kerning (rendering
+    // each letter as a separate Text spaced the word out — that was the "stretch").
     if (isCurrent && emphasis > 0.5f && text.trim().length > 3) {
         val n = text.length.coerceAtLeast(1)
-        val head = f * n            // fill position in letters
-        Row {
+        val head = f * n            // fill position, in letters
+        val ann = buildAnnotatedString {
             text.forEachIndexed { idx, ch ->
-                val local = (head - idx).coerceIn(0f, 1f)   // 0 → not yet, 1 → fully risen (and held)
+                val local = (head - idx).coerceIn(0f, 1f)          // 0 → not yet, 1 → fully risen (held)
+                val eased = local * local * (3f - 2f * local)      // smoothstep — no sharp corner
+                val bloom = kotlin.math.sin(local.coerceIn(0f, 1f) * Math.PI.toFloat())
                 val sungHere = idx < head
-                Text(
-                    ch.toString(),
-                    modifier = Modifier.graphicsLayer { translationY = -liftPx * local },
-                    style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight,
-                        letterSpacing = (-0.4).sp, color = if (sungHere) sungColor else unsungColor,
-                        shadow = if (glow != null && local > 0.4f) glow else null),
-                )
+                val sh = if (glowAlpha > 0f && bloom > 0.05f)
+                    Shadow(Color.White.copy(alpha = glowAlpha * bloom), blurRadius = 14f) else null
+                pushStyle(SpanStyle(
+                    color = if (sungHere) sungColor else unsungColor,
+                    baselineShift = androidx.compose.ui.text.style.BaselineShift(0.16f * eased),
+                    shadow = sh,
+                ))
+                append(ch.toString())
+                pop()
             }
         }
+        Text(ann, style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp))
         return
     }
 
