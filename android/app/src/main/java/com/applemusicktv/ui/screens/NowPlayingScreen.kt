@@ -881,7 +881,11 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
         factory = { ctx ->
             androidx.media3.ui.PlayerView(ctx).apply {
                 useController = false
-                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                // FILL (not ZOOM): both the cover box and Apple's motion art are square, so filling the
+                // frame exactly is distortion-free — and unlike ZOOM it forces the inner SurfaceView to
+                // the full frame size immediately. ZOOM left the surface anchored top-left, smaller than
+                // the box, for a beat after a fast skip → black gap on the right/bottom.
+                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                 player = exo
             }
@@ -1568,7 +1572,7 @@ private fun LyricsPanel(
                         fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
                         color = Color.White.copy(alpha = trAlpha)),
                     modifier = Modifier.fillMaxWidth()
-                        .padding(start = 18.dp, end = 16.dp, top = 5.dp, bottom = 6.dp),
+                        .padding(start = 6.dp, end = 16.dp, top = 5.dp, bottom = 6.dp),
                 )
             }
         }
