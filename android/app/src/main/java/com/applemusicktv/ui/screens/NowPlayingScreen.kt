@@ -1633,21 +1633,15 @@ private fun WordWipeLine(
                 isCurrent -> ((progressMs - word.startMs).toFloat() / dur).coerceIn(0f, 1f)
                 else      -> 0f
             }
-            // Smooth sine swell — grows to a peak mid-word then eases back to original size by the
-            // end. Sine (not a linear triangle) keeps it from reading as shake. Slow/held words
-            // swell + glow more; fast words stay flat.
-            //
-            // Growth is applied as REAL font size (not a graphicsLayer scale), so the word takes up
-            // more width in the FlowRow and the rest of THIS line reflows to the right to make room,
-            // then settles back as the word shrinks — the Apple-style nudge. Kept subtle (~5%) so a
-            // held word never bumps a trailing word onto the next line.
-            val slow  = (dur.coerceIn(300L, 1600L) - 300L) / 1300f
-            val pulse = if (isCurrent) kotlin.math.sin(frac * Math.PI.toFloat()).coerceIn(0f, 1f) else 0f
-            val grow  = 1f + 0.055f * slow * pulse
-            val glowA = if (isCurrent && dur > 700L) 0.34f * pulse * slow else 0f
+            // Apple Music web (see the pasted amp-lyrics DOM): each sung word RISES a few px
+            // (transform translateY) as its gradient fills, and holds up while the line is current —
+            // NOT a scale bounce. Every word rises at the same speed; the AMOUNT differs by how long the
+            // word is held (longer word → a bit more lift). Slow/held words get a per-letter rising wave.
+            val emph  = ((dur - 300f) / 1300f).coerceIn(0f, 1f)   // 0 (short) .. 1 (long/held)
+            val glowA = when { isCurrent -> 0.30f * frac * emph; sung -> 0.30f * emph; else -> 0f }
             WordWipe(
                 text  = word.text + if (i < words.lastIndex) " " else "",
-                frac  = frac, glowAlpha = glowA, grow = grow,
+                frac  = frac, sung = sung, isCurrent = isCurrent, emphasis = emph, glowAlpha = glowA,
                 fontSize = fontSize, lineHeight = lineHeight, weight = weight,
                 sungColor = sungColor, unsungColor = unsungColor,
             )
@@ -1659,8 +1653,10 @@ private fun WordWipeLine(
 private fun WordWipe(
     text: String,
     frac: Float,
+    sung: Boolean,
+    isCurrent: Boolean,
+    emphasis: Float,
     glowAlpha: Float,
-    grow: Float = 1f,
     fontSize: androidx.compose.ui.unit.TextUnit = 26.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 32.sp,
     weight: FontWeight = FontWeight.Bold,
@@ -1668,8 +1664,34 @@ private fun WordWipe(
     unsungColor: Color = Color(0xFF76767C),
 ) {
     val f = frac.coerceIn(0f, 1f)
-    // Soft left→right sweep: a feathered gradient edge instead of a hard clip line,
-    // so the sung/unsung boundary reads as a smooth blur rather than a moving cut.
+    // Lift amount: a few px, more for longer-held words. Same rise SPEED for all (driven by frac);
+    // holds up once sung (amt = 1) while the line stays current.
+    val liftPx = with(androidx.compose.ui.platform.LocalDensity.current) { (2.5f + 4.5f * emphasis).dp.toPx() }
+    val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 14f) else null
+
+    // Per-letter rising wave for slow/held words: leading letters rise first and stay up, trailing
+    // letters follow as the fill sweeps across — "highest first letter, then the next", Apple-style.
+    if (isCurrent && emphasis > 0.5f && text.trim().length > 3) {
+        val n = text.length.coerceAtLeast(1)
+        val head = f * n            // fill position in letters
+        Row {
+            text.forEachIndexed { idx, ch ->
+                val local = (head - idx).coerceIn(0f, 1f)   // 0 → not yet, 1 → fully risen (and held)
+                val sungHere = idx < head
+                Text(
+                    ch.toString(),
+                    modifier = Modifier.graphicsLayer { translationY = -liftPx * local },
+                    style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight,
+                        letterSpacing = (-0.4).sp, color = if (sungHere) sungColor else unsungColor,
+                        shadow = if (glow != null && local > 0.4f) glow else null),
+                )
+            }
+        }
+        return
+    }
+
+    // Normal word: feathered left→right gradient wipe + rise-and-hold lift for the whole word.
+    val amt = when { sung -> 1f; isCurrent -> f; else -> 0f }
     val feather = 0.22f
     val lo = (f - feather).coerceIn(0f, 1f)
     val hi = (f + feather).coerceIn(0f, 1f)
@@ -1678,16 +1700,9 @@ private fun WordWipe(
         f >= 1f -> SolidColor(sungColor)
         else -> Brush.horizontalGradient(0f to sungColor, lo to sungColor, hi to unsungColor, 1f to unsungColor)
     }
-    // blurRadius 14, not 32: a blurred text shadow is recorded into the display list every frame the
-    // current word swells, and a 32px blur is a costly record on Fire TV. 14 still reads as a soft
-    // glow but roughly quarters the blur cost.
-    val glow = if (glowAlpha > 0f) Shadow(Color.White.copy(alpha = glowAlpha), blurRadius = 14f) else null
     Text(
         text,
-        // Growth rides a graphicsLayer SCALE (GPU, no per-frame relayout) — smoother on Fire TV than
-        // animating fontSize, which relaid out the whole line every frame and read as choppy. Trade-off:
-        // the word scales over its neighbours instead of nudging the line (revisit if the nudge matters).
-        modifier = if (grow != 1f) Modifier.graphicsLayer { scaleX = grow; scaleY = grow } else Modifier,
+        modifier = if (amt > 0f) Modifier.graphicsLayer { translationY = -liftPx * amt } else Modifier,
         style = TextStyle(fontSize = fontSize, fontWeight = weight, lineHeight = lineHeight, letterSpacing = (-0.4).sp, brush = brush, shadow = glow),
     )
 }
