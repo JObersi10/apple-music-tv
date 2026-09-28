@@ -48,7 +48,7 @@ GitHub Actions (`.github/workflows/android.yml`) builds the debug APK on every p
 - Setting MUT via phone web server (8080) also POSTs to proxy server (`repo.syncMUTToServer`)
 - Bearer JWT scraped from music.apple.com at server startup AND on `/auth/status` call. **Auto-refreshed every 12h** (`ensureBearer` in `auth.ts` — staleness check against `bearerScrapedAt`). Call `invalidateBearer()` to force immediate re-scrape (done automatically on 401/403 from Apple).
 - Storefront auto-detected from `/v1/me/storefront` when MUT is set — cached in `server/src/auth.ts`
-- **How user sets MUT**: Fire TV runs HTTP server on port 8080. Open `http://<FireTV-IP>:8080` on phone, paste token
+- **How user sets MUT**: Fire TV runs HTTP server on port 8080. Open `http://<FireTV-IP>:8080` on phone, paste token. Easiest way to obtain the token: the companion phone app **AM MUT Extractor** (separate repo: https://github.com/JObersi10/am-mut-extractor) — WebView Apple Music login on the phone → Copy token → paste into :8080. Built because on-TV WebView sign-in is unreliable (Amazon WebView keyboard mangles password fields); the in-app "Connect to Apple Music" onboarding flow exists but the phone extractor is the reliable path.
 - **MUT expiry notification**: `authErrorFlow` in `MusicRepository` emits on HTTP 401 → `PlayerViewModel` fires an Android system notification (channel `am_alerts`, id 42) with the actual device IP in the body
 
 ## Playback

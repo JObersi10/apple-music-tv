@@ -1,5 +1,8 @@
 # MUT Flow — Search, Library, Playlist Tracks
 
+> **Getting a MUT:** the user pastes it on the `:8080` phone page. Easiest source is the companion
+> phone app [AM MUT Extractor](https://github.com/JObersi10/am-mut-extractor) (WebView login → copy token).
+
 ## Where MUT lives
 
 - **Android**: `MutPreferences` (SharedPreferences). OkHttp interceptor in `NetworkModule` adds `X-Music-User-Token` header to every Retrofit request automatically.

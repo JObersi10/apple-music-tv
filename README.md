@@ -62,6 +62,7 @@
    ```
    (Or use a sideload app like Downloader with the release URL.)
 3. **Add your Music-User-Token** — open `http://<TV_IP>:8080` on your phone and paste it in. [How to find your token →](docs/TECHNICAL.md#getting-your-music-user-token)
+   Easiest way to get the token: the companion phone app **[AM MUT Extractor](https://github.com/JObersi10/am-mut-extractor)** — sign into Apple Music on your phone (where the keyboard works), copy the token, paste it here.
 
 Standalone mode needs no server. The optional PC proxy path is described in the [technical guide](docs/TECHNICAL.md#optional-pc-proxy-server).
 
