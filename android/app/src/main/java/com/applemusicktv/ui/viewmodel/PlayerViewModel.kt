@@ -1051,7 +1051,20 @@ class PlayerViewModel @Inject constructor(
                     if (_state.value.lyrics.isNotEmpty() || _state.value.currentSong?.id != song.id) return@launch
                 }
             }
-            loadMotion(song.id)
+            // Motion art has the same cold-start problem: a single fetch before the server/bearer are
+            // ready fails and never retries, so motion only appeared after skipping away and back.
+            // Retry on FAILURE only (a genuine "no motion" is a success with a null url — don't loop).
+            if (_state.value.motionArtworkEnabled) launch {
+                repeat(4) {
+                    val res = repo.getMotion(song.id)
+                    if (_state.value.currentSong?.id != song.id) return@launch
+                    if (res.isSuccess) {
+                        _state.update { it.copy(motionUrl = res.getOrNull()) }
+                        return@launch
+                    }
+                    kotlinx.coroutines.delay(1500)
+                }
+            }
         } catch (_: Exception) {}
     }
 

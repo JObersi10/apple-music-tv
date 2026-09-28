@@ -491,19 +491,20 @@ fun NowPlayingScreen(
 
             // Right — lyrics or queue. Lyrics are content, not chrome, so they stay put on idle;
             // only the queue fades out with the rest of the controls.
-            val rightIsLyrics = !showQueue && state.lyrics.isNotEmpty()
             // The "Lyrics • Menu = Queue" hint is a teaching aid, not permanent chrome. Show it only
             // while you're actually working with the panel (it has focus) — and only if the Now Playing
             // info setting is on — then fade it away. It still reserves its row so nothing jumps.
             var rightFocused by remember { mutableStateOf(false) }
             val hintAlpha by animateFloatAsState(
                 if (state.showNowPlayingInfo && rightFocused) 1f else 0f, tween(250), label = "panelHint")
-            Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (rightIsLyrics) 1f else chromeAlpha }) {
+            // Fade the whole right panel (lyrics, "No Lyrics Found", or queue) out on idle, like the
+            // rest of the chrome — the user wants a clean art-only idle state.
+            Column(modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = chromeAlpha }) {
                 val label = when {
                     state.isLiveRadio -> ""       // live radio has no queue/lyrics panel
                     showQueue -> "Queue  •  Menu = Lyrics"
                     state.lyrics.isNotEmpty() -> "Lyrics  •  Menu = Queue"
-                    else -> "Queue"
+                    else -> "Menu = Queue"
                 }
                 Text(
                     label,
@@ -536,14 +537,14 @@ fun NowPlayingScreen(
                             translations = state.lyricsTranslation,
                         )
                     } else {
-                        QueuePanel(
-                            queue = state.queue,
-                            currentIndex = state.queueIndex,
-                            userQueue = state.userQueue,
-                            onSelect = { idx -> playerVm.playFromQueue(idx) },
-                            onSelectUserQueue = { idx -> playerVm.playFromUserQueue(idx) },
-                            onMove = { from, to -> playerVm.moveQueueItem(from, to) },
-                            leftFocus = playFocus,
+                        // Lyrics view, but this song has none — say so in the middle (the queue is one
+                        // Menu press away). Fades on idle with the rest of the panel.
+                        Text(
+                            "No Lyrics Found",
+                            fontSize = 16.sp,
+                            color = Color(0xFF8E8E93),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.align(Alignment.Center),
                         )
                     }
                 }
