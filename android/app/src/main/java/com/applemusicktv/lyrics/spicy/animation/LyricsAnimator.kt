@@ -156,6 +156,8 @@ class LyricsAnimator(
         val EASE_IN_OUT = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
         const val MINIMAL_SUNG_SCALE = 0.95f
         const val MINIMAL_NOT_SUNG_SCALE = 0.965f
+        /** Syllable-mode non-active line scale — active stays 1.0, the rest read a bit smaller. */
+        const val INACTIVE_LINE_SCALE = 0.9f
         const val MINIMAL_NOT_SUNG_OPACITY = 0.5f
         const val MINIMAL_AFTER_ACTIVE_OPACITY = 0.45f
         const val DOT_GROUP_EXPANSION_MS = 300
@@ -301,6 +303,10 @@ class LyricsAnimator(
                 // Line-mode active line scales to 1.05 (CSS: data-lyrics-type="Line" .line.Active).
                 lyricsType == LyricsType.Line && !line.isSongwriter ->
                     animateTweenScale(lineIdx, if (isActive) LyricsLayoutCalculator.ACTIVE_LINE_SCALE else 1f)
+                // Syllable mode: the active line stays full size; the rest shrink a touch (like our
+                // built-in renderer / Apple Music) so the current line reads as the focus.
+                !line.isSongwriter ->
+                    animateTweenScale(lineIdx, if (isActive) 1f else INACTIVE_LINE_SCALE)
                 else -> 1f
             }
 
