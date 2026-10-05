@@ -51,3 +51,12 @@ apply to those components, not to the rest of this project.
 - **LRCLIB** — https://lrclib.net
   Community lyrics database used as the line-synced lyrics fallback when Apple has
   no timed lyrics for a track.
+- **Spicy Lyrics** — https://spicylyrics.org (API) / https://github.com/Spikerko/spicy-lyrics
+  Primary lyrics source (word-synced, aggregates Apple Music + community uploads).
+  Requires a free key from https://developers.spicylyrics.org .
+- **spicy-player** — https://github.com/TheX24/spicy-player — **AGPL-3.0**
+  The anonymous Spotify-search → Spicy lyrics lookup and the "Lyrics Renderer v2"
+  Canvas renderer (spring physics, gradient wipe, romanization) and the "lavalamp"
+  dynamic background are ported/adapted from this project. Ported files
+  (android/app/src/main/java/com/applemusicktv/lyrics/spicy/**) remain under the
+  GNU AGPL-3.0; GPL-3.0 §13 permits combining AGPL-3.0 and GPL-3.0 works.

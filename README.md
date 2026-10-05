@@ -82,6 +82,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to build it, [SECURITY.md](SECURITY.md) f
 
 The Apple Music decryption workflow was adapted from [gamdl](https://github.com/glomatico/gamdl) (MIT) and relies on [pywidevine](https://github.com/devine-dl/pywidevine) (GPL-3.0).
 
+**Lyrics** are provided by [Spicy Lyrics](https://spicylyrics.org) via its API. The **Spotify-search → Spicy lyrics** lookup and the **"Lyrics Renderer v2"** Canvas renderer (spring physics, gradient wipe, romanization, and the "lavalamp" dynamic background) are adapted from [spicy-player](https://github.com/TheX24/spicy-player) (AGPL-3.0) — whose own lyrics renderer derives from [Spicy Lyrics](https://github.com/Spikerko/spicy-lyrics). Those ported files remain under the AGPL-3.0; GPL-3.0 §13 permits combining them with this project.
+
 Full attribution for every third-party component is in **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**.
 
 ## License

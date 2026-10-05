@@ -248,6 +248,7 @@ fun NowPlayingScreen(
                 lyricsScale = state.lyricsScale,
                 richMotion = !state.lowPowerMode && !state.reduceMotion,
                 credits = state.lyricsCredits,
+                rendererV2 = state.lyricsRendererV2,
             )
             else -> {
         Row(
@@ -468,6 +469,7 @@ fun NowPlayingScreen(
                                 NpMenuItem(repeatLabel, icon = if (state.repeatMode == RepeatMode.One) Glyph.REPEAT_ONE else Glyph.REPEAT, checked = state.repeatMode != RepeatMode.Off) { playerVm.toggleRepeat() }
                                 if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics", icon = Glyph.LYRICS) { fullScreenLyrics = true; showOptionsMenu = false }
                                 if (state.lyrics.isNotEmpty()) NpMenuItem("Translate Lyrics", icon = Glyph.LYRICS, checked = state.translateLyrics) { playerVm.toggleTranslateLyrics() }
+                                NpMenuItem("Lyrics Renderer v2", icon = Glyph.LYRICS, checked = state.lyricsRendererV2) { playerVm.toggleLyricsRendererV2() }
                                 NpMenuItem("Add to…", icon = Glyph.ADD_TO) { showAddTo = true; showOptionsMenu = false }
                                 NpMenuItem("Start Screensaver", icon = Glyph.STAR) { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
                                 if (song.artistId != null) NpMenuItem("Go to Artist", icon = Glyph.ARTIST) { onArtistClick(song.artistId); showOptionsMenu = false }
@@ -528,6 +530,17 @@ fun NowPlayingScreen(
                             onSelectUserQueue = { idx -> playerVm.playFromUserQueue(idx) },
                             onMove = { from, to -> playerVm.moveQueueItem(from, to) },
                             leftFocus = playFocus,
+                        )
+                    } else if (state.lyrics.isNotEmpty() && state.lyricsRendererV2) {
+                        SpicyLyricsPanel(
+                            lyrics = state.lyrics,
+                            credits = state.lyricsCredits,
+                            progressState = smoothProgress,
+                            offsetMs = state.avLyricsMs,
+                            onSeek = { ms -> playerVm.player.seekTo(ms) },
+                            fontScale = state.lyricsScale,
+                            isPlaying = state.isPlaying,
+                            richMotion = !state.lowPowerMode && !state.reduceMotion,
                         )
                     } else if (state.lyrics.isNotEmpty()) {
                         LyricsPanel(
@@ -659,6 +672,7 @@ private fun FullScreenLyrics(
     lyricsScale: Float = 1f,
     richMotion: Boolean = true,
     credits: List<String> = emptyList(),
+    rendererV2: Boolean = false,
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
@@ -685,18 +699,31 @@ private fun FullScreenLyrics(
         },
     ) {
         Column(Modifier.fillMaxSize().padding(start = 72.dp, end = 128.dp, top = 36.dp, bottom = 120.dp)) {
-            LyricsPanel(
-                lyrics = lyrics,
-                progressState = progressState,
-                offsetMs = offsetMs,
-                onSeek = onSeek,
-                playFocus = playFocus,
-                fontScale = 1.3f * lyricsScale,
-                autoReturnMs = 5_000L,
-                translations = translations,
-                richMotion = richMotion,
-                credits = credits,
-            )
+            if (rendererV2) {
+                SpicyLyricsPanel(
+                    lyrics = lyrics,
+                    credits = credits,
+                    progressState = progressState,
+                    offsetMs = offsetMs,
+                    onSeek = onSeek,
+                    fontScale = 1.3f * lyricsScale,
+                    isPlaying = isPlaying,
+                    richMotion = richMotion,
+                )
+            } else {
+                LyricsPanel(
+                    lyrics = lyrics,
+                    progressState = progressState,
+                    offsetMs = offsetMs,
+                    onSeek = onSeek,
+                    playFocus = playFocus,
+                    fontScale = 1.3f * lyricsScale,
+                    autoReturnMs = 5_000L,
+                    translations = translations,
+                    richMotion = richMotion,
+                    credits = credits,
+                )
+            }
         }
         // Now-playing chip, bottom-left — same placement as the screensaver.
         Row(

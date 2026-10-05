@@ -102,6 +102,8 @@ dependencies {
 
     // Images
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // Gson — used by the ported Spicy renderer's AudioAnalysis (kawarp background beat data).
+    implementation("com.google.code.gson:gson:2.11.0")
 
     // Palette (artwork → accent color)
     implementation("androidx.palette:palette-ktx:1.0.0")
