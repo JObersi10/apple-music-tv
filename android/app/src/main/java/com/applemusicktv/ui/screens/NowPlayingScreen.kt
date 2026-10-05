@@ -74,9 +74,14 @@ import androidx.compose.ui.util.lerp
 import androidx.palette.graphics.Palette
 import androidx.tv.material3.*
 import androidx.tv.material3.Border
+import android.os.Build
+import android.graphics.Bitmap
+import androidx.core.graphics.drawable.toBitmap
+import coil.Coil
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.request.SuccessResult
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.data.network.LyricWord
 import com.applemusicktv.ui.viewmodel.NavigationViewModel
@@ -981,6 +986,19 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
     )
 }
 
+/** Loads the album cover as a software Bitmap (Coil, no hardware bitmap) for the Lava Lamp shader. */
+@Composable
+private fun rememberCoverBitmap(url: String?): Bitmap? {
+    val ctx = LocalContext.current
+    var bmp by remember(url) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(url) {
+        if (url == null) { bmp = null; return@LaunchedEffect }
+        val req = ImageRequest.Builder(ctx).data(url).allowHardware(false).size(512).build()
+        bmp = (Coil.imageLoader(ctx).execute(req) as? SuccessResult)?.drawable?.toBitmap()
+    }
+    return bmp
+}
+
 private fun Color.hsvHue(): Float {
     val r = red; val g = green; val b = blue
     val max = maxOf(r, g, b); val min = minOf(r, g, b)
@@ -1185,6 +1203,25 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
     // BLACK: plain black, no blobs, no beat. Nothing else to compute.
     if (mode == NowPlayingBackground.BLACK) {
         Box(Modifier.fillMaxSize().background(Color.Black))
+        return
+    }
+    // LAVALAMP: the ported @kawarp fused AGSL warp of the blurred cover. AGSL (RuntimeShader) is
+    // API 33+ only, so on an older device (this Fire TV is < 33) it can't render — fall through to
+    // the Dynamic blobs instead. Low Power also falls back (the shader is GPU-heavy).
+    if (mode == NowPlayingBackground.LAVALAMP &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !lowPower) {
+        val coverUrl = artworkUrlTemplate?.replace("{w}", "512")?.replace("{h}", "512")?.replace("{f}", "jpg")
+        val cover = rememberCoverBitmap(coverUrl)
+        val energyState = beatAnalyzer.energy.collectAsState()
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            com.applemusicktv.lyrics.spicy.canvas.kawarp.KawarpBackground(
+                coverArtBitmap = cover,
+                isPlaying = playing,
+                animate = playing && !reduceMotion,
+                // Beat nudges the warp speed; beatMultiplier (Beat Pulse) sets how much.
+                speed = { 1f + energyState.value.coerceIn(0f, 1f) * (beatMultiplier - 1f).coerceAtLeast(0f) },
+            )
+        }
         return
     }
     val projector = mode == NowPlayingBackground.PROJECTOR
