@@ -3,6 +3,7 @@ package com.applemusicktv.ui.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.model.Album
 import com.applemusicktv.data.repository.MusicRepository
 import com.squareup.moshi.Moshi
@@ -20,14 +21,22 @@ data class HomeUiState(
     val isLoading: Boolean       = true,
     val error:     String?       = null,
     val sections:  List<HomeSection> = emptyList(),
+    /** True when the shown feed is the non-personalized fallback AND a MUT is set — recommendations
+     *  failed to load, so Home shows a "retry" banner. Never set without a MUT (no-MUT Home is
+     *  charts-only by design, not an error). */
+    val needsRefresh: Boolean    = false,
 )
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repo: MusicRepository,
+    private val mutPrefs: MutPreferences,
     @ApplicationContext context: Context,
     moshi: Moshi,
 ) : ViewModel() {
+
+    /** Whether a non-personalized [feed] should raise the retry banner (only with a MUT present). */
+    private fun fallbackBanner(feed: List<HomeSection>) = !feed.isPersonalized() && mutPrefs.hasMUT()
 
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state
@@ -81,7 +90,7 @@ class HomeViewModel @Inject constructor(
                         val fresh = sections.isPersonalized()
                         val haveCached = cached.isPersonalized()
                         val show = if (!fresh && haveCached) cached else sections
-                        _state.value = HomeUiState(isLoading = false, sections = show)
+                        _state.value = HomeUiState(isLoading = false, sections = show, needsRefresh = fallbackBanner(show))
                         if (fresh) {   // only cache a genuinely personalized feed
                             launch(kotlinx.coroutines.Dispatchers.Default) {
                                 runCatching { prefs.edit().putString("sections", adapter.toJson(sections)).apply() }
@@ -95,7 +104,7 @@ class HomeViewModel @Inject constructor(
                 if (attempt < 3) kotlinx.coroutines.delay(1500)
             }
             // Total failure: keep any cached feed rather than blanking.
-            if (cached.isNotEmpty()) { _state.value = HomeUiState(isLoading = false, sections = cached); return@launch }
+            if (cached.isNotEmpty()) { _state.value = HomeUiState(isLoading = false, sections = cached, needsRefresh = fallbackBanner(cached)); return@launch }
             // No cache AND every source 500'd (Apple's recommendations service streaks 500s, and a
             // fresh install right after an update has nothing cached — that's the "home is gone"). Don't
             // give up: keep retrying in the background with backoff so Home self-heals once Apple
@@ -108,7 +117,7 @@ class HomeViewModel @Inject constructor(
                 val r = repo.getHome().getOrNull() ?: return@repeat
                 val secs = r.sections.map { s -> HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style) }
                 if (secs.isNotEmpty()) {
-                    _state.value = HomeUiState(isLoading = false, sections = secs)
+                    _state.value = HomeUiState(isLoading = false, sections = secs, needsRefresh = fallbackBanner(secs))
                     if (secs.isPersonalized()) launch(kotlinx.coroutines.Dispatchers.Default) {
                         runCatching { prefs.edit().putString("sections", adapter.toJson(secs)).apply() }
                     }

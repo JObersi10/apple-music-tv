@@ -1385,6 +1385,12 @@ class PlayerViewModel @Inject constructor(
         val myGen = ++playGen
         if (standalone) {
             usingStandalone = true
+            // The on-device decrypt can take 10–20s. Pausing isn't enough: the OLD track's media item
+            // is still loaded, so pressing Play during the build resumed the previous song (and its
+            // position) under the new song's title/lyrics. Clear it so there's nothing to resume, and
+            // show the loading ring until the new source is prepared.
+            player.clearMediaItems()
+            _state.update { it.copy(isLoading = true) }
             viewModelScope.launch {
                 val src = buildStandaloneSource(song)
                 // Superseded by a newer selection while we were decrypting — drop it so

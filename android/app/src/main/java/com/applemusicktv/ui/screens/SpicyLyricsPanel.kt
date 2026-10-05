@@ -7,6 +7,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.lyrics.spicy.RenderConfig
+import com.applemusicktv.lyrics.spicy.ScrollConfig
 import com.applemusicktv.lyrics.spicy.canvas.LyricsView
 import com.applemusicktv.lyrics.spicy.models.Line as SLine
 import com.applemusicktv.lyrics.spicy.models.LineRole
@@ -46,13 +47,20 @@ fun SpicyLyricsPanel(
         currentTimeMs = { progressState.value + offsetMs },
         onSeekWord = onSeek,
         modifier = modifier.fillMaxSize(),
-        fontSizeScale = fontScale,
-        config = if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE,
+        // The renderer's base size scales with the (wide) TV canvas, so it reads large — trim it.
+        fontSizeScale = fontScale * V2_FONT_SCALE,
+        // Smooth (spring) scrolling carries speed between lines instead of snapping.
+        config = (if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE)
+            .copy(scroll = ScrollConfig(smooth = true)),
         lyricsType = built.type,
         romanize = false,
         isPlaying = isPlaying,
+        // Keep the active line a bit lower than the default 0.25 (more context above it).
+        focusAnchorFraction = 0.4f,
     )
 }
+
+private const val V2_FONT_SCALE = 0.72f
 
 private class SpicyDoc(val lines: List<SLine>, val type: LyricsType)
 
@@ -60,10 +68,10 @@ private class SpicyDoc(val lines: List<SLine>, val type: LyricsType)
 private fun buildSpicyDocument(lyrics: List<LyricLine>): SpicyDoc {
     if (lyrics.isEmpty()) return SpicyDoc(emptyList(), LyricsType.Static)
 
-    // Unsynced (plain) — single untimed word per line, Static render path.
+    // Unsynced (plain) — tokenize so the Static render path can wrap each line.
     if (lyrics.all { it.startMs < 0 }) {
         return SpicyDoc(
-            lyrics.map { SLine(listOf(SWord(it.text, 0L, 0L)), 0L, 0L, role = LineRole.LEAD) },
+            lyrics.map { SLine(tokenize(it.text, 0L, 0L), 0L, 0L, role = LineRole.LEAD) },
             LyricsType.Static,
         )
     }
@@ -75,15 +83,27 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>): SpicyDoc {
         val leadWords = if (ln.words.isNotEmpty()) {
             anyWords = true
             ln.words.map { SWord(it.text, it.startMs, it.endMs) }
-        } else listOf(SWord(ln.text, ln.startMs, ln.endMs))
+        } else tokenize(ln.text, ln.startMs, ln.endMs) // line-synced: split so the line can wrap
         out.add(SLine(leadWords, ln.startMs, ln.endMs, role = LineRole.LEAD, groupId = i))
 
         ln.background?.let { bg ->
+            val bgEnd = if (bg.endMs > 0) bg.endMs else ln.endMs
             val bgWords = if (bg.words.isNotEmpty()) bg.words.map { SWord(it.text, it.startMs, it.endMs) }
-                else listOf(SWord(bg.text, bg.startMs, bg.endMs))
-            out.add(SLine(bgWords, bg.startMs, if (bg.endMs > 0) bg.endMs else ln.endMs,
-                role = LineRole.BACKGROUND, groupId = i, oppositeAligned = true))
+                else tokenize(bg.text, bg.startMs, bgEnd)
+            out.add(SLine(bgWords, bg.startMs, bgEnd, role = LineRole.BACKGROUND, groupId = i, oppositeAligned = true))
         }
     }
     return SpicyDoc(out, if (anyWords) LyricsType.Syllable else LyricsType.Line)
+}
+
+/**
+ * Split a whole-line string into space-delimited [SWord]s. A line-synced line has no per-word
+ * timing, but the renderer wraps on Word boundaries — one Word holding the whole line can't wrap and
+ * runs off the right edge. Each token carries the line's own start/end (the Line path fills the line
+ * as one gradient, so the shared timing is correct).
+ */
+private fun tokenize(text: String, startMs: Long, endMs: Long): List<SWord> {
+    val toks = text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    if (toks.isEmpty()) return listOf(SWord(text, startMs, endMs))
+    return toks.map { SWord(it, startMs, endMs) }
 }

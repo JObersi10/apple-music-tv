@@ -150,6 +150,12 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleMotionArtwork() },
             )
             Toggle(
+                label = "Lyrics Renderer v2", on = pstate.lyricsRendererV2,
+                sub = if (pstate.lyricsRendererV2) "Spicy Player engine — spring motion, gradient wipe, credits"
+                      else "Built-in renderer",
+                onToggle = { playerVm.toggleLyricsRendererV2() },
+            )
+            Toggle(
                 label = "Reduce motion", on = pstate.reduceMotion,
                 sub = if (pstate.reduceMotion) "Background holds still" else "Background drifts and pulses",
                 onToggle = { playerVm.toggleReduceMotion() },

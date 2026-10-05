@@ -70,8 +70,42 @@ fun HomeScreenV2(
         contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(AmTokens.Space.shelfGap),
     ) {
+        if (state.needsRefresh) {
+            item(key = "home_refresh_banner") { HomeRefreshBanner(onRefresh = vm::load) }
+        }
         items(state.sections, key = { it.title }) { section ->
             ShelfV2(section, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick)
+        }
+    }
+}
+
+/**
+ * Shown atop Home when recommendations failed to load and only the non-personalized fallback is
+ * present (MUT set). Clicking it re-runs the Home load. Hidden when there's no MUT (charts-only Home
+ * is expected, not an error).
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun HomeRefreshBanner(onRefresh: () -> Unit) {
+    Surface(
+        onClick = onRefresh,
+        shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color(0x1AFF453A),
+            focusedContainerColor = Color(0x33FF453A),
+        ),
+        modifier = Modifier.padding(horizontal = AmTokens.Space.lg, vertical = 2.dp).fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Oops — there was an issue loading your music", color = Color.White, fontSize = 15.sp)
+                Text("Showing charts for now. Select to try again.", color = Color(0xB3FFFFFF), fontSize = 12.sp)
+            }
+            Text("↻  Refresh", color = Color(0xFFFF453A), fontSize = 15.sp, modifier = Modifier.padding(start = 16.dp))
         }
     }
 }
