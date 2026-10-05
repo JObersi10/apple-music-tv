@@ -1,6 +1,20 @@
 # Release Notes
 
-## Unreleased (post-1.3, lyrics polish)
+## Unreleased (post-1.3, Spicy Lyrics + Renderer v2)
+- **Spicy Lyrics is the new primary lyrics source** — word-synced lyrics aggregated from Apple Music,
+  Spotify and a community pool, resolved via an anonymous Spotify search (no login). Apple + lrclib
+  remain as fallbacks. Works with the PC server (secret key) and standalone (client key).
+- **Songwriter + community credits** under the lyrics: "Written by", "Provided by", "Made by /
+  Uploaded by" (with avatars). Duet/alternate vocals render right-aligned.
+- **New "Lyrics Renderer v2"** (Dev/Settings toggle) — the Spicy Player Canvas engine: spring motion,
+  gradient wipe, kana/pinyin romanization, distance blur, fade-in, smaller non-active lines. Tuned for
+  Fire TV (no glow flash, tighter spacing, low-power drops the blur). Default off — toggle to try it.
+- Standalone skip no longer briefly resumes the previous song during the on-device decrypt.
+- Home shows a "refresh" banner when recommendations fail (with a token set).
+- Bug report (`:8080/bug-report`) now includes Spotify/Spicy network activity.
+- Credit: lyrics renderer + lookup adapted from spicy-player (AGPL-3.0); see README / THIRD_PARTY_NOTICES.
+
+## (earlier) post-1.3 lyrics polish
 - **Karaoke lyrics reworked to match Apple Music.** Words do a left→right gradient wipe and rise a
   small **uniform** amount (rises fast, then holds). **Held words** (≥1s) swell and their letters glow
   in sequence, then settle at the same level as the rest — no reflow of the lines below, no end-jump.
