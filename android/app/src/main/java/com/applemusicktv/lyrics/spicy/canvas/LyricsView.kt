@@ -31,6 +31,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -104,6 +116,10 @@ fun LyricsView(
     pinnedFooter: PinnedFooterMode = PinnedFooterMode.Off,
     /** How far up from the bottom the lyrics are covered (pinned credits); they fade out above it. */
     maskBottomPx: () -> Float = { 0f },
+    /** When set, the view is focusable and D-pad up/down selects a line, OK seeks to it. */
+    dpadFocus: FocusRequester? = null,
+    /** Where focus goes when the user leaves the lyrics (up past the top line, left/right, or idle). */
+    escapeFocus: FocusRequester? = null,
 ) {
     val textMeasurer = rememberTextMeasurer()
     // What is on screen: lines and their layouts, swapped together once new layouts are measured.
@@ -150,7 +166,96 @@ fun LyricsView(
     val context = LocalContext.current
     val haptics by rememberUpdatedState(LocalHapticFeedback.current)
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize().clipToBounds()) {
+    // ── D-pad line selection (TV). null = follow playback; a value = the user is browsing lines. ──
+    var selectedIndex by remember(shownId) { mutableStateOf<Int?>(null) }
+    val selectedIndexUpdated by rememberUpdatedState(selectedIndex)
+    var dpadFocused by remember(shownId) { mutableStateOf(false) }
+    // Selectable = real lead lyric lines only (skip background vocals, interludes, songwriter rows).
+    val selectable = remember(shown) {
+        shown?.lines?.let { ls ->
+            ls.indices.filter { i ->
+                val l = ls[i]
+                !l.isBackground && !l.isInterlude && !l.isSongwriter && l.words.isNotEmpty()
+            }
+        } ?: emptyList()
+    }
+    val selectableUpdated by rememberUpdatedState(selectable)
+    val onSeekWordUpdated by rememberUpdatedState(onSeekWord)
+    val seekFadeComp = config.scroll.seekFadeCompensation
+
+    fun moveSelection(delta: Int) {
+        val list = selectableUpdated
+        if (list.isEmpty()) return
+        val cur = selectedIndex
+        val baseIdx = if (cur == null) {
+            val now = currentTimeProvider()
+            list.lastOrNull { (linesUpdated.getOrNull(it)?.startMs ?: Long.MAX_VALUE) <= now } ?: list.first()
+        } else cur
+        val pos = list.indexOf(baseIdx).coerceAtLeast(0)
+        // First press just highlights the current line; later presses step from there.
+        val newPos = if (cur == null) pos else (pos + delta).coerceIn(0, list.lastIndex)
+        selectedIndex = list[newPos]
+    }
+
+    fun seekToSelected() {
+        val idx = selectedIndex ?: return
+        val line = linesUpdated.getOrNull(idx) ?: return
+        val start = line.words.firstOrNull()?.startMs ?: line.startMs
+        val target = if (seekFadeComp) (start - ScrollConfig.SEEK_FADE_COMPENSATION_MS).coerceAtLeast(0L) else start
+        haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
+        onSeekWordUpdated(target)
+        scrollManager.onSeek()
+        selectedIndex = null
+        wake.trySend(Unit)
+    }
+
+    val lyricsKeyHandler: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = handler@{ ev ->
+        if (isStatic || selectableUpdated.isEmpty()) return@handler false
+        if (ev.type != KeyEventType.KeyDown) return@handler false
+        when (ev.key) {
+            Key.DirectionDown -> { moveSelection(+1); wake.trySend(Unit); true }
+            Key.DirectionUp -> {
+                val cur = selectedIndex
+                if (cur != null && selectableUpdated.firstOrNull() == cur) {
+                    // Up past the first line hands focus back out (to the transport), like v1.
+                    selectedIndex = null
+                    escapeFocus?.let { runCatching { it.requestFocus() } }
+                    true
+                } else { moveSelection(-1); wake.trySend(Unit); true }
+            }
+            Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                if (selectedIndex != null) { seekToSelected(); true } else false
+            }
+            Key.DirectionLeft, Key.DirectionRight -> {
+                selectedIndex = null
+                escapeFocus?.let { runCatching { it.requestFocus() } }
+                true
+            }
+            Key.Back, Key.Escape -> {
+                if (selectedIndex != null) { selectedIndex = null; true } else false
+            }
+            else -> false
+        }
+    }
+
+    // Don't strand the D-pad in the lyrics: after a spell focused with no key, hand focus back.
+    if (dpadFocus != null && escapeFocus != null) {
+        LaunchedEffect(dpadFocused, selectedIndex) {
+            if (!dpadFocused) return@LaunchedEffect
+            kotlinx.coroutines.delay(7000L)
+            if (dpadFocused) { selectedIndex = null; runCatching { escapeFocus.requestFocus() } }
+        }
+    }
+
+    val focusModifier = if (dpadFocus != null) Modifier
+        .focusRequester(dpadFocus)
+        .onFocusChanged { dpadFocused = it.hasFocus; if (!it.hasFocus) selectedIndex = null }
+        .focusProperties { escapeFocus?.let { fr -> left = fr; right = fr } }
+        .onKeyEvent(lyricsKeyHandler)
+        .focusable()
+    else Modifier
+
+    BoxWithConstraints(modifier = modifier.then(focusModifier).fillMaxSize().clipToBounds()) {
         val canvasWidth = constraints.maxWidth.toFloat()
         val canvasHeight = constraints.maxHeight.toFloat()
         // Compact fullscreen keeps the active lyric in the upper portion of the viewport.
@@ -263,8 +368,11 @@ fun LyricsView(
                     lastFrameTimeNanos = frameTimeNanos
 
                     if (currentLayouts.size == currentLines.size && currentLines.isNotEmpty()) {
+                        // D-pad selection in progress: the view follows the selected line, not the song.
+                        val sel = selectedIndexUpdated?.takeIf { it in currentLayouts.indices }
                         // 1. Step the animator for visual properties (scale, opacity, glow).
-                        animStates = animator.animate(currentLines, currentTime, deltaTime, scrollManager.hideLineBlur, lyricsType)
+                        // While browsing by D-pad, suppress distance blur so the selected line is crisp.
+                        animStates = animator.animate(currentLines, currentTime, deltaTime, scrollManager.hideLineBlur || sel != null, lyricsType)
 
                         // 1.5 Calculate dynamic Y offsets based on interlude scales.
                         var accumulatedY = 0f
@@ -372,9 +480,33 @@ fun LyricsView(
                         // Static lyrics have no timing to follow: leave scrolling entirely to the user.
                         if (isStatic) targetY = null
                         contentHeightForDrag[0] = totalContentHeight
+
+                        // D-pad override: glide to the selected line (not the song's active line).
+                        val navIndex: Int?
+                        val navTargetY: Float?
+                        val navSnap: Boolean
+                        if (sel != null) {
+                            val adj = run {
+                                val next = currentLayouts.getOrNull(sel + 1)
+                                if (currentLayouts[sel].line.words.isEmpty() && next != null && next.isBackground &&
+                                    next.line.groupId == currentLayouts[sel].line.groupId) sel + 1 else sel
+                            }
+                            val half = when {
+                                alignTopUpdated -> if (currentLayouts[adj].isInterlude) -interludeCentre else 0f
+                                currentLayouts[adj].isInterlude -> 0f
+                                else -> currentLayouts[adj].height / 2f
+                            }
+                            navIndex = adj
+                            navTargetY = -(settledYScratch[adj] + half)
+                            navSnap = false
+                        } else {
+                            navIndex = targetIndex
+                            navTargetY = targetY
+                            navSnap = decision.motion == ScrollMotion.SNAP
+                        }
                         scrollManager.updateScroll(
-                            deltaTime, totalContentHeight, targetIndex.takeIf { targetY != null }, targetY,
-                            snap = decision.motion == ScrollMotion.SNAP,
+                            deltaTime, totalContentHeight, navIndex.takeIf { navTargetY != null }, navTargetY,
+                            snap = navSnap,
                             targetVisiblePx = targetVisiblePx,
                         )
                     }
@@ -471,6 +603,22 @@ fun LyricsView(
                 }
         ) {
             val scrollOffset = centerY + scrollManager.animScrollY
+
+            // D-pad selection highlight: a soft pill behind the line the user is pointing at.
+            selectedIndex?.let { selIdx ->
+                lineLayouts.getOrNull(selIdx)?.let { layout ->
+                    val dynamicY = dynamicYOffsets.getOrElse(selIdx) { layout.yOffset }
+                    val top = scrollOffset + dynamicY
+                    val x = getLineStartX(layout)
+                    val pad = 14f * density.density
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = 0.16f),
+                        topLeft = Offset(x - pad, top - pad / 2f),
+                        size = Size(layout.totalWidth + pad * 2f, layout.height + pad),
+                        cornerRadius = CornerRadius(pad, pad),
+                    )
+                }
+            }
 
             lineLayouts.forEachIndexed { lineIdx, layout ->
                 val lineAnim = animStates.getOrNull(lineIdx) ?: return@forEachIndexed

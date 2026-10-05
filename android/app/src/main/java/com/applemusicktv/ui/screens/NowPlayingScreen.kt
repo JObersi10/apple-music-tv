@@ -195,6 +195,9 @@ fun NowPlayingScreen(
         }
 
         val playFocus = remember { FocusRequester() }
+        // Lyrics Renderer v2 (Canvas) is one focusable surface, not a focusable-per-line list — this
+        // requester lets the v2 panel receive D-pad focus so up/down can select a line and OK can seek.
+        val lyricsV2Focus = remember { FocusRequester() }
         // When the chrome hides for idle, park focus back on the play/pause button (after the fade), so
         // the moment you wake it the centre control is the highlighted one — not wherever you'd left it.
         LaunchedEffect(chromeVisible) {
@@ -555,6 +558,8 @@ fun NowPlayingScreen(
                                     origin = state.lyricsOrigin,
                                     maker = state.lyricsMaker,
                                     uploader = state.lyricsUploader,
+                                    dpadFocus = lyricsV2Focus,
+                                    escapeFocus = playFocus,
                                 )
                             } else {
                                 LyricsPanel(
@@ -697,6 +702,7 @@ private fun FullScreenLyrics(
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
     // lyrics don't get stranded scrolled-away after you fiddle with the D-pad.
     val playFocus = remember { FocusRequester() }
+    val lyricsV2Focus = remember { FocusRequester() }
     // Retry a few frames: a single requestFocus() on first composition fires before the play button
     // is attached, so it silently failed and focus fell through to the nav bar.
     LaunchedEffect(Unit) {
@@ -731,6 +737,8 @@ private fun FullScreenLyrics(
                     origin = origin,
                     maker = maker,
                     uploader = uploader,
+                    dpadFocus = lyricsV2Focus,
+                    escapeFocus = playFocus,
                 )
             } else {
                 LyricsPanel(
@@ -801,6 +809,13 @@ private fun rememberSmoothProgressMs(reportedMs: Long, isPlaying: Boolean): andr
 
     LaunchedEffect(isPlaying) {
         if (!isPlaying) return@LaunchedEffect
+        // Re-anchor on resume. While paused, reportedMs was constant, so anchorRealMs is stale by the
+        // entire paused duration — without this the first playing frame computes
+        // anchorPos + (now - staleReal) and the clock LEAPS FORWARD by however long we sat paused
+        // (lyrics scroll + seek bar jump ahead for ~1s until the next reportedMs tick re-anchors).
+        anchorPosMs.longValue  = reportedMs
+        anchorRealMs.longValue = System.currentTimeMillis()
+        smoothMs.longValue     = reportedMs
         while (isActive) {
             withFrameMillis {
                 smoothMs.longValue = anchorPosMs.longValue + (System.currentTimeMillis() - anchorRealMs.longValue)

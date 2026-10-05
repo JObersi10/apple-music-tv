@@ -39,6 +39,8 @@ fun SpicyLyricsPanel(
     origin: String? = null,
     maker: LyricsCreditDto? = null,
     uploader: LyricsCreditDto? = null,
+    dpadFocus: androidx.compose.ui.focus.FocusRequester? = null,
+    escapeFocus: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     val built = remember(lyrics) { buildSpicyDocument(lyrics) }
     // Footer under the lyrics: "Written by …", "Provided by: <origin>", the community note, and the
@@ -74,6 +76,8 @@ fun SpicyLyricsPanel(
         isPlaying = isPlaying,
         // Keep the active line a bit lower than the default 0.25 (more context above it).
         focusAnchorFraction = 0.4f,
+        dpadFocus = dpadFocus,
+        escapeFocus = escapeFocus,
     )
 }
 
