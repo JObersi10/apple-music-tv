@@ -22,7 +22,11 @@ class DirectLyricsSource @Inject constructor(
     private val appleClient: AppleDirectClient,
     private val mutPrefs: MutPreferences,
     @Named("direct") private val httpClient: OkHttpClient,
+    private val spicy: SpicyLyricsSource,
 ) {
+    // Songwriter credits for the last-fetched songs (set by the Spicy path). Read via creditsFor().
+    private val credits = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    fun creditsFor(songId: String): List<String> = credits[songId] ?: emptyList()
 
     // Prefetched / previously-resolved lyrics, keyed by songId. Lets the N+1
     // prefetch warm the next song's lyrics so they appear instantly on switch.
@@ -86,6 +90,17 @@ class DirectLyricsSource @Inject constructor(
         durationSec: Long = 0,
     ): List<LyricLine> = withContext(Dispatchers.IO) {
         cached(songId)?.let { return@withContext it }
+
+        // 0. Spicy Lyrics FIRST — word-synced, aggregates Apple Music + community. Apple/lrclib below
+        //    are the fallback. Needs title/artist to resolve the Spotify id.
+        if (spicy.enabled() && title.isNotEmpty() && artist.isNotEmpty()) {
+            val r = spicy.fetch(title, artist, "", durationSec)
+            if (r != null && r.lines.isNotEmpty()) {
+                credits[songId] = r.writtenBy
+                return@withContext r.lines.also { store(songId, it) }
+            }
+        }
+
         val bearer = appleClient.getBearer()
         val mut = mutPrefs.getMUT()
         Log.i("DirectLyrics", "getLyrics song=$songId sf=$storefront bearerLen=${bearer.length} mutLen=${mut.length} title='$title' artist='$artist'")

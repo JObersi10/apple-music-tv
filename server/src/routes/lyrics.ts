@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import axios from "axios";
 import { getMUT, getBearerToken, hasMUT, getStorefront } from "../auth";
+import { fetchSpicyLyrics, spicyEnabled } from "../lib/spicy";
 
 const lyrics = new Hono();
 
@@ -16,7 +17,25 @@ lyrics.get("/:songId", async (c) => {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
   };
 
-  // 1) Apple Music is the primary source (word-by-word timed TTML).
+  // 0) Spicy Lyrics is the PRIMARY source — it aggregates word-synced lyrics from Apple Music,
+  //    Spotify and a community upload pool, so it covers songs Apple's own endpoint misses. Needs
+  //    the song's title/artist to resolve a Spotify id (via anonymous Spotify search). Apple +
+  //    lrclib below are the fallback for when Spicy is down, missing, or has no key.
+  if (spicyEnabled()) {
+    try {
+      const meta = await fetchSongMeta(songId, headers);
+      if (meta) {
+        const spicy = await fetchSpicyLyrics(meta);
+        if (spicy && spicy.lines.length > 0) {
+          const wordCount = spicy.lines.reduce((n, l) => n + l.words.length, 0);
+          console.log(`[lyrics] ${songId} spicy ${wordCount > 0 ? `word-by-word (${wordCount} words, ${spicy.lines.length} lines)` : `${spicy.synced ? "line" : "plain"} (${spicy.lines.length} lines)`} ${Date.now() - t0}ms`);
+          return c.json({ lines: spicy.lines, source: "spicy", synced: spicy.synced, writtenBy: spicy.songwriters });
+        }
+      }
+    } catch (e: any) { console.warn(`[lyrics] ${songId} spicy failed: ${e.message}`); }
+  }
+
+  // 1) Apple Music (word-by-word timed TTML) — fallback when Spicy misses.
   try {
     const appleLines = await fetchAppleLyrics(songId, headers);
     if (appleLines && appleLines.length > 0) {

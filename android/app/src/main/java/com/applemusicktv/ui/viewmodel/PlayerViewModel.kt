@@ -116,6 +116,8 @@ data class PlayerState(
     /** True once a lyrics fetch for the current song has finished (empty or not) — gates the
      *  "No Lyrics Found" message so it shows only AFTER fetching, never while still loading. */
     val lyricsLoaded:     Boolean         = false,
+    /** Songwriter credits for the current song, shown as trailing text under the lyrics. Empty = none. */
+    val lyricsCredits:    List<String>    = emptyList(),
     /** Translated text per lyric line, aligned by index to [lyrics]. Empty = not translated. */
     val lyricsTranslation: List<String>   = emptyList(),
     val translateLyrics:  Boolean         = false,
@@ -248,6 +250,7 @@ class PlayerViewModel @Inject constructor(
     // instantly (from the N+1 prefetch) instead of blanking to empty and re-fetching — which, in
     // full-screen lyrics, flashed the view back to the player for a beat.
     private val lyricsCache = java.util.concurrent.ConcurrentHashMap<String, List<LyricLine>>()
+    private val creditsCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
     private var motionJob: kotlinx.coroutines.Job? = null
     private var fadeJob: kotlinx.coroutines.Job? = null
     private var crossfadeInProgress = false
@@ -2080,10 +2083,11 @@ class PlayerViewModel @Inject constructor(
         lyricsCache[id]?.let { return kotlinx.coroutines.CompletableDeferred(it) }
         lyricsInFlight[id]?.let { return it }
         val d = viewModelScope.async {
-            val lines = repo.getLyrics(id, title, artist, durationSec).getOrDefault(emptyList())
-            if (lines.isNotEmpty()) lyricsCache[id] = lines
+            val res = repo.getLyrics(id, title, artist, durationSec)
+                .getOrDefault(com.applemusicktv.data.network.LyricsResult())
+            if (res.lines.isNotEmpty()) { lyricsCache[id] = res.lines; creditsCache[id] = res.writtenBy }
             lyricsInFlight.remove(id)
-            lines
+            res.lines
         }
         lyricsInFlight[id] = d
         return d
@@ -2093,9 +2097,9 @@ class PlayerViewModel @Inject constructor(
         lyricsJob?.cancel()
         // New song → clear stale lyrics/translation and mark "not loaded yet" so the UI shows nothing
         // (not "No Lyrics Found") until the fetch actually completes.
-        _state.update { it.copy(lyrics = emptyList(), lyricsTranslation = emptyList(), lyricsLoaded = false) }
+        _state.update { it.copy(lyrics = emptyList(), lyricsTranslation = emptyList(), lyricsLoaded = false, lyricsCredits = emptyList()) }
         lyricsCache[songId]?.let { cached ->
-            if (_state.value.currentSong?.id == songId) { _state.update { it.copy(lyrics = cached, lyricsLoaded = true) }; if (_state.value.translateLyrics) fetchTranslation(songId) }
+            if (_state.value.currentSong?.id == songId) { _state.update { it.copy(lyrics = cached, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList()) }; if (_state.value.translateLyrics) fetchTranslation(songId) }
             return
         }
         val song = _state.value.currentSong?.takeIf { it.id == songId }
@@ -2103,7 +2107,7 @@ class PlayerViewModel @Inject constructor(
             val lines = fetchLyricsShared(songId, song?.title ?: "", song?.artistName ?: "", (song?.durationMs ?: 0L) / 1000).await()
             if (_state.value.currentSong?.id == songId) {
                 // Mark loaded whether or not lines came back, so "No Lyrics Found" can show only now.
-                _state.update { it.copy(lyrics = lines, lyricsLoaded = true) }
+                _state.update { it.copy(lyrics = lines, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList()) }
                 if (lines.isNotEmpty() && _state.value.translateLyrics) fetchTranslation(songId)
             }
         }

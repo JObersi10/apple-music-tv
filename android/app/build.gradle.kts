@@ -38,6 +38,10 @@ android {
         val proxyBaseUrl = localProps.getProperty("proxyBaseUrl") ?: "http://10.0.2.2:3000/"
         buildConfigField("String", "PROXY_BASE_URL", "\"$proxyBaseUrl\"")
         buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+        // Spicy Lyrics CLIENT key (sl_pk_…) for standalone/no-PC lyrics. Shippable by design, but kept
+        // in local.properties (gitignored) so it's not committed. Blank → standalone falls to Apple.
+        val spicyKey = localProps.getProperty("spicyLyricsClientKey") ?: ""
+        buildConfigField("String", "SPICY_LYRICS_KEY", "\"$spicyKey\"")
     }
 
     buildFeatures {

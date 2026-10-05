@@ -247,6 +247,7 @@ fun NowPlayingScreen(
                 translations = state.lyricsTranslation,
                 lyricsScale = state.lyricsScale,
                 richMotion = !state.lowPowerMode && !state.reduceMotion,
+                credits = state.lyricsCredits,
             )
             else -> {
         Row(
@@ -538,6 +539,7 @@ fun NowPlayingScreen(
                             fontScale = state.lyricsScale,
                             translations = state.lyricsTranslation,
                             richMotion = !state.lowPowerMode && !state.reduceMotion,
+                            credits = state.lyricsCredits,
                         )
                     } else if (state.lyricsLoaded) {
                         // Lyrics view, fetch finished, and this song genuinely has none — say so in the
@@ -656,6 +658,7 @@ private fun FullScreenLyrics(
     translations: List<String> = emptyList(),
     lyricsScale: Float = 1f,
     richMotion: Boolean = true,
+    credits: List<String> = emptyList(),
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
@@ -692,6 +695,7 @@ private fun FullScreenLyrics(
                 autoReturnMs = 5_000L,
                 translations = translations,
                 richMotion = richMotion,
+                credits = credits,
             )
         }
         // Now-playing chip, bottom-left — same placement as the screensaver.
@@ -1341,6 +1345,7 @@ private fun LyricsPanel(
     autoReturnMs: Long = 7000L,
     translations: List<String> = emptyList(),
     richMotion: Boolean = true,
+    credits: List<String> = emptyList(),
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -1583,6 +1588,24 @@ private fun LyricsPanel(
                     modifier = Modifier.fillMaxWidth()
                         .padding(start = 6.dp, end = 16.dp, top = 5.dp, bottom = 6.dp),
                 )
+            }
+        }
+        // Songwriter credits — plain trailing text that follows the lyrics (not focusable, not seekable).
+        if (credits.isNotEmpty()) {
+            item(key = "lyrics_credits") {
+                Column(modifier = Modifier.fillMaxWidth().padding(top = 28.dp, end = 16.dp)) {
+                    Text(
+                        "Written by",
+                        style = TextStyle(fontSize = (13f * fontScale).sp, fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.5.sp, color = Color(0x66FFFFFF)),
+                    )
+                    Text(
+                        credits.joinToString(", "),
+                        style = TextStyle(fontSize = (15f * fontScale).sp, lineHeight = (21f * fontScale).sp,
+                            fontWeight = FontWeight.Medium, color = Color(0x99FFFFFF)),
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
             }
         }
     }

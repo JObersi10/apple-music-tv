@@ -180,7 +180,14 @@ data class LyricLine(
 )
 
 @JsonClass(generateAdapter = true)
-data class LyricsResponse(val lines: List<LyricLine> = emptyList(), val source: String? = null)
+data class LyricsResponse(
+    val lines: List<LyricLine> = emptyList(),
+    val source: String? = null,
+    val writtenBy: List<String> = emptyList(),
+)
+
+/** Lyrics plus their songwriter credits, from either the proxy or the standalone path. */
+data class LyricsResult(val lines: List<LyricLine> = emptyList(), val writtenBy: List<String> = emptyList())
 
 @JsonClass(generateAdapter = true)
 data class TranslateRequest(val lines: List<String>, val to: String)

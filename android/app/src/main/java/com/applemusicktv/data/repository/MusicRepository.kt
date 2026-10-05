@@ -231,8 +231,12 @@ class MusicRepository @Inject constructor(
     // ── Lyrics ────────────────────────────────────────────────────────────
     suspend fun getLyrics(songId: String, title: String = "", artist: String = "", durationSec: Long = 0) =
         if (!useProxy) runCatching {
-            directLyrics.getLyrics(songId, direct.storefront, title, artist, durationSec)
-        } else runCatching { api.getLyrics(songId).lines }
+            val lines = directLyrics.getLyrics(songId, direct.storefront, title, artist, durationSec)
+            com.applemusicktv.data.network.LyricsResult(lines, directLyrics.creditsFor(songId))
+        } else runCatching {
+            val r = api.getLyrics(songId)
+            com.applemusicktv.data.network.LyricsResult(r.lines, r.writtenBy)
+        }
 
     /** Warm the lyrics cache for an upcoming song so it shows instantly on switch. */
     suspend fun prefetchLyrics(songId: String, title: String, artist: String, durationSec: Long) {
