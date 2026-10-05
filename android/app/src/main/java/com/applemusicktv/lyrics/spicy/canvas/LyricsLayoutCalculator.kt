@@ -268,8 +268,12 @@ internal object LyricsLayoutCalculator {
                 val effectiveIsPartOfWord = word.isPartOfWord || text.isEmpty()
 
                 if (word.isLetterGroup) {
-                    var currentX = 0f
                     val graphemes = com.applemusicktv.lyrics.spicy.parser.GraphemeSegmenter.segment(text)
+                    // Position each letter at its TRUE kerned x within the whole word (from the word's own
+                    // layout), not by summing per-letter measured widths — measuring letters in isolation
+                    // loses kerning and double-counts side bearings, which spread held words ("doors",
+                    // "core") visibly wide before they're sung.
+                    var charOffset = 0
                     for (charIdx in graphemes.indices) {
                         val charText = graphemes[charIdx]
                         // Two instances of the same letter within one word (e.g. the two "a"s in
@@ -280,6 +284,8 @@ internal object LyricsLayoutCalculator {
                             letterSpacing = (style.letterSpacing.value + charIdx * 0.00000001f).sp
                         )
                         val charResult = textMeasurer.measure(charText, charStyle)
+                        val startX = runCatching { fullResult.getHorizontalPosition(charOffset, true) }
+                            .getOrDefault(0f)
                         pieces.add(Piece(
                             word = word,
                             text = charText,
@@ -287,11 +293,11 @@ internal object LyricsLayoutCalculator {
                             sourceIdx = wIdx,
                             charIdx = charIdx,
                             fullWidth = fullW,
-                            startX = currentX,
+                            startX = startX,
                             isCjkPiece = charText.firstOrNull()?.let(::isCjk) == true,
                             isPartOfWord = charIdx > 0 || effectiveIsPartOfWord
                         ))
-                        currentX += charResult.size.width
+                        charOffset += charText.length
                     }
                 } else {
                     pieces.add(Piece(

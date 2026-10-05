@@ -11,6 +11,7 @@ import com.applemusicktv.lyrics.spicy.canvas.LyricsView
 import com.applemusicktv.lyrics.spicy.models.Line as SLine
 import com.applemusicktv.lyrics.spicy.models.LineRole
 import com.applemusicktv.lyrics.spicy.models.LyricsFooter
+import com.applemusicktv.lyrics.spicy.models.LyricsProvenance
 import com.applemusicktv.lyrics.spicy.models.LyricsType
 import com.applemusicktv.lyrics.spicy.models.Word as SWord
 
@@ -35,7 +36,10 @@ fun SpicyLyricsPanel(
     richMotion: Boolean = true,
 ) {
     val built = remember(lyrics) { buildSpicyDocument(lyrics) }
-    val footer = remember(credits) { LyricsFooter(songwriters = credits) }
+    // Footer under the lyrics: "Written by …" (songwriters) + "Provided by: Spicy Lyrics" (source).
+    val footer = remember(credits) {
+        LyricsFooter(songwriters = credits, provenance = LyricsProvenance(provider = "Spicy Lyrics"))
+    }
     val docId = remember(lyrics) {
         "${built.lines.size}:${lyrics.firstOrNull()?.startMs ?: 0}:${lyrics.firstOrNull()?.text?.hashCode() ?: 0}"
     }
@@ -48,8 +52,12 @@ fun SpicyLyricsPanel(
         modifier = modifier.fillMaxSize(),
         // The renderer's base size scales with the (wide) TV canvas, so it reads large — trim it.
         fontSizeScale = fontScale * V2_FONT_SCALE,
-        // Smooth (spring) scroll was laggy + made lines flash on this Fire TV — use the default snap scroll.
-        config = if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE,
+        // Snap scroll (smooth spring was laggy + flashed). The glow halo is zeroed in LyricsAnimator
+        // (glowSpline) — NOT via glowEnabled, because that shadow path also carries the distance blur we
+        // keep. Low Power / Reduce Motion (richMotion=false) drops the software distance-blur (StackBlur),
+        // the heaviest per-frame cost — so low-power on v2 is genuinely cheap.
+        config = (if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE)
+            .copy(distanceBlurEnabled = richMotion),
         lyricsType = built.type,
         romanize = false,
         isPlaying = isPlaying,

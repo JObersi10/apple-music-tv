@@ -53,7 +53,10 @@ class LyricsAnimator(
 
     // ── Splines ──────────────────────────────────────────────────────────────────────────
     private val scaleSpline = spline(0f to 0.95f, 0.7f to 1.0505f, 1f to 1f)
-    private val glowSpline = spline(0f to 0f, 0.15f to 1f, 0.6f to 1f, 1f to 0f)
+    // Glow halo zeroed: it flashed/glitched while letters expanded (e.g. White Iverson "OT"). Kept the
+    // shadow path ENABLED (config.glowEnabled stays true) so the inactive-line distance blur — which
+    // shares that path — still renders; only the glow's own opacity is forced to 0 here.
+    private val glowSpline = spline(0f to 0f, 1f to 0f)
     private val dotScaleSpline = spline(0f to 0.75f, 0.7f to 1.05f, 1f to 1f)
     private val dotYOffsetSpline = spline(0f to 0f, 0.9f to -0.12f, 1f to 0f)
     private val dotGlowSpline = spline(0f to 0f, 0.6f to 1f, 1f to 1f)
@@ -71,8 +74,10 @@ class LyricsAnimator(
         val simple = config.isSimple
         yOffsetSpline = if (simple) spline(0f to 0.01f, 1f to -0.033f)
             else spline(0f to 0.01f, 0.9f to -1f / 60f, 1f to 0f)
-        letterScaleSpline = if (simple) spline(0f to 0.95f, 0.7f to 1.07f, 1f to 1f)
-            else spline(0f to 0.95f, 0.7f to 1.175f, 1f to 1f)
+        // Peak trimmed (1.175 → 1.08): held-word letters expanded too much, which also reserved wide
+        // pre-sung letter spacing (e.g. "doors"/"core"). Smaller peak = subtler grow + tighter spacing.
+        letterScaleSpline = if (simple) spline(0f to 0.95f, 0.7f to 1.06f, 1f to 1f)
+            else spline(0f to 0.95f, 0.7f to 1.08f, 1f to 1f)
         letterYOffsetSpline = if (simple) spline(0f to 0.01f, 0.9f to -1f / 62f, 1f to 0f)
             else spline(0f to 0.01f, 0.9f to -1f / 56f, 1f to 0f)
         dotOpacitySpline = spline(0f to (if (simple) 0.27f else 0.35f), 0.6f to 1f, 1f to 1f)
