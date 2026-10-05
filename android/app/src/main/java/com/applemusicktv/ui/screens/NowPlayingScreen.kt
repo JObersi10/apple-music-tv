@@ -533,32 +533,43 @@ fun NowPlayingScreen(
                             onMove = { from, to -> playerVm.moveQueueItem(from, to) },
                             leftFocus = playFocus,
                         )
-                    } else if (state.lyrics.isNotEmpty() && state.lyricsRendererV2) {
-                        SpicyLyricsPanel(
-                            lyrics = state.lyrics,
-                            credits = state.lyricsCredits,
-                            progressState = smoothProgress,
-                            offsetMs = state.avLyricsMs,
-                            onSeek = { ms -> playerVm.player.seekTo(ms) },
-                            fontScale = state.lyricsScale,
-                            isPlaying = state.isPlaying,
-                            richMotion = !state.lowPowerMode && !state.reduceMotion,
-                            origin = state.lyricsOrigin,
-                            maker = state.lyricsMaker,
-                            uploader = state.lyricsUploader,
-                        )
                     } else if (state.lyrics.isNotEmpty()) {
-                        LyricsPanel(
-                            lyrics = state.lyrics,
-                            progressState = smoothProgress,
-                            offsetMs = state.avLyricsMs,
-                            onSeek = { ms -> playerVm.player.seekTo(ms) },
-                            playFocus = playFocus,
-                            fontScale = state.lyricsScale,
-                            translations = state.lyricsTranslation,
-                            richMotion = !state.lowPowerMode && !state.reduceMotion,
-                            credits = state.lyricsCredits,
-                        )
+                        // Fade the lyrics in once they've loaded (and out as they clear on skip). Keyed on
+                        // song id so each new track's lyrics fade in fresh.
+                        val lyricFade = remember { androidx.compose.animation.core.Animatable(0f) }
+                        LaunchedEffect(state.currentSong?.id) {
+                            lyricFade.snapTo(0f)
+                            lyricFade.animateTo(1f, tween(450))
+                        }
+                        Box(Modifier.fillMaxSize().graphicsLayer { alpha = lyricFade.value }) {
+                            if (state.lyricsRendererV2) {
+                                SpicyLyricsPanel(
+                                    lyrics = state.lyrics,
+                                    credits = state.lyricsCredits,
+                                    progressState = smoothProgress,
+                                    offsetMs = state.avLyricsMs,
+                                    onSeek = { ms -> playerVm.player.seekTo(ms) },
+                                    fontScale = state.lyricsScale,
+                                    isPlaying = state.isPlaying,
+                                    richMotion = !state.lowPowerMode && !state.reduceMotion,
+                                    origin = state.lyricsOrigin,
+                                    maker = state.lyricsMaker,
+                                    uploader = state.lyricsUploader,
+                                )
+                            } else {
+                                LyricsPanel(
+                                    lyrics = state.lyrics,
+                                    progressState = smoothProgress,
+                                    offsetMs = state.avLyricsMs,
+                                    onSeek = { ms -> playerVm.player.seekTo(ms) },
+                                    playFocus = playFocus,
+                                    fontScale = state.lyricsScale,
+                                    translations = state.lyricsTranslation,
+                                    richMotion = !state.lowPowerMode && !state.reduceMotion,
+                                    credits = state.lyricsCredits,
+                                )
+                            }
+                        }
                     } else if (state.lyricsLoaded) {
                         // Lyrics view, fetch finished, and this song genuinely has none — say so in the
                         // middle (queue is one Menu press away). Only after loading, never while fetching.
