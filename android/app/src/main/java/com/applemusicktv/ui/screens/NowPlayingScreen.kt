@@ -77,6 +77,7 @@ import androidx.tv.material3.Border
 import android.os.Build
 import android.graphics.Bitmap
 import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import coil.Coil
 import coil.ImageLoader
 import coil.compose.AsyncImage
@@ -986,17 +987,57 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
     )
 }
 
-/** Loads the album cover as a software Bitmap (Coil, no hardware bitmap) for the Lava Lamp shader. */
+/** Loads the album cover as a software Bitmap (Coil, no hardware bitmap) for the Lava Lamp backgrounds. */
 @Composable
-private fun rememberCoverBitmap(url: String?): Bitmap? {
+private fun rememberCoverBitmap(url: String?, size: Int = 512): Bitmap? {
     val ctx = LocalContext.current
-    var bmp by remember(url) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(url) {
+    var bmp by remember(url, size) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(url, size) {
         if (url == null) { bmp = null; return@LaunchedEffect }
-        val req = ImageRequest.Builder(ctx).data(url).allowHardware(false).size(512).build()
+        val req = ImageRequest.Builder(ctx).data(url).allowHardware(false).size(size).build()
         bmp = (Coil.imageLoader(ctx).execute(req) as? SuccessResult)?.drawable?.toBitmap()
     }
     return bmp
+}
+
+/**
+ * Lava Lamp for devices WITHOUT AGSL (API < 33, this Fire TV) or Low Power: a shader-free fake. A tiny
+ * cover bitmap (64px) is upscaled to fill with bilinear filtering — that upscale IS the blur (Modifier.blur
+ * is a no-op below API 31, so we can't blur on the fly). It slowly drifts + zooms via a graphicsLayer
+ * (GPU transform of one image — cheap, no per-frame CPU, no Screen-blend passes that stuttered the old
+ * Ambient mode), saturation-boosted, under a dark vignette for lyric readability.
+ */
+@Composable
+private fun CheapLavaLampBackground(coverUrl: String?, playing: Boolean, reduceMotion: Boolean) {
+    val cover = rememberCoverBitmap(coverUrl, size = 64)
+    val move = playing && !reduceMotion
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (cover != null) {
+            val img = remember(cover) { cover.asImageBitmap() }
+            val infinite = rememberInfiniteTransition(label = "lava")
+            val zoom = if (move) infinite.animateFloat(1.18f, 1.42f,
+                infiniteRepeatable(tween(19_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "z").value else 1.3f
+            val dx = if (move) infinite.animateFloat(-0.06f, 0.06f,
+                infiniteRepeatable(tween(23_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "lx").value else 0f
+            val dy = if (move) infinite.animateFloat(0.06f, -0.06f,
+                infiniteRepeatable(tween(31_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "ly").value else 0f
+            androidx.compose.foundation.Image(
+                bitmap = img,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+                    androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(1.6f) }),
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = zoom; scaleY = zoom
+                    translationX = size.width * dx; translationY = size.height * dy
+                },
+            )
+        }
+        // Darken for lyric readability (same intent as Dynamic's overlay).
+        Box(Modifier.fillMaxSize().background(
+            Brush.radialGradient(listOf(Color(0x33000000), Color(0x99000000)))))
+        Box(Modifier.fillMaxSize().background(Color(0x22000000)))
+    }
 }
 
 private fun Color.hsvHue(): Float {
@@ -1205,22 +1246,24 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
         Box(Modifier.fillMaxSize().background(Color.Black))
         return
     }
-    // LAVALAMP: the ported @kawarp fused AGSL warp of the blurred cover. AGSL (RuntimeShader) is
-    // API 33+ only, so on an older device (this Fire TV is < 33) it can't render — fall through to
-    // the Dynamic blobs instead. Low Power also falls back (the shader is GPU-heavy).
-    if (mode == NowPlayingBackground.LAVALAMP &&
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !lowPower) {
+    // LAVALAMP: the ported @kawarp fused AGSL warp of the blurred cover on API 33+, else a shader-free
+    // fake (drifting upscaled cover) so it still looks different from Dynamic on older devices / Low Power.
+    if (mode == NowPlayingBackground.LAVALAMP) {
         val coverUrl = artworkUrlTemplate?.replace("{w}", "512")?.replace("{h}", "512")?.replace("{f}", "jpg")
-        val cover = rememberCoverBitmap(coverUrl)
-        val energyState = beatAnalyzer.energy.collectAsState()
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
-            com.applemusicktv.lyrics.spicy.canvas.kawarp.KawarpBackground(
-                coverArtBitmap = cover,
-                isPlaying = playing,
-                animate = playing && !reduceMotion,
-                // Beat nudges the warp speed; beatMultiplier (Beat Pulse) sets how much.
-                speed = { 1f + energyState.value.coerceIn(0f, 1f) * (beatMultiplier - 1f).coerceAtLeast(0f) },
-            )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !lowPower) {
+            val cover = rememberCoverBitmap(coverUrl)
+            val energyState = beatAnalyzer.energy.collectAsState()
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                com.applemusicktv.lyrics.spicy.canvas.kawarp.KawarpBackground(
+                    coverArtBitmap = cover,
+                    isPlaying = playing,
+                    animate = playing && !reduceMotion,
+                    // Beat nudges the warp speed; beatMultiplier (Beat Pulse) sets how much.
+                    speed = { 1f + energyState.value.coerceIn(0f, 1f) * (beatMultiplier - 1f).coerceAtLeast(0f) },
+                )
+            }
+        } else {
+            CheapLavaLampBackground(coverUrl, playing = playing, reduceMotion = reduceMotion || lowPower)
         }
         return
     }

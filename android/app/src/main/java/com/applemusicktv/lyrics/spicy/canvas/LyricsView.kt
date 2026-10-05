@@ -202,7 +202,6 @@ fun LyricsView(
         val line = linesUpdated.getOrNull(idx) ?: return
         val start = line.words.firstOrNull()?.startMs ?: line.startMs
         val target = if (seekFadeComp) (start - ScrollConfig.SEEK_FADE_COMPENSATION_MS).coerceAtLeast(0L) else start
-        android.util.Log.d("LyricsDpad", "seek idx=$idx start=$start target=$target")
         haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
         onSeekWordUpdated(target)
         scrollManager.onSeek()
@@ -213,7 +212,6 @@ fun LyricsView(
     val lyricsKeyHandler: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = handler@{ ev ->
         if (isStatic || selectableUpdated.isEmpty()) return@handler false
         if (ev.type != KeyEventType.KeyDown) return@handler false
-        android.util.Log.d("LyricsDpad", "key=${ev.key} sel=$selectedIndex focused=$dpadFocused")
         when (ev.key) {
             Key.DirectionDown -> { moveSelection(+1); wake.trySend(Unit); true }
             Key.DirectionUp -> {
@@ -249,9 +247,22 @@ fun LyricsView(
         }
     }
 
+    // Pre-select the current line so entering the lyrics (RIGHT) immediately highlights a line and OK
+    // scrubs — no need to press DOWN first just to start a selection.
+    fun selectCurrentLine() {
+        val list = selectableUpdated
+        if (list.isEmpty()) return
+        val now = currentTimeProvider()
+        selectedIndex = list.lastOrNull { (linesUpdated.getOrNull(it)?.startMs ?: Long.MAX_VALUE) <= now } ?: list.first()
+    }
+
     val focusModifier = if (dpadFocus != null) Modifier
         .focusRequester(dpadFocus)
-        .onFocusChanged { dpadFocused = it.hasFocus; if (!it.hasFocus) selectedIndex = null }
+        .onFocusChanged {
+            dpadFocused = it.hasFocus
+            if (!it.hasFocus) selectedIndex = null
+            else if (selectedIndex == null) selectCurrentLine()
+        }
         .focusProperties { escapeFocus?.let { fr -> left = fr; right = fr } }
         .onKeyEvent(lyricsKeyHandler)
         .focusable()

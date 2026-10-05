@@ -73,12 +73,13 @@ class LyricsAnimator(
 
     private fun rebuildModeSplines() {
         val simple = config.isSimple
-        // Full mode: the glow swells as the word is sung and HOLDS a residual at the end instead of
-        // dropping to 0 — a hard 1f→0f tail made very slow/held words flash (glow on, blink off for a
-        // frame as the word finishes, then the next word re-lit it). Keeping a floor removes that blink.
+        // Full mode: the glow swells as the word is sung, then fades back to 0 once sung so past words
+        // don't stay lit. The earlier blink on slow words ("on, off, on") was the UNDER-damped glow
+        // spring ringing (undershooting past 0 → clamped to 0 → springing back) — fixed by critically
+        // damping the glow spring (GLOW_DAMPING), not by holding a residual.
         // Low Power / Reduce Motion (simple): no glow at all — the cheapest, flattest render.
         glowSpline = if (simple) spline(0f to 0f, 1f to 0f)
-            else spline(0f to 0f, 0.6f to 0.95f, 1f to 0.45f)
+            else spline(0f to 0f, 0.65f to 1f, 1f to 0f)
         yOffsetSpline = if (simple) spline(0f to 0.01f, 1f to -0.033f)
             else spline(0f to 0.01f, 0.9f to -1f / 60f, 1f to 0f)
         // Peak trimmed (1.175 → 1.08): held-word letters expanded too much, which also reserved wide
@@ -97,7 +98,9 @@ class LyricsAnimator(
         const val Y_OFFSET_FREQUENCY = 1.45f
         const val Y_OFFSET_DAMPING = 0.4f
         const val GLOW_FREQUENCY = 1.18f
-        const val GLOW_DAMPING = 0.56f
+        // Critically damped: an under-damped glow spring (was 0.56) undershot past 0 on a fast
+        // drop and sprang back, which read as a blink on slow/held words. ~1.0 settles with no ring.
+        const val GLOW_DAMPING = 0.95f
 
         // Dot spring tuning.
         const val DOT_SCALE_FREQUENCY = 0.7f
