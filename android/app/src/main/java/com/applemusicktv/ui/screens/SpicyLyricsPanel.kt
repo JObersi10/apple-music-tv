@@ -63,10 +63,10 @@ fun SpicyLyricsPanel(
         modifier = modifier.fillMaxSize(),
         // The renderer's base size scales with the (wide) TV canvas, so it reads large — trim it.
         fontSizeScale = fontScale * V2_FONT_SCALE,
-        // Snap scroll (smooth spring was laggy + flashed). The glow halo is zeroed in LyricsAnimator
-        // (glowSpline) — NOT via glowEnabled, because that shadow path also carries the distance blur we
-        // keep. Low Power / Reduce Motion (richMotion=false) drops the software distance-blur (StackBlur),
-        // the heaviest per-frame cost — so low-power on v2 is genuinely cheap.
+        // Snap scroll (smooth spring was laggy + flashed). Glow + distance-blur are ON in full mode and
+        // dropped together in Low Power / Reduce Motion (richMotion=false → RenderConfig.SIMPLE, which
+        // zeroes glowSpline in LyricsAnimator, plus distanceBlurEnabled=false here kills the StackBlur —
+        // the heaviest per-frame cost). So low-power on v2 is genuinely cheap.
         config = (if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE)
             .copy(distanceBlurEnabled = richMotion),
         lyricsType = built.type,

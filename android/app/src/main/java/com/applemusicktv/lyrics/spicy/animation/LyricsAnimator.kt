@@ -53,10 +53,11 @@ class LyricsAnimator(
 
     // ── Splines ──────────────────────────────────────────────────────────────────────────
     private val scaleSpline = spline(0f to 0.95f, 0.7f to 1.0505f, 1f to 1f)
-    // Glow halo zeroed: it flashed/glitched while letters expanded (e.g. White Iverson "OT"). Kept the
-    // shadow path ENABLED (config.glowEnabled stays true) so the inactive-line distance blur — which
-    // shares that path — still renders; only the glow's own opacity is forced to 0 here.
-    private val glowSpline = spline(0f to 0f, 1f to 0f)
+    // Glow halo: ON in full mode (rises to a peak as the word is sung, then settles), OFF in Low
+    // Power / Reduce Motion. The shadow path itself stays ENABLED in both modes (config.glowEnabled
+    // stays true) so the inactive-line distance blur — which shares that path — always renders; in
+    // low power the glow's own curve is just zeroed. Rebuilt with the mode in rebuildModeSplines().
+    private lateinit var glowSpline: CubicSplineInterpolator
     private val dotScaleSpline = spline(0f to 0.75f, 0.7f to 1.05f, 1f to 1f)
     private val dotYOffsetSpline = spline(0f to 0f, 0.9f to -0.12f, 1f to 0f)
     private val dotGlowSpline = spline(0f to 0f, 0.6f to 1f, 1f to 1f)
@@ -72,6 +73,10 @@ class LyricsAnimator(
 
     private fun rebuildModeSplines() {
         val simple = config.isSimple
+        // Full mode: the glow swells toward the end of the word then eases back. Low Power /
+        // Reduce Motion (simple): no glow at all — the cheapest, flattest render.
+        glowSpline = if (simple) spline(0f to 0f, 1f to 0f)
+            else spline(0f to 0f, 0.7f to 1f, 1f to 0f)
         yOffsetSpline = if (simple) spline(0f to 0.01f, 1f to -0.033f)
             else spline(0f to 0.01f, 0.9f to -1f / 60f, 1f to 0f)
         // Peak trimmed (1.175 → 1.08): held-word letters expanded too much, which also reserved wide

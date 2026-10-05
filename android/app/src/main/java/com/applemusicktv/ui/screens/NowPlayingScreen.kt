@@ -348,7 +348,7 @@ fun NowPlayingScreen(
                     // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
                     @Suppress("ConstantConditionIf")
                     if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
-                        MotionCover(url = state.motionUrl!!, modifier = Modifier.fillMaxSize())
+                        MotionCover(url = state.motionUrl!!, idle = idle, modifier = Modifier.fillMaxSize())
                     }
                 }
 
@@ -873,7 +873,7 @@ private fun PlayerProgressBar(
 /** Looping, muted motion album-art video layered over the static cover. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
+internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var ready by remember(url) { mutableStateOf(false) }
@@ -950,7 +950,18 @@ internal fun MotionCover(url: String, modifier: Modifier = Modifier) {
                 player = exo
             }
         },
-        update = { view -> view.player = exo },
+        update = { view ->
+            view.player = exo
+            // The cover's whole column breathes on idle via an ANCESTOR graphicsLayer (scale 1.03 +
+            // translationY 58px). A SurfaceView gets its own hardware overlay plane positioned from its
+            // LAYOUT bounds, so it ignores ancestor draw transforms on this Fire TV — the static cover
+            // grew/rose on idle while the motion video stayed stuck at the un-idle size/spot. Replicate
+            // the transform as the view's OWN properties (these DO move the surface) so they track.
+            val s = 1f + 0.03f * idle
+            view.scaleX = s
+            view.scaleY = s
+            view.translationY = idle * 58f
+        },
         modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
 }

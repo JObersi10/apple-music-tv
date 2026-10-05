@@ -1059,9 +1059,14 @@ class PlayerViewModel @Inject constructor(
             // can come back empty (and empty isn't cached). Retry a few times while this song is
             // still the current one — otherwise lyrics never appear until you skip tracks.
             launch {
-                repeat(4) {
-                    loadLyrics(song.id)
-                    kotlinx.coroutines.delay(1500)
+                // On a COLD open the proxy may still be unreachable (bearer scrape / reachability check
+                // not settled) for longer than a few seconds, so a short 4×1.5s window gave up before the
+                // server came up — lyrics then never appeared until a skip. Retry longer, and only re-fetch
+                // (which clears to empty) while we still have nothing, so a late success isn't stomped.
+                repeat(12) {
+                    if (_state.value.currentSong?.id != song.id) return@launch
+                    if (_state.value.lyrics.isEmpty()) loadLyrics(song.id)
+                    kotlinx.coroutines.delay(2000)
                     if (_state.value.lyrics.isNotEmpty() || _state.value.currentSong?.id != song.id) return@launch
                 }
             }
