@@ -26,7 +26,7 @@ export interface SpicyMeta {
 
 interface LyricWord { startMs: number; endMs: number; text: string }
 interface LyricBackground { startMs: number; endMs: number; text: string; words: LyricWord[] }
-interface LyricLine { startMs: number; endMs: number; text: string; words: LyricWord[]; background: LyricBackground | null }
+interface LyricLine { startMs: number; endMs: number; text: string; words: LyricWord[]; background: LyricBackground | null; oppositeAligned?: boolean }
 
 const KEY = () => (process.env.SPICY_LYRICS_KEY ?? "").trim();
 export const spicyEnabled = () => KEY().length > 0;
@@ -153,7 +153,29 @@ function durationDelta(m: SpicyMeta, c: SpotifyCandidate): number {
 }
 
 // ── Spicy fetch + parse ──────────────────────────────────────────────────────
-interface SpicyHit { lines: LyricLine[]; wordSynced: boolean; songwriters: string[] }
+interface Credit { name: string; url?: string; avatar?: string }
+interface SpicyHit { lines: LyricLine[]; wordSynced: boolean; songwriters: string[]; origin: string; maker: Credit | null; uploader: Credit | null }
+
+/** "apple" → "Apple Music", community → "Spicy Lyrics Community", etc. (mirrors the app). */
+function spicyOrigin(raw: any): string {
+  const k = typeof raw === "string" ? raw.trim().toLowerCase().replace(/[-\s]/g, "_") : "";
+  if (["apple", "apple_music", "am", "aml"].includes(k)) return "Apple Music";
+  if (["spotify", "spotify_lyrics", "spt"].includes(k)) return "Spotify";
+  if (["spicy", "spicy_lyrics", "community", "spl"].includes(k)) return "Spicy Lyrics Community";
+  return k ? String(raw).trim() : "Spicy Lyrics";
+}
+
+/** Parse a Maker/Uploader entry from Spicy's UploadAttribution (string or object). */
+function parseCredit(v: any): Credit | null {
+  if (!v) return null;
+  if (typeof v === "string") return v.trim() ? { name: v.trim() } : null;
+  if (typeof v !== "object") return null;
+  const name = ["username", "Username", "name", "Name"].map((k) => v[k]).find((x) => typeof x === "string" && x.trim());
+  if (!name) return null;
+  const url = ["url", "Url", "profileUrl", "ProfileUrl"].map((k) => v[k]).find((x) => typeof x === "string" && x.startsWith("https://"));
+  const avatar = typeof v.avatar === "string" && v.avatar.startsWith("https://") ? v.avatar : undefined;
+  return { name: name.trim(), url, avatar };
+}
 
 async function fetchSpicyId(spotifyId: string): Promise<SpicyHit | null> {
   const res = await axios.get(`https://api.spicylyrics.org/v1/lyrics/${encodeURIComponent(spotifyId)}`, {
@@ -190,20 +212,33 @@ function parseSpicy(root: any): SpicyHit | null {
   const songwriters = (Array.isArray(body.SongWriters) ? body.SongWriters : [])
     .filter((s: any) => typeof s === "string" && s.trim())
     .map((s: string) => s.trim());
+  const origin = spicyOrigin(body.source);
+  const upAttr = body.UploadAttribution;
+  const maker = parseCredit(upAttr?.Maker);
+  const uploader = parseCredit(upAttr?.Uploader);
   const content = body.Content;
   const lines: LyricLine[] = [];
   let wordSynced = false;
+  // First agent = primary voice; other agents are the duet partner → right-aligned.
+  const defaultAgent: string | undefined = Array.isArray(content)
+    ? content.map((it: any) => it?.Agent ?? it?.Lead?.Agent).find((a: any) => typeof a === "string" && a) : undefined;
+  const oppositeOf = (item: any): boolean => {
+    if (typeof item?.OppositeAligned === "boolean") return item.OppositeAligned;
+    const agent = item?.Agent ?? item?.Lead?.Agent;
+    return !!agent && !!defaultAgent && agent !== defaultAgent;
+  };
 
   if (Array.isArray(content)) {
     for (const item of content) {
       if (typeof item?.Type === "string" && item.Type.toLowerCase() === "interlude") continue;
+      const opposite = oppositeOf(item);
       const lead = item?.Lead;
       if (!lead) {
         // Line-type: text + timing on the item itself.
         const text = typeof item?.Text === "string" ? item.Text.trim() : "";
         const start = item?.StartTime, end = item?.EndTime;
         if (!text || typeof start !== "number") continue;
-        lines.push({ startMs: Math.round(start * 1000), endMs: Math.round((end ?? start) * 1000), text, words: [], background: null });
+        lines.push({ startMs: Math.round(start * 1000), endMs: Math.round((end ?? start) * 1000), text, words: [], background: null, oppositeAligned: opposite });
         continue;
       }
       wordSynced = true;
@@ -221,7 +256,7 @@ function parseSpicy(root: any): SpicyHit | null {
         text: bgWords.map((w) => w.text).join(" "),
         words: bgWords,
       } : null;
-      lines.push({ startMs, endMs, text: words.map((w) => w.text).join(" ") || background?.text || "", words, background });
+      lines.push({ startMs, endMs, text: words.map((w) => w.text).join(" ") || background?.text || "", words, background, oppositeAligned: opposite });
     }
   }
 
@@ -233,7 +268,7 @@ function parseSpicy(root: any): SpicyHit | null {
     }
   }
 
-  return lines.length > 0 ? { lines, wordSynced, songwriters } : null;
+  return lines.length > 0 ? { lines, wordSynced, songwriters, origin, maker, uploader } : null;
 }
 
 /**
@@ -241,14 +276,24 @@ function parseSpicy(root: any): SpicyHit | null {
  * community upload lives on one specific id), preferring a word-synced hit. Returns null on no key,
  * no match, or any soft failure — the caller then falls through to Apple.
  */
-export async function fetchSpicyLyrics(
-  meta: SpicyMeta,
-): Promise<{ lines: LyricLine[]; synced: boolean; songwriters: string[] } | null> {
+export interface SpicyResult {
+  lines: LyricLine[];
+  synced: boolean;
+  songwriters: string[];
+  origin: string;
+  maker: Credit | null;
+  uploader: Credit | null;
+}
+
+export async function fetchSpicyLyrics(meta: SpicyMeta): Promise<SpicyResult | null> {
   if (!spicyEnabled()) return null;
   if (!meta.title || !meta.artist) return null;
 
   const ids = await resolveSpotifyIds(meta);
   if (ids.length === 0) return null;
+
+  const pack = (h: SpicyHit, synced: boolean): SpicyResult =>
+    ({ lines: h.lines, synced, songwriters: h.songwriters, origin: h.origin, maker: h.maker, uploader: h.uploader });
 
   let plainFallback: SpicyHit | null = null;
   for (const id of ids) {
@@ -256,8 +301,8 @@ export async function fetchSpicyLyrics(
     try { hit = await fetchSpicyId(id); } catch (_) { continue; }
     if (!hit) continue;
     const timed = hit.lines.some((l) => l.startMs >= 0);
-    if (hit.wordSynced || timed) return { lines: hit.lines, synced: true, songwriters: hit.songwriters };
+    if (hit.wordSynced || timed) return pack(hit, true);
     plainFallback = plainFallback ?? hit; // keep plain, keep looking for a timed id
   }
-  return plainFallback ? { lines: plainFallback.lines, synced: false, songwriters: plainFallback.songwriters } : null;
+  return plainFallback ? pack(plainFallback, false) : null;
 }

@@ -177,17 +177,32 @@ data class LyricLine(
     val text:       String,
     val words:      List<LyricWord> = emptyList(),
     val background: LyricBackground? = null,
+    /** Duet/alternate-vocal line — right-aligned in the v2 renderer. */
+    val oppositeAligned: Boolean = false,
 )
+
+@JsonClass(generateAdapter = true)
+data class LyricsCreditDto(val name: String, val url: String? = null, val avatar: String? = null)
 
 @JsonClass(generateAdapter = true)
 data class LyricsResponse(
     val lines: List<LyricLine> = emptyList(),
     val source: String? = null,
     val writtenBy: List<String> = emptyList(),
+    /** Spicy "source" origin, e.g. "Apple Music" / "Spicy Lyrics Community". */
+    val origin: String? = null,
+    val maker: LyricsCreditDto? = null,
+    val uploader: LyricsCreditDto? = null,
 )
 
-/** Lyrics plus their songwriter credits, from either the proxy or the standalone path. */
-data class LyricsResult(val lines: List<LyricLine> = emptyList(), val writtenBy: List<String> = emptyList())
+/** Lyrics plus their footer credits, from either the proxy or the standalone path. */
+data class LyricsResult(
+    val lines: List<LyricLine> = emptyList(),
+    val writtenBy: List<String> = emptyList(),
+    val origin: String? = null,
+    val maker: LyricsCreditDto? = null,
+    val uploader: LyricsCreditDto? = null,
+)
 
 @JsonClass(generateAdapter = true)
 data class TranslateRequest(val lines: List<String>, val to: String)

@@ -118,6 +118,10 @@ data class PlayerState(
     val lyricsLoaded:     Boolean         = false,
     /** Songwriter credits for the current song, shown as trailing text under the lyrics. Empty = none. */
     val lyricsCredits:    List<String>    = emptyList(),
+    /** Spicy footer extras for the v2 renderer: source origin + community maker/uploader. */
+    val lyricsOrigin:     String?         = null,
+    val lyricsMaker:      com.applemusicktv.data.network.LyricsCreditDto? = null,
+    val lyricsUploader:   com.applemusicktv.data.network.LyricsCreditDto? = null,
     /** Translated text per lyric line, aligned by index to [lyrics]. Empty = not translated. */
     val lyricsTranslation: List<String>   = emptyList(),
     val translateLyrics:  Boolean         = false,
@@ -253,6 +257,8 @@ class PlayerViewModel @Inject constructor(
     // full-screen lyrics, flashed the view back to the player for a beat.
     private val lyricsCache = java.util.concurrent.ConcurrentHashMap<String, List<LyricLine>>()
     private val creditsCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    // Spicy footer extras (origin, maker, uploader) per song id, for the v2 renderer footer.
+    private val footerCache = java.util.concurrent.ConcurrentHashMap<String, com.applemusicktv.data.network.LyricsResult>()
     private var motionJob: kotlinx.coroutines.Job? = null
     private var fadeJob: kotlinx.coroutines.Job? = null
     private var crossfadeInProgress = false
@@ -2093,7 +2099,7 @@ class PlayerViewModel @Inject constructor(
         val d = viewModelScope.async {
             val res = repo.getLyrics(id, title, artist, durationSec)
                 .getOrDefault(com.applemusicktv.data.network.LyricsResult())
-            if (res.lines.isNotEmpty()) { lyricsCache[id] = res.lines; creditsCache[id] = res.writtenBy }
+            if (res.lines.isNotEmpty()) { lyricsCache[id] = res.lines; creditsCache[id] = res.writtenBy; footerCache[id] = res }
             lyricsInFlight.remove(id)
             res.lines
         }
@@ -2105,9 +2111,13 @@ class PlayerViewModel @Inject constructor(
         lyricsJob?.cancel()
         // New song → clear stale lyrics/translation and mark "not loaded yet" so the UI shows nothing
         // (not "No Lyrics Found") until the fetch actually completes.
-        _state.update { it.copy(lyrics = emptyList(), lyricsTranslation = emptyList(), lyricsLoaded = false, lyricsCredits = emptyList()) }
+        _state.update { it.copy(lyrics = emptyList(), lyricsTranslation = emptyList(), lyricsLoaded = false, lyricsCredits = emptyList(), lyricsOrigin = null, lyricsMaker = null, lyricsUploader = null) }
         lyricsCache[songId]?.let { cached ->
-            if (_state.value.currentSong?.id == songId) { _state.update { it.copy(lyrics = cached, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList()) }; if (_state.value.translateLyrics) fetchTranslation(songId) }
+            if (_state.value.currentSong?.id == songId) {
+                val fx = footerCache[songId]
+                _state.update { it.copy(lyrics = cached, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList(), lyricsOrigin = fx?.origin, lyricsMaker = fx?.maker, lyricsUploader = fx?.uploader) }
+                if (_state.value.translateLyrics) fetchTranslation(songId)
+            }
             return
         }
         val song = _state.value.currentSong?.takeIf { it.id == songId }
@@ -2115,7 +2125,8 @@ class PlayerViewModel @Inject constructor(
             val lines = fetchLyricsShared(songId, song?.title ?: "", song?.artistName ?: "", (song?.durationMs ?: 0L) / 1000).await()
             if (_state.value.currentSong?.id == songId) {
                 // Mark loaded whether or not lines came back, so "No Lyrics Found" can show only now.
-                _state.update { it.copy(lyrics = lines, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList()) }
+                val fx = footerCache[songId]
+                _state.update { it.copy(lyrics = lines, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList(), lyricsOrigin = fx?.origin, lyricsMaker = fx?.maker, lyricsUploader = fx?.uploader) }
                 if (lines.isNotEmpty() && _state.value.translateLyrics) fetchTranslation(songId)
             }
         }

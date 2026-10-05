@@ -27,7 +27,14 @@ import javax.inject.Singleton
  * through to Apple/lrclib. Uses its OWN OkHttpClient: the @Named("direct") client force-attaches
  * Apple Authorization/Media-User-Token to every request, which must NOT reach Spotify or Spicy.
  */
-data class SpicyResult(val lines: List<LyricLine>, val synced: Boolean, val writtenBy: List<String>)
+data class SpicyResult(
+    val lines: List<LyricLine>,
+    val synced: Boolean,
+    val writtenBy: List<String>,
+    val origin: String = "Spicy Lyrics",
+    val maker: com.applemusicktv.data.network.LyricsCreditDto? = null,
+    val uploader: com.applemusicktv.data.network.LyricsCreditDto? = null,
+)
 
 @Singleton
 class SpicyLyricsSource @Inject constructor() {
@@ -217,20 +224,34 @@ class SpicyLyricsSource @Inject constructor() {
         val body = root.optJSONObject("Body") ?: return null
         val writers = ArrayList<String>()
         body.optJSONArray("SongWriters")?.let { for (i in 0 until it.length()) it.optString(i).trim().takeIf { s -> s.isNotEmpty() }?.let(writers::add) }
+        val origin = spicyOrigin(body.optString("source"))
+        val upAttr = body.optJSONObject("UploadAttribution")
+        val maker = parseCredit(upAttr?.opt("Maker"))
+        val uploader = parseCredit(upAttr?.opt("Uploader"))
 
         val lines = ArrayList<LyricLine>()
         val content = body.optJSONArray("Content")
+        // The first agent seen is the "primary" voice; other agents are the duet partner → right-aligned.
+        var defaultAgent: String? = null
+        if (content != null) for (i in 0 until content.length()) {
+            val it = content.optJSONObject(i) ?: continue
+            val a = it.optString("Agent").ifBlank { it.optJSONObject("Lead")?.optString("Agent").orEmpty() }
+            if (a.isNotBlank()) { defaultAgent = a; break }
+        }
         if (content != null) {
             for (i in 0 until content.length()) {
                 val item = content.optJSONObject(i) ?: continue
                 if (item.optString("Type").equals("Interlude", true)) continue
                 val lead = item.optJSONObject("Lead")
+                val agent = item.optString("Agent").ifBlank { lead?.optString("Agent").orEmpty() }
+                val opposite = if (item.has("OppositeAligned")) item.optBoolean("OppositeAligned")
+                    else agent.isNotBlank() && defaultAgent != null && agent != defaultAgent
                 if (lead == null) {
                     val text = item.optString("Text").trim()
                     if (text.isEmpty() || !item.has("StartTime")) continue
                     val start = (item.optDouble("StartTime") * 1000).toLong()
                     val end = (item.optDouble("EndTime", item.optDouble("StartTime")) * 1000).toLong()
-                    lines.add(LyricLine(start, end, text, emptyList(), null)); continue
+                    lines.add(LyricLine(start, end, text, emptyList(), null, opposite)); continue
                 }
                 val words = mergeSyllables(lead.optJSONArray("Syllables"))
                 val bgWords = ArrayList<LyricWord>()
@@ -244,13 +265,41 @@ class SpicyLyricsSource @Inject constructor() {
                     bgWords.minOf { it.startMs }, bgWords.maxOf { it.endMs },
                     bgWords.joinToString(" ") { it.text }, bgWords) else null
                 lines.add(LyricLine(start, end,
-                    words.joinToString(" ") { it.text }.ifEmpty { background?.text ?: "" }, words, background))
+                    words.joinToString(" ") { it.text }.ifEmpty { background?.text ?: "" }, words, background, opposite))
             }
         }
         if (lines.isEmpty()) body.optJSONArray("Lines")?.let {
             for (i in 0 until it.length()) it.optJSONObject(i)?.optString("Text")?.trim()
                 ?.takeIf { s -> s.isNotEmpty() }?.let { t -> lines.add(LyricLine(-1, -1, t, emptyList(), null)) }
         }
-        return if (lines.isNotEmpty()) SpicyResult(lines, lines.any { it.startMs >= 0 }, writers) else null
+        return if (lines.isNotEmpty())
+            SpicyResult(lines, lines.any { it.startMs >= 0 }, writers, origin, maker, uploader) else null
+    }
+
+    private fun spicyOrigin(raw: String?): String {
+        val k = raw?.trim()?.lowercase()?.replace(Regex("[-\\s]"), "_") ?: ""
+        return when (k) {
+            "apple", "apple_music", "am", "aml" -> "Apple Music"
+            "spotify", "spotify_lyrics", "spt" -> "Spotify"
+            "spicy", "spicy_lyrics", "community", "spl" -> "Spicy Lyrics Community"
+            "" -> "Spicy Lyrics"
+            else -> raw!!.trim()
+        }
+    }
+
+    private fun parseCredit(v: Any?): com.applemusicktv.data.network.LyricsCreditDto? {
+        when (v) {
+            null -> return null
+            is String -> return v.trim().takeIf { it.isNotEmpty() }?.let { com.applemusicktv.data.network.LyricsCreditDto(it) }
+            is JSONObject -> {
+                val name = sequenceOf("username", "Username", "name", "Name")
+                    .mapNotNull { v.optString(it).takeIf { s -> s.isNotBlank() } }.firstOrNull() ?: return null
+                val url = sequenceOf("url", "Url", "profileUrl", "ProfileUrl")
+                    .mapNotNull { v.optString(it).takeIf { s -> s.startsWith("https://") } }.firstOrNull()
+                val avatar = v.optString("avatar").takeIf { it.startsWith("https://") }
+                return com.applemusicktv.data.network.LyricsCreditDto(name.trim(), url, avatar)
+            }
+            else -> return null
+        }
     }
 }

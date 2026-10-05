@@ -6,10 +6,12 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.applemusicktv.data.network.LyricLine
+import com.applemusicktv.data.network.LyricsCreditDto
 import com.applemusicktv.lyrics.spicy.RenderConfig
 import com.applemusicktv.lyrics.spicy.canvas.LyricsView
 import com.applemusicktv.lyrics.spicy.models.Line as SLine
 import com.applemusicktv.lyrics.spicy.models.LineRole
+import com.applemusicktv.lyrics.spicy.models.LyricsCredit
 import com.applemusicktv.lyrics.spicy.models.LyricsFooter
 import com.applemusicktv.lyrics.spicy.models.LyricsProvenance
 import com.applemusicktv.lyrics.spicy.models.LyricsType
@@ -34,11 +36,20 @@ fun SpicyLyricsPanel(
     fontScale: Float = 1f,
     isPlaying: Boolean = true,
     richMotion: Boolean = true,
+    origin: String? = null,
+    maker: LyricsCreditDto? = null,
+    uploader: LyricsCreditDto? = null,
 ) {
     val built = remember(lyrics) { buildSpicyDocument(lyrics) }
-    // Footer under the lyrics: "Written by …" (songwriters) + "Provided by: Spicy Lyrics" (source).
-    val footer = remember(credits) {
-        LyricsFooter(songwriters = credits, provenance = LyricsProvenance(provider = "Spicy Lyrics"))
+    // Footer under the lyrics: "Written by …", "Provided by: <origin>", the community note, and the
+    // "Made by @…" / "Uploaded by @…" credits with avatars — exactly like Spicy Player.
+    val footer = remember(credits, origin, maker, uploader) {
+        LyricsFooter(
+            songwriters = credits,
+            provenance = LyricsProvenance(provider = "Spicy Lyrics", contributor = origin),
+            maker = maker?.let { LyricsCredit(it.name, it.url, it.avatar) },
+            uploader = uploader?.let { LyricsCredit(it.name, it.url, it.avatar) },
+        )
     }
     val docId = remember(lyrics) {
         "${built.lines.size}:${lyrics.firstOrNull()?.startMs ?: 0}:${lyrics.firstOrNull()?.text?.hashCode() ?: 0}"
@@ -90,7 +101,8 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>): SpicyDoc {
             anyWords = true
             ln.words.map { SWord(it.text, it.startMs, it.endMs) }
         } else tokenize(ln.text, ln.startMs, ln.endMs) // line-synced: split so the line can wrap
-        out.add(SLine(leadWords, ln.startMs, ln.endMs, role = LineRole.LEAD, groupId = i))
+        out.add(SLine(leadWords, ln.startMs, ln.endMs, role = LineRole.LEAD, groupId = i,
+            oppositeAligned = ln.oppositeAligned)) // duet/alternate vocals → right-aligned
 
         ln.background?.let { bg ->
             val bgEnd = if (bg.endMs > 0) bg.endMs else ln.endMs

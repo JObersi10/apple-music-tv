@@ -29,7 +29,10 @@ lyrics.get("/:songId", async (c) => {
         if (spicy && spicy.lines.length > 0) {
           const wordCount = spicy.lines.reduce((n, l) => n + l.words.length, 0);
           console.log(`[lyrics] ${songId} spicy ${wordCount > 0 ? `word-by-word (${wordCount} words, ${spicy.lines.length} lines)` : `${spicy.synced ? "line" : "plain"} (${spicy.lines.length} lines)`} ${Date.now() - t0}ms`);
-          return c.json({ lines: spicy.lines, source: "spicy", synced: spicy.synced, writtenBy: spicy.songwriters });
+          return c.json({
+            lines: spicy.lines, source: "spicy", synced: spicy.synced,
+            writtenBy: spicy.songwriters, origin: spicy.origin, maker: spicy.maker, uploader: spicy.uploader,
+          });
         }
       }
     } catch (e: any) { console.warn(`[lyrics] ${songId} spicy failed: ${e.message}`); }

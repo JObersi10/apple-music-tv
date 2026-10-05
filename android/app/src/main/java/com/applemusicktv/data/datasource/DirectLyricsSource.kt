@@ -24,9 +24,12 @@ class DirectLyricsSource @Inject constructor(
     @Named("direct") private val httpClient: OkHttpClient,
     private val spicy: SpicyLyricsSource,
 ) {
-    // Songwriter credits for the last-fetched songs (set by the Spicy path). Read via creditsFor().
+    // Footer credits for the last-fetched songs (set by the Spicy path).
     private val credits = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+    private val footerExtra = java.util.concurrent.ConcurrentHashMap<String, SpicyResult>()
     fun creditsFor(songId: String): List<String> = credits[songId] ?: emptyList()
+    /** Origin / maker / uploader for [songId] from the Spicy fetch, or null. */
+    fun footerFor(songId: String): SpicyResult? = footerExtra[songId]
 
     // Prefetched / previously-resolved lyrics, keyed by songId. Lets the N+1
     // prefetch warm the next song's lyrics so they appear instantly on switch.
@@ -97,6 +100,7 @@ class DirectLyricsSource @Inject constructor(
             val r = spicy.fetch(title, artist, "", durationSec)
             if (r != null && r.lines.isNotEmpty()) {
                 credits[songId] = r.writtenBy
+                footerExtra[songId] = r
                 return@withContext r.lines.also { store(songId, it) }
             }
         }

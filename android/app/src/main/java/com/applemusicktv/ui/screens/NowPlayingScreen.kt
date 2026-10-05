@@ -249,6 +249,9 @@ fun NowPlayingScreen(
                 richMotion = !state.lowPowerMode && !state.reduceMotion,
                 credits = state.lyricsCredits,
                 rendererV2 = state.lyricsRendererV2,
+                origin = state.lyricsOrigin,
+                maker = state.lyricsMaker,
+                uploader = state.lyricsUploader,
             )
             else -> {
         Row(
@@ -540,6 +543,9 @@ fun NowPlayingScreen(
                             fontScale = state.lyricsScale,
                             isPlaying = state.isPlaying,
                             richMotion = !state.lowPowerMode && !state.reduceMotion,
+                            origin = state.lyricsOrigin,
+                            maker = state.lyricsMaker,
+                            uploader = state.lyricsUploader,
                         )
                     } else if (state.lyrics.isNotEmpty()) {
                         LyricsPanel(
@@ -672,6 +678,9 @@ private fun FullScreenLyrics(
     richMotion: Boolean = true,
     credits: List<String> = emptyList(),
     rendererV2: Boolean = false,
+    origin: String? = null,
+    maker: com.applemusicktv.data.network.LyricsCreditDto? = null,
+    uploader: com.applemusicktv.data.network.LyricsCreditDto? = null,
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
@@ -708,6 +717,9 @@ private fun FullScreenLyrics(
                     fontScale = 1.3f * lyricsScale,
                     isPlaying = isPlaying,
                     richMotion = richMotion,
+                    origin = origin,
+                    maker = maker,
+                    uploader = uploader,
                 )
             } else {
                 LyricsPanel(
