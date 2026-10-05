@@ -7,7 +7,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.applemusicktv.data.network.LyricLine
 import com.applemusicktv.lyrics.spicy.RenderConfig
-import com.applemusicktv.lyrics.spicy.ScrollConfig
 import com.applemusicktv.lyrics.spicy.canvas.LyricsView
 import com.applemusicktv.lyrics.spicy.models.Line as SLine
 import com.applemusicktv.lyrics.spicy.models.LineRole
@@ -49,9 +48,8 @@ fun SpicyLyricsPanel(
         modifier = modifier.fillMaxSize(),
         // The renderer's base size scales with the (wide) TV canvas, so it reads large — trim it.
         fontSizeScale = fontScale * V2_FONT_SCALE,
-        // Smooth (spring) scrolling carries speed between lines instead of snapping.
-        config = (if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE)
-            .copy(scroll = ScrollConfig(smooth = true)),
+        // Smooth (spring) scroll was laggy + made lines flash on this Fire TV — use the default snap scroll.
+        config = if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE,
         lyricsType = built.type,
         romanize = false,
         isPlaying = isPlaying,

@@ -37,6 +37,17 @@ class SpicyLyricsSource @Inject constructor() {
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        // Mirror Spotify-search + Spicy-lyrics calls into the shared NetworkLog so they show up in the
+        // :8080 page and the bug report (this client has no proxy interceptor of its own).
+        .addInterceptor { chain ->
+            val t0 = System.currentTimeMillis()
+            val resp = chain.proceed(chain.request())
+            com.applemusicktv.data.NetworkLog.add(
+                chain.request().method, chain.request().url.toString(), resp.code,
+                System.currentTimeMillis() - t0,
+            )
+            resp
+        }
         .build()
 
     @Volatile private var cachedToken: String? = null

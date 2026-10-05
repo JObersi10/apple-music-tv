@@ -211,7 +211,7 @@ internal object LyricsLayoutCalculator {
             val wordGap = if (textMode) {
                 textMeasurer.measure(text = AnnotatedString("a a"), style = gapStyle).size.width -
                     textMeasurer.measure(text = AnnotatedString("aa"), style = gapStyle).size.width.toFloat()
-            } else zero.size.width.toFloat() * 0.32f
+            } else zero.size.width.toFloat() * 0.18f  // tightened from 0.32ch — read too wide on the TV
             // A left-aligned word element's box includes its trailing 0.32ch (an ::after margin,
             // absent on the line's last word), so it must fit too. Opposite-aligned lines use
             // column-gap instead, which only sits between words on the same row.
