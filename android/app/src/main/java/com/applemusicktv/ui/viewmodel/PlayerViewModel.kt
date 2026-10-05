@@ -2040,6 +2040,14 @@ class PlayerViewModel @Inject constructor(
     fun prefetchAudio(song: Song) { if (!song.isMusicVideo) prefetchSong(song) }
 
     private fun prefetchSong(song: Song) {
+        // Warm the next cover into Coil's memory/disk cache so Now Playing doesn't fetch+decode it
+        // on the song change (artwork, NOT the motion video — motion has its own heavier path).
+        runCatching {
+            song.artworkUrl(456)?.let { art ->
+                coil.Coil.imageLoader(context).enqueue(
+                    coil.request.ImageRequest.Builder(context).data(art).build())
+            }
+        }
         if (!_state.value.isFullStream) return
         // Music videos are decrypted+played by the video player, not the audio stream route —
         // prefetching one via /api/stream just 404s ("No playable asset"). The video player has

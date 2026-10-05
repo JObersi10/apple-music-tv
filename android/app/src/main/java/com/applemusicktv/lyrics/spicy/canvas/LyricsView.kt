@@ -202,6 +202,7 @@ fun LyricsView(
         val line = linesUpdated.getOrNull(idx) ?: return
         val start = line.words.firstOrNull()?.startMs ?: line.startMs
         val target = if (seekFadeComp) (start - ScrollConfig.SEEK_FADE_COMPENSATION_MS).coerceAtLeast(0L) else start
+        android.util.Log.d("LyricsDpad", "seek idx=$idx start=$start target=$target")
         haptics.performHapticFeedback(HapticFeedbackType.ContextClick)
         onSeekWordUpdated(target)
         scrollManager.onSeek()
@@ -212,6 +213,7 @@ fun LyricsView(
     val lyricsKeyHandler: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = handler@{ ev ->
         if (isStatic || selectableUpdated.isEmpty()) return@handler false
         if (ev.type != KeyEventType.KeyDown) return@handler false
+        android.util.Log.d("LyricsDpad", "key=${ev.key} sel=$selectedIndex focused=$dpadFocused")
         when (ev.key) {
             Key.DirectionDown -> { moveSelection(+1); wake.trySend(Unit); true }
             Key.DirectionUp -> {

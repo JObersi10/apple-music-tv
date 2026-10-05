@@ -73,10 +73,12 @@ class LyricsAnimator(
 
     private fun rebuildModeSplines() {
         val simple = config.isSimple
-        // Full mode: the glow swells toward the end of the word then eases back. Low Power /
-        // Reduce Motion (simple): no glow at all — the cheapest, flattest render.
+        // Full mode: the glow swells as the word is sung and HOLDS a residual at the end instead of
+        // dropping to 0 — a hard 1f→0f tail made very slow/held words flash (glow on, blink off for a
+        // frame as the word finishes, then the next word re-lit it). Keeping a floor removes that blink.
+        // Low Power / Reduce Motion (simple): no glow at all — the cheapest, flattest render.
         glowSpline = if (simple) spline(0f to 0f, 1f to 0f)
-            else spline(0f to 0f, 0.7f to 1f, 1f to 0f)
+            else spline(0f to 0f, 0.6f to 0.95f, 1f to 0.45f)
         yOffsetSpline = if (simple) spline(0f to 0.01f, 1f to -0.033f)
             else spline(0f to 0.01f, 0.9f to -1f / 60f, 1f to 0f)
         // Peak trimmed (1.175 → 1.08): held-word letters expanded too much, which also reserved wide
