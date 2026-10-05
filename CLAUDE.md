@@ -173,12 +173,13 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - **To grab logs yourself:** `http://<FireTV-IP>:8080/bug-report` (network + app log + last crash). Spicy/Spotify calls appear there.
 
 ### Lyrics roadmap / open items (handoff)
-- **Glow:** currently zeroed globally. DESIRED: restore the glow normally and disable it (plus maybe blur + other extras) ONLY in Low Power mode — i.e. move the glow-off into the `richMotion`/low-power branch instead of zeroing `glowSpline` unconditionally.
-- **D-pad lyric selection + scrub:** NOT done. The ported `LyricsView` is touch-only (`detectTapGestures` → `onSeekWord`). TV needs: focusable + `onKeyEvent`, a selected-line index, scroll target override to the selection (in the frame loop ~L324), a highlight draw, and OK-to-seek. Biggest remaining piece.
-- **Scroll jumps forward for ~1s when playback starts** — still happens. Suspect the smooth-progress anchor / `PlaybackClock` extrapolation or `scrollPolicy` target at t≈0; needs a log/trace.
-- **Motion cover sizing stuck on the un-idle size when idle** — the "motion thing" (NOT lyrics). `MotionCover` uses `RESIZE_MODE_FILL`; the SurfaceView size doesn't update when chrome idles. Investigate the motion `PlayerView` layout vs the idle chrome state. (User unsure it was ever fixed — it was NOT changed this round.)
-- **Blur pre-play:** reported OK now (blur present on load).
-- **Lyrics don't load on cold app open** (only after a skip) and **standalone prefetch not completing** (N+1 bg decrypt didn't finish in 3 min per logs) — both need an app-open bug report to diagnose.
+All of the below are CODE-COMPLETE but **built/verified only later** (no build this round) — test on-device, tune constants:
+- **Glow:** DONE — `glowSpline` is now mode-dependent in `LyricsAnimator.rebuildModeSplines()`: a rise-to-peak-then-settle curve in full mode, zeroed in Low Power / Reduce Motion (simple). Shadow path stays enabled so distance blur keeps working in both. If the full-mode glow flashes again, flatten the `0.7 to 1f` peak.
+- **D-pad lyric selection + scrub:** DONE — `LyricsView` takes `dpadFocus`/`escapeFocus`, is focusable + `onKeyEvent`. Up/Down steps a `selectedIndex` over lead lines, a soft pill highlights it, the frame-loop scroll override glides to it (`sel` branch) and blur is suppressed; OK/Center seeks to the line, Up-past-top / Left / Right / 7s-idle escape to the transport. Wired in both Now Playing panel and full-screen lyrics (`escapeFocus = playFocus`).
+- **Scroll jumps forward ~1s when playback starts:** FIXED — `rememberSmoothProgressMs` now re-anchors (`anchorRealMs`/`anchorPosMs`/`smoothMs = reportedMs`) when `isPlaying` flips true; it was leaping forward by the paused duration.
+- **Motion cover sizing stuck on the un-idle size when idle:** FIXED — the column's idle breathe is an ancestor `graphicsLayer` scale/translate, which never reaches the motion `SurfaceView`'s overlay plane. `MotionCover(idle=…)` now applies `scaleX/scaleY/translationY` as the view's OWN properties (those move the surface).
+- **Lyrics don't load on cold app open:** retry widened (`restoreState`: 4×1.5s → 12×2s, only re-fetches while still empty) so a late-reachable proxy still fills them without a skip. **Standalone prefetch N+1 not completing** — still open, needs an app-open bug report.
+- **lavalamp / kawarp background** — still PARKED (ported, not wired as a background mode/default).
 - Full credits need the proxy restarted to pick up the new `.env` key + routes; standalone works today.
 
 ## Library
