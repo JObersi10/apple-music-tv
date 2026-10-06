@@ -283,15 +283,11 @@ fun NowPlayingScreen(
             // Left — artwork + info + controls, grouped and vertically centred so idle (controls
             // hidden) doesn't leave an awkward void. Eases up slightly as it settles into idle.
             Column(
-                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp)
-                    .graphicsLayer {
-                        // On idle the controls + progress bar fade but still hold their layout space,
-                        // which leaves the art sitting high. Ease the whole group DOWN a touch (and a
-                        // hair larger) so the artwork + title + artist settle into the visual centre.
-                        val s = 1f + 0.03f * idle
-                        scaleX = s; scaleY = s
-                        translationY = idle * 58f
-                    },
+                // No idle breathe here: it scaled/translated the whole group, but a motion-art
+                // SurfaceView can't follow an ancestor graphicsLayer on this Fire TV, so the video slid
+                // off the album cover (moved down / drifted left) on idle. Keeping the artwork fixed pins
+                // the motion video exactly on the cover. Controls still fade via chromeAlpha.
+                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -528,6 +524,35 @@ fun NowPlayingScreen(
                     color = Color(0x99FFFFFF),
                     modifier = Modifier.align(Alignment.End).padding(bottom = 6.dp).graphicsLayer { alpha = hintAlpha },
                 )
+                // Held lyrics snapshot: on skip the OLD lyrics fade OUT (shown from this snapshot), then
+                // the snapshot swaps to the new song at alpha 0 and fades IN. Without holding, the panel
+                // either vanished instantly (lyrics cleared to empty) or hard-swapped showing the new
+                // lines at the PREVIOUS song's timestamp for a frame. Same-song late loads adopt silently.
+                val lyricFade = remember { androidx.compose.animation.core.Animatable(1f) }
+                var shownSongId by remember { mutableStateOf(state.currentSong?.id) }
+                var shownLyr by remember { mutableStateOf(state.lyrics) }
+                var shownCredits by remember { mutableStateOf(state.lyricsCredits) }
+                var shownOrigin by remember { mutableStateOf(state.lyricsOrigin) }
+                var shownMaker by remember { mutableStateOf(state.lyricsMaker) }
+                var shownUploader by remember { mutableStateOf(state.lyricsUploader) }
+                var shownTranslation by remember { mutableStateOf(state.lyricsTranslation) }
+                LaunchedEffect(state.currentSong?.id) {
+                    if (shownSongId == state.currentSong?.id) return@LaunchedEffect
+                    lyricFade.animateTo(0f, tween(180))
+                    shownSongId = state.currentSong?.id
+                    shownLyr = state.lyrics; shownCredits = state.lyricsCredits
+                    shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
+                    shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
+                    lyricFade.animateTo(1f, tween(400))
+                }
+                LaunchedEffect(state.lyrics, state.lyricsLoaded) {
+                    // Lyrics arrived (or changed) for the song already shown — adopt without a fade.
+                    if (state.currentSong?.id == shownSongId) {
+                        shownLyr = state.lyrics; shownCredits = state.lyricsCredits
+                        shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
+                        shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
+                    }
+                }
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight().onFocusChanged { rightFocused = it.hasFocus }) {
                     if (state.isLiveRadio) {
                         // Live radio: no Up Next (single continuous stream) and no lyrics (can't sync
@@ -542,44 +567,35 @@ fun NowPlayingScreen(
                             onMove = { from, to -> playerVm.moveQueueItem(from, to) },
                             leftFocus = playFocus,
                         )
-                    } else if (state.lyrics.isNotEmpty()) {
-                        // Fade the lyrics in once they've loaded (and out as they clear on skip). Keyed on
-                        // song id so each new track's lyrics fade in fresh.
-                        val lyricFade = remember { androidx.compose.animation.core.Animatable(0f) }
-                        LaunchedEffect(state.currentSong?.id) {
-                            // Fade the OLD lyrics OUT on skip, then the new ones IN — instead of snapping
-                            // to 0 (which left the previous song's lyrics hanging until the new load).
-                            lyricFade.animateTo(0f, tween(200))
-                            lyricFade.animateTo(1f, tween(420))
-                        }
+                    } else if (shownLyr.isNotEmpty()) {
                         Box(Modifier.fillMaxSize().graphicsLayer { alpha = lyricFade.value }) {
                             if (state.lyricsRendererV2) {
                                 SpicyLyricsPanel(
-                                    lyrics = state.lyrics,
-                                    credits = state.lyricsCredits,
+                                    lyrics = shownLyr,
+                                    credits = shownCredits,
                                     progressState = smoothProgress,
                                     offsetMs = state.avLyricsMs,
                                     onSeek = { ms -> playerVm.player.seekTo(ms) },
                                     fontScale = state.lyricsScale,
                                     isPlaying = state.isPlaying,
                                     richMotion = !state.lowPowerMode && !state.reduceMotion,
-                                    origin = state.lyricsOrigin,
-                                    maker = state.lyricsMaker,
-                                    uploader = state.lyricsUploader,
+                                    origin = shownOrigin,
+                                    maker = shownMaker,
+                                    uploader = shownUploader,
                                     dpadFocus = lyricsV2Focus,
                                     escapeFocus = playFocus,
                                 )
                             } else {
                                 LyricsPanel(
-                                    lyrics = state.lyrics,
+                                    lyrics = shownLyr,
                                     progressState = smoothProgress,
                                     offsetMs = state.avLyricsMs,
                                     onSeek = { ms -> playerVm.player.seekTo(ms) },
                                     playFocus = playFocus,
                                     fontScale = state.lyricsScale,
-                                    translations = state.lyricsTranslation,
+                                    translations = shownTranslation,
                                     richMotion = !state.lowPowerMode && !state.reduceMotion,
-                                    credits = state.lyricsCredits,
+                                    credits = shownCredits,
                                 )
                             }
                         }
@@ -739,7 +755,7 @@ private fun FullScreenLyrics(
                     progressState = progressState,
                     offsetMs = offsetMs,
                     onSeek = onSeek,
-                    fontScale = 1.3f * lyricsScale,
+                    fontScale = 0.95f * lyricsScale,
                     isPlaying = isPlaying,
                     richMotion = richMotion,
                     origin = origin,
@@ -755,7 +771,7 @@ private fun FullScreenLyrics(
                     offsetMs = offsetMs,
                     onSeek = onSeek,
                     playFocus = playFocus,
-                    fontScale = 1.3f * lyricsScale,
+                    fontScale = 0.95f * lyricsScale,
                     autoReturnMs = 5_000L,
                     translations = translations,
                     richMotion = richMotion,
@@ -973,18 +989,9 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
                 player = exo
             }
         },
-        update = { view ->
-            view.player = exo
-            // The cover's whole column breathes on idle via an ANCESTOR graphicsLayer (scale 1.03 +
-            // translationY 58px). A SurfaceView gets its own hardware overlay plane positioned from its
-            // LAYOUT bounds, so it ignores ancestor draw transforms on this Fire TV — the static cover
-            // grew/rose on idle while the motion video stayed stuck at the un-idle size/spot. Replicate
-            // the transform as the view's OWN properties (these DO move the surface) so they track.
-            val s = 1f + 0.03f * idle
-            view.scaleX = s
-            view.scaleY = s
-            view.translationY = idle * 58f
-        },
+        // No view transform: the artwork no longer breathes on idle (the column's scale/translate was
+        // removed), so the motion surface stays exactly on the album cover — and isn't softly upscaled.
+        update = { view -> view.player = exo },
         modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
 }

@@ -42,6 +42,9 @@ internal class ScrollManager(
     var isUserScrolling by mutableStateOf(false)
         private set
 
+    /** D-pad selection in progress: glides fast (short fixed duration) so it keeps up while Down is held. */
+    var dpadSelecting = false
+
     /** The user has taken over and auto-scroll hasn't resumed yet: no distance blur. */
     var hideLineBlur by mutableStateOf(false)
         private set
@@ -208,7 +211,10 @@ internal class ScrollManager(
             glideTo = goal
             glideElapsed = 0f
             val referencePx = abs(goal - y) / pxPerReferencePx.coerceAtLeast(0.01f)
-            glideDuration = minOf(sqrt(referencePx), MAX_GLIDE_FRAMES) / 60f
+            // D-pad: a short fixed glide — smooth, but fast enough to keep up while holding Down (the
+            // distance-scaled glide lagged behind rapid selection until the key was released).
+            glideDuration = if (dpadSelecting) DPAD_GLIDE_S
+                else minOf(sqrt(referencePx), MAX_GLIDE_FRAMES) / 60f
         }
         if (glideElapsed >= glideDuration) return glideTo
         glideElapsed += dt
@@ -271,6 +277,8 @@ internal class ScrollManager(
          * used ease-in-out capped at 0.2s, which starts slow and trails the line change.
          */
         const val MAX_GLIDE_FRAMES = 90f
+        /** Fixed glide length while D-pad selecting (seconds) — snappy but still a glide, not a snap. */
+        const val DPAD_GLIDE_S = 0.16f
         val GLIDE_EASING = CubicBezierEasing(0.4f, 0f, 0f, 1f)
         /** Smooth Scrolling's spring: critically damped, so it never overshoots the line. */
         const val SMOOTH_SCROLL_FREQUENCY = 1f

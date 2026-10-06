@@ -226,11 +226,9 @@ fun LyricsView(
             Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                 if (selectedIndex != null) { seekToSelected(); true } else false
             }
-            Key.DirectionLeft, Key.DirectionRight -> {
-                selectedIndex = null
-                escapeFocus?.let { runCatching { it.requestFocus() } }
-                true
-            }
+            // Left/Right stay in the lyrics (consume, do nothing) — leaving sideways to the transport
+            // was impractical. The way out is Up past the first line (or the idle auto-return).
+            Key.DirectionLeft, Key.DirectionRight -> true
             Key.Back, Key.Escape -> {
                 if (selectedIndex != null) { selectedIndex = null; true } else false
             }
@@ -263,7 +261,6 @@ fun LyricsView(
             if (!it.hasFocus) selectedIndex = null
             else if (selectedIndex == null) selectCurrentLine()
         }
-        .focusProperties { escapeFocus?.let { fr -> left = fr; right = fr } }
         .onKeyEvent(lyricsKeyHandler)
         .focusable()
     else Modifier
@@ -493,6 +490,7 @@ fun LyricsView(
                         // Static lyrics have no timing to follow: leave scrolling entirely to the user.
                         if (isStatic) targetY = null
                         contentHeightForDrag[0] = totalContentHeight
+                        scrollManager.dpadSelecting = sel != null
 
                         // D-pad override: glide to the selected line (not the song's active line).
                         val navIndex: Int?
@@ -511,10 +509,7 @@ fun LyricsView(
                             }
                             navIndex = adj
                             navTargetY = -(settledYScratch[adj] + half)
-                            // Snap, not glide: while holding Down the selection steps fast, and a glide
-                            // lagged behind so you had to release for the view to catch up. Snapping keeps
-                            // the selected line under the pill as you hold.
-                            navSnap = true
+                            navSnap = false  // glide (fast fixed glide via scrollManager.dpadSelecting) — smooth + keeps up
                         } else {
                             navIndex = targetIndex
                             navTargetY = targetY
