@@ -20,7 +20,8 @@ internal data class LyricsLayoutMetrics(
      * new line always reads as further away than a wrapped row of the same line; a width-based
      * 1cqw was only ~14% of the text and the two looked the same.
      */
-    val lineGapPx = baseFontSizeSp * density * 0.4f
+    // Gap between lines (0.4 → 0.62): more air between sentences, closer to Apple Music's spacing.
+    val lineGapPx = baseFontSizeSp * density * 0.62f
     val lineHeightMultiplier = 1.1818182f
 
     fun lineHeightPx(fontSizeSp: Float): Float = fontSizeSp * density * lineHeightMultiplier

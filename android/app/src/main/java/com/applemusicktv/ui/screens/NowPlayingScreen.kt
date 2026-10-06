@@ -1001,19 +1001,55 @@ private fun rememberCoverBitmap(url: String?, size: Int = 512): Bitmap? {
 }
 
 /**
- * Lava Lamp for devices WITHOUT AGSL (API < 33, this Fire TV) or Low Power: a shader-free fake. A tiny
- * cover bitmap (64px) is upscaled to fill with bilinear filtering — that upscale IS the blur (Modifier.blur
- * is a no-op below API 31, so we can't blur on the fly). It slowly drifts + zooms via a graphicsLayer
- * (GPU transform of one image — cheap, no per-frame CPU, no Screen-blend passes that stuttered the old
- * Ambient mode), saturation-boosted, under a dark vignette for lyric readability.
+ * A genuinely blurred cover for the shader-free Lava Lamp: the ported Kawase blur (KawarpBlurCore, the
+ * same CPU pre-pass the AGSL path uses) smooths it to a soft 128px field — far better than a raw low-res
+ * upscale, which just looked like a pixelated thumbnail. Blurred once per cover (off the draw path).
+ */
+@Composable
+private fun rememberBlurredCover(url: String?): androidx.compose.ui.graphics.ImageBitmap? {
+    val base = rememberCoverBitmap(url, size = 128)
+    return remember(base) {
+        base?.let { src ->
+            runCatching {
+                val w = src.width; val h = src.height
+                val ints = IntArray(w * h); src.getPixels(ints, 0, w, 0, 0, w, h)
+                val floats = FloatArray(w * h * 4)
+                for (i in ints.indices) {
+                    val p = ints[i]
+                    floats[i * 4] = ((p shr 16) and 0xFF) / 255f
+                    floats[i * 4 + 1] = ((p shr 8) and 0xFF) / 255f
+                    floats[i * 4 + 2] = (p and 0xFF) / 255f
+                    floats[i * 4 + 3] = ((p ushr 24) and 0xFF) / 255f
+                }
+                val n = com.applemusicktv.lyrics.spicy.canvas.kawarp.KawarpBlurCore.BLUR_SIZE
+                val out = com.applemusicktv.lyrics.spicy.canvas.kawarp.KawarpBlurCore.process(
+                    floats, w, h, blurPasses = 8, tintColor = floatArrayOf(0f, 0f, 0f), tintIntensity = 0f)
+                val outInts = IntArray(n * n)
+                for (i in 0 until n * n) {
+                    val r = (out[i * 4].coerceIn(0f, 1f) * 255f).toInt()
+                    val g = (out[i * 4 + 1].coerceIn(0f, 1f) * 255f).toInt()
+                    val b = (out[i * 4 + 2].coerceIn(0f, 1f) * 255f).toInt()
+                    outInts[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                }
+                Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888)
+                    .apply { setPixels(outInts, 0, n, 0, 0, n, n) }.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+}
+
+/**
+ * Lava Lamp for devices WITHOUT AGSL (API < 33, this Fire TV) or Low Power: a shader-free fake. The
+ * Kawase-blurred cover (rememberBlurredCover) slowly drifts + zooms via a graphicsLayer (GPU transform
+ * of one image — cheap, no per-frame CPU, no Screen-blend passes that stuttered the old Ambient mode),
+ * saturation-boosted and dimmed under a dark vignette for lyric readability.
  */
 @Composable
 private fun CheapLavaLampBackground(coverUrl: String?, playing: Boolean, reduceMotion: Boolean) {
-    val cover = rememberCoverBitmap(coverUrl, size = 64)
+    val img = rememberBlurredCover(coverUrl)
     val move = playing && !reduceMotion
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (cover != null) {
-            val img = remember(cover) { cover.asImageBitmap() }
+        if (img != null) {
             val infinite = rememberInfiniteTransition(label = "lava")
             val zoom = if (move) infinite.animateFloat(1.18f, 1.42f,
                 infiniteRepeatable(tween(19_000, easing = LinearEasing), AnimRepeatMode.Reverse), label = "z").value else 1.3f
@@ -1026,17 +1062,17 @@ private fun CheapLavaLampBackground(coverUrl: String?, playing: Boolean, reduceM
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(
-                    androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(1.6f) }),
+                    androidx.compose.ui.graphics.ColorMatrix().apply { setToSaturation(1.45f) }),
                 modifier = Modifier.fillMaxSize().graphicsLayer {
                     scaleX = zoom; scaleY = zoom
                     translationX = size.width * dx; translationY = size.height * dy
                 },
             )
         }
-        // Darken for lyric readability (same intent as Dynamic's overlay).
+        // Darken for lyric readability + lower overall brightness (lava-lamp dim, not a bright cover).
         Box(Modifier.fillMaxSize().background(
-            Brush.radialGradient(listOf(Color(0x33000000), Color(0x99000000)))))
-        Box(Modifier.fillMaxSize().background(Color(0x22000000)))
+            Brush.radialGradient(listOf(Color(0x55000000), Color(0xBB000000)))))
+        Box(Modifier.fillMaxSize().background(Color(0x55000000)))
     }
 }
 

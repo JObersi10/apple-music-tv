@@ -73,19 +73,21 @@ class LyricsAnimator(
 
     private fun rebuildModeSplines() {
         val simple = config.isSimple
-        // Full mode: the glow swells as the word is sung, then fades back to 0 once sung so past words
-        // don't stay lit. The earlier blink on slow words ("on, off, on") was the UNDER-damped glow
-        // spring ringing (undershooting past 0 → clamped to 0 → springing back) — fixed by critically
-        // damping the glow spring (GLOW_DAMPING), not by holding a residual.
+        // Full mode: glow RISES and HOLDS at full through the active word (no mid-word dip — an extra
+        // slow word used to peak then fall back to 0 while still lit, the "goes off at the top, back when
+        // it shrinks" hiccup). The fade-OUT is not in this curve: when the word turns Sung the animator
+        // targets 0 directly and the critically damped spring (GLOW_DAMPING) glides it down — so past
+        // words don't stay lit and there's no ring/blink.
         // Low Power / Reduce Motion (simple): no glow at all — the cheapest, flattest render.
         glowSpline = if (simple) spline(0f to 0f, 1f to 0f)
-            else spline(0f to 0f, 0.65f to 1f, 1f to 0f)
+            else spline(0f to 0f, 0.55f to 1f, 1f to 1f)
         yOffsetSpline = if (simple) spline(0f to 0.01f, 1f to -0.033f)
             else spline(0f to 0.01f, 0.9f to -1f / 60f, 1f to 0f)
-        // Peak trimmed (1.175 → 1.08): held-word letters expanded too much, which also reserved wide
-        // pre-sung letter spacing (e.g. "doors"/"core"). Smaller peak = subtler grow + tighter spacing.
-        letterScaleSpline = if (simple) spline(0f to 0.95f, 0.7f to 1.06f, 1f to 1f)
-            else spline(0f to 0.95f, 0.7f to 1.08f, 1f to 1f)
+        // Resting scale 1.0 (was 0.95): a shrunk pre-sung letter sat at its full-size kerned position,
+        // so the smaller glyph left a wider gap — "spacing between letters on slow words kinda wide".
+        // Full size at rest = natural spacing; the subtle grow still happens while sung (peak 1.06).
+        letterScaleSpline = if (simple) spline(0f to 1f, 0.7f to 1.05f, 1f to 1f)
+            else spline(0f to 1f, 0.7f to 1.06f, 1f to 1f)
         letterYOffsetSpline = if (simple) spline(0f to 0.01f, 0.9f to -1f / 62f, 1f to 0f)
             else spline(0f to 0.01f, 0.9f to -1f / 56f, 1f to 0f)
         dotOpacitySpline = spline(0f to (if (simple) 0.27f else 0.35f), 0.6f to 1f, 1f to 1f)
@@ -551,7 +553,7 @@ class LyricsAnimator(
             ElementState.Sung -> {
                 targetScale = scaleSpline.at(1f)
                 targetYOffset = yOffsetSpline.at(1f)
-                targetGlow = glowSpline.at(1f)
+                targetGlow = 0f  // glow holds full while active, then fades to 0 once sung
                 targetGradientPos = 100f
             }
         }
@@ -599,7 +601,7 @@ class LyricsAnimator(
                 val s = letterSprings(lineIndex, wordIndex, li)
                 s.scale.setGoal(letterScaleSpline.at(t))
                 s.yOffset.setGoal(letterYOffsetSpline.at(t))
-                s.glow.setGoal(glowSpline.at(t))
+                s.glow.setGoal(0f)  // not-sung and sung letters carry no glow (glow only while active)
                 LetterAnimState(
                     gradientPosition = gradient,
                     scale = s.scale.step(deltaTime),
@@ -705,7 +707,7 @@ class LyricsAnimator(
         val springs = wordSprings(lineIndex, wordIndex)
         springs.scale.setGoal(scaleSpline.at(1f))
         springs.yOffset.setGoal(yOffsetSpline.at(1f))
-        springs.glow.setGoal(glowSpline.at(1f))
+        springs.glow.setGoal(0f)  // settle pass: fade glow out as the line finishes
         val currentScale = springs.scale.step(deltaTime)
         val currentYOffset = springs.yOffset.step(deltaTime)
         val currentGlow = springs.glow.step(deltaTime)
@@ -716,7 +718,7 @@ class LyricsAnimator(
                 val s = letterSprings(lineIndex, wordIndex, li)
                 s.scale.setGoal(letterScaleSpline.at(1f))
                 s.yOffset.setGoal(letterYOffsetSpline.at(1f))
-                s.glow.setGoal(glowSpline.at(1f))
+                s.glow.setGoal(0f)
                 LetterAnimState(
                     gradientPosition = 100f,
                     scale = s.scale.step(deltaTime),
