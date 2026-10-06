@@ -28,6 +28,8 @@ import com.applemusicktv.lyrics.spicy.parser.RtlDetector
 internal object LyricsLayoutCalculator {
     /** Scale of the active line in line-synced lyrics (reference: data-lyrics-type="Line" .line.Active). */
     internal const val ACTIVE_LINE_SCALE = 1.05f
+    /** Global letter tightening (sp) — letters read a hair wide on this TV at the v2 size. */
+    internal const val LETTER_SPACING_SP = -0.5f
 
     private val bundledFontFamily = FontFamily(
         Font(R.font.lyrics_regular, FontWeight.Normal),
@@ -248,10 +250,10 @@ internal object LyricsLayoutCalculator {
                     // will-change: transform, render them unsnapped so they glide instead of
                     // stepping between whole pixel rows (the "bobbing" after a word is sung).
                     textMotion = TextMotion.Animated,
-                    // Use a tiny unique letter spacing based on the Word object's identity.
-                    // This prevents Compose from sharing cached TextLayoutResults (and highlights) 
-                    // between identical words in different lines.
-                    letterSpacing = (System.identityHashCode(word) % 1000 * 0.0000001f).sp
+                    // Pull the letters ~1px tighter (LETTER_SPACING_SP) — they read a hair wide at this
+                    // size. The tiny per-word identity term on top keeps Compose from sharing cached
+                    // TextLayoutResults (and highlight state) between identical words in different lines.
+                    letterSpacing = (LETTER_SPACING_SP + System.identityHashCode(word) % 1000 * 0.0000001f).sp
                 )
                 
                 val text = displayText(word, romanizeLine)

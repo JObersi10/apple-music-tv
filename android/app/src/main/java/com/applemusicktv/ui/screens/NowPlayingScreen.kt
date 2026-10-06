@@ -547,8 +547,10 @@ fun NowPlayingScreen(
                         // song id so each new track's lyrics fade in fresh.
                         val lyricFade = remember { androidx.compose.animation.core.Animatable(0f) }
                         LaunchedEffect(state.currentSong?.id) {
-                            lyricFade.snapTo(0f)
-                            lyricFade.animateTo(1f, tween(450))
+                            // Fade the OLD lyrics OUT on skip, then the new ones IN — instead of snapping
+                            // to 0 (which left the previous song's lyrics hanging until the new load).
+                            lyricFade.animateTo(0f, tween(200))
+                            lyricFade.animateTo(1f, tween(420))
                         }
                         Box(Modifier.fillMaxSize().graphicsLayer { alpha = lyricFade.value }) {
                             if (state.lyricsRendererV2) {
@@ -1033,7 +1035,7 @@ private fun rememberBlurredCover(url: String?): androidx.compose.ui.graphics.Ima
                 }
                 Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888)
                     .apply { setPixels(outInts, 0, n, 0, 0, n, n) }.asImageBitmap()
-            }.getOrNull()
+            }.getOrNull() ?: src.asImageBitmap()  // blur failed → still show (and move) the cover
         }
     }
 }
@@ -1069,10 +1071,11 @@ private fun CheapLavaLampBackground(coverUrl: String?, playing: Boolean, reduceM
                 },
             )
         }
-        // Darken for lyric readability + lower overall brightness (lava-lamp dim, not a bright cover).
+        // Darken a little for lyric readability — light enough that the drifting blurred cover is
+        // clearly visible and moving (heavier overlays crushed it to near-black and looked static).
         Box(Modifier.fillMaxSize().background(
-            Brush.radialGradient(listOf(Color(0x55000000), Color(0xBB000000)))))
-        Box(Modifier.fillMaxSize().background(Color(0x55000000)))
+            Brush.radialGradient(listOf(Color(0x1A000000), Color(0x80000000)))))
+        Box(Modifier.fillMaxSize().background(Color(0x22000000)))
     }
 }
 

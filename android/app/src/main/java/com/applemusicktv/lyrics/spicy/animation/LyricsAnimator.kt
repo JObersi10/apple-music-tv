@@ -312,9 +312,11 @@ class LyricsAnimator(
                     lineState == ElementState.Sung -> MINIMAL_SUNG_SCALE
                     else -> MINIMAL_NOT_SUNG_SCALE
                 })
-                // Line-mode active line scales to 1.05 (CSS: data-lyrics-type="Line" .line.Active).
+                // Line mode: match syllable mode — active line full size, the rest shrink a touch — so
+                // line-by-line TTML reads with the same size/spacing contrast as word-by-word (it looked
+                // flat/small otherwise, every line the same size).
                 lyricsType == LyricsType.Line && !line.isSongwriter ->
-                    animateTweenScale(lineIdx, if (isActive) LyricsLayoutCalculator.ACTIVE_LINE_SCALE else 1f)
+                    animateTweenScale(lineIdx, if (isActive) 1f else INACTIVE_LINE_SCALE)
                 // Syllable mode: the active line stays full size; the rest shrink a touch (like our
                 // built-in renderer / Apple Music) so the current line reads as the focus.
                 !line.isSongwriter ->

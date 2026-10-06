@@ -511,7 +511,10 @@ fun LyricsView(
                             }
                             navIndex = adj
                             navTargetY = -(settledYScratch[adj] + half)
-                            navSnap = false
+                            // Snap, not glide: while holding Down the selection steps fast, and a glide
+                            // lagged behind so you had to release for the view to catch up. Snapping keeps
+                            // the selected line under the pill as you hold.
+                            navSnap = true
                         } else {
                             navIndex = targetIndex
                             navTargetY = targetY

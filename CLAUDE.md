@@ -173,14 +173,24 @@ Library items: artwork may be in `relationships.catalog.data[0].attributes.artwo
 - **To grab logs yourself:** `http://<FireTV-IP>:8080/bug-report` (network + app log + last crash). Spicy/Spotify calls appear there.
 
 ### Lyrics roadmap / open items (handoff)
-All of the below are CODE-COMPLETE but **built/verified only later** (no build this round) — test on-device, tune constants:
-- **Glow:** DONE — `glowSpline` is now mode-dependent in `LyricsAnimator.rebuildModeSplines()`: a rise-to-peak-then-settle curve in full mode, zeroed in Low Power / Reduce Motion (simple). Shadow path stays enabled so distance blur keeps working in both. If the full-mode glow flashes again, flatten the `0.7 to 1f` peak.
-- **D-pad lyric selection + scrub:** DONE — `LyricsView` takes `dpadFocus`/`escapeFocus`, is focusable + `onKeyEvent`. Up/Down steps a `selectedIndex` over lead lines, a soft pill highlights it, the frame-loop scroll override glides to it (`sel` branch) and blur is suppressed; OK/Center seeks to the line, Up-past-top / Left / Right / 7s-idle escape to the transport. Wired in both Now Playing panel and full-screen lyrics (`escapeFocus = playFocus`).
-- **Scroll jumps forward ~1s when playback starts:** FIXED — `rememberSmoothProgressMs` now re-anchors (`anchorRealMs`/`anchorPosMs`/`smoothMs = reportedMs`) when `isPlaying` flips true; it was leaping forward by the paused duration.
-- **Motion cover sizing stuck on the un-idle size when idle:** FIXED — the column's idle breathe is an ancestor `graphicsLayer` scale/translate, which never reaches the motion `SurfaceView`'s overlay plane. `MotionCover(idle=…)` now applies `scaleX/scaleY/translationY` as the view's OWN properties (those move the surface).
-- **Lyrics don't load on cold app open:** retry widened (`restoreState`: 4×1.5s → 12×2s, only re-fetches while still empty) so a late-reachable proxy still fills them without a skip. **Standalone prefetch N+1 not completing** — still open, needs an app-open bug report.
-- **lavalamp / kawarp background** — still PARKED (ported, not wired as a background mode/default).
+**DONE + built + device-tested (commits up to `c39d19e`/`32ee313`):** glow restored full / off in Low Power (`glowSpline` mode-dependent, `GLOW_DAMPING` critically damped); D-pad select+scrub (`LyricsView` `dpadFocus`/`escapeFocus`, focusable+`onKeyEvent`, pill highlight, OK seeks, auto-select current line on focus-in — user confirmed "perfect"); play-start scroll jump fixed (`rememberSmoothProgressMs` re-anchors on resume); cold-open lyrics retry (12×2s); artwork prefetch (`prefetchSong` warms next cover into Coil); Lava Lamp wired (`NowPlayingBackground.LAVALAMP`, AGSL `KawarpBackground` on API≥33, `CheapLavaLampBackground` fallback <33 — this Fire TV is **SDK 30**).
+
+**DONE in code but NOT yet built/installed (uncommitted at compaction — build + `adb install` when user says go; user said DON'T auto-install until told):**
+- Glow: holds full through the active word then targets 0 when Sung (no mid-word dip on extra-slow words, no permanent glow). `glowSpline` rises-and-holds; Sung-state glow set to 0 in animateWord/animateLetters/finalizeWord.
+- Letter spacing: resting letter scale 0.95→1.0, peak 1.08→1.06, + global `LyricsLayoutCalculator.LETTER_SPACING_SP = -0.5f`.
+- Line gap `0.4→0.62` (`LyricsLayoutMetrics`); **Line-mode (TTML line-synced) scale now matches syllable** (active 1.0, rest `INACTIVE_LINE_SCALE` 0.9) so line-by-line isn't flat/small.
+- Lava Lamp cheap path rewritten: real Kawase blur via `KawarpBlurCore` (falls back to raw cover if it throws), drifts/zooms (user liked the movement), lighter overlays so it's visible + dimmed.
+- Skip fades lyrics OUT then IN (`lyricFade` animateTo 0 then 1), was snapping.
+- D-pad hold-to-scroll: selection scroll now SNAPs (`navSnap=true`) so it keeps up while Down is held (glide lagged until release).
+
+**STILL OPEN:**
+- **Translation + pronunciation (romaji/pinyin) in v2** — NOT shown. v2 Canvas has no translation sub-line and no per-word romaji generation (Kuromoji dropped → only kana). Real renderer feature. V1 shows translations via its `translations` param.
+- **Motion cover idle-down "glitch"** — on idle the whole art column eases down 58px + scales 1.03 via an ancestor graphicsLayer (center-pivot); `MotionCover` replicates scale+translationY on the SurfaceView, but center-pivot scale makes static vs surface differ ~6px so the motion video slides relative to the cover on idle. NEEDS a decision (don't move the cover on idle, or match exactly). User flagged it; don't guess.
+- **Standalone prefetch N+1 not completing** — needs an app-open bug report.
+- lavalamp/kawarp as a DEFAULT mode — still not default (selectable only).
 - Full credits need the proxy restarted to pick up the new `.env` key + routes; standalone works today.
+
+**Device reality:** AFTKM is **Android 11 / SDK 30**, 1.71GB RAM (~100MB free, swap ~exhausted). App PSS ~340MB (Graphics ~140MB). The "app quit out of nowhere" = Android `lowmemorykiller` (also kills YouTube/firebat), NOT our crash. Reinstalling while the app is foregrounded force-kills it (`installPackageLI`) and the relaunch can ANR with "does not have a focused window" — install when the user is not mid-interaction. Volume normalization already logs `VOL settled at gain=…` in `:8080/report` when **Volume Leveling** is enabled (default off).
 
 ## Library
 - **Left sidebar** (`SectionSidebar` in `LibraryScreen.kt`): vertical section nav — Playlists / Albums / Artists / Songs. Selected = red-tinted pill (`0x33FA233B`) with a red accent bar. Replaced an earlier top-tabs experiment (user wanted categories on the left, modernized). Sort bar + pins unchanged, still to the right of the sidebar.
