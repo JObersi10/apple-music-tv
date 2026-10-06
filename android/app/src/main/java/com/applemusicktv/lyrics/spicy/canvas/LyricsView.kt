@@ -226,9 +226,14 @@ fun LyricsView(
             Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                 if (selectedIndex != null) { seekToSelected(); true } else false
             }
-            // Left/Right stay in the lyrics (consume, do nothing) — leaving sideways to the transport
-            // was impractical. The way out is Up past the first line (or the idle auto-return).
-            Key.DirectionLeft, Key.DirectionRight -> true
+            // LEFT hands focus back to the controls (they sit to the left). RIGHT stays put — there's
+            // nothing to its right, so it would otherwise fall off to the nav/empty space.
+            Key.DirectionLeft -> {
+                selectedIndex = null
+                escapeFocus?.let { runCatching { it.requestFocus() } }
+                true
+            }
+            Key.DirectionRight -> true
             Key.Back, Key.Escape -> {
                 if (selectedIndex != null) { selectedIndex = null; true } else false
             }

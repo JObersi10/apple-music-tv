@@ -626,6 +626,11 @@ class LyricsAnimator(
         }
 
         val wordDuration = word.endMs - word.startMs
+        // Whole-word glow (full mode): every letter shares ONE glow driven by the word's own progress,
+        // so the entire word lights up and HOLDS. The old per-letter glow travelled with the active
+        // letter (glowFalloff by distance) — it lit only ~2 letters at a time and read as a flash on
+        // slow/held words. Scale + yOffset keep their per-letter travelling bump; only glow is unified.
+        val wordGlowTarget = glowSpline.at(progress(processedPosition, word.startMs, word.endMs))
 
         return word.letters.mapIndexed { k, letter ->
             val letterState = elementState(processedPosition, letter.startMs, letter.endMs)
@@ -684,6 +689,11 @@ class LyricsAnimator(
                     else -> gradientBase
                 }
             }
+
+            // Full mode: override whatever per-letter glow the falloff/Sung-override computed with the
+            // steady whole-word glow, so the full word glows as one and holds (no travelling flash).
+            // Simple mode keeps its own per-letter strength-based glow.
+            if (!simple) targetGlow = wordGlowTarget
 
             val s = letterSprings(lineIndex, wordIndex, k)
             s.scale.setGoal(targetScale)

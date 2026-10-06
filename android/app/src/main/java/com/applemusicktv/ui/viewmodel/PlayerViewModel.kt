@@ -149,6 +149,10 @@ data class PlayerState(
     val beatIntensity:    Float           = 1.0f,
     val userQueue:        List<Song>      = emptyList(),
     val crossfadeEnabled: Boolean         = true,
+    /** A crossfade is underway (fade loop running, before the display flips). The lyrics panel uses
+     *  this to fade the OUTGOING song's lyrics out the instant the crossfade starts, instead of
+     *  leaving them scrolling until the midpoint display flip. */
+    val crossfadeActive:  Boolean         = false,
     /** Idle minutes before the ambient screensaver; 0 = off. */
     val screensaverTimeoutMin: Int        = 10,
     /** What's drawn behind the Now Playing card. */
@@ -626,7 +630,7 @@ class PlayerViewModel @Inject constructor(
                         if (nextUp != null && preloadedForSongId != nextUp.id) {
                             preloadedForSongId = nextUp.id; prefetchSong(nextUp)
                         }
-                        _state.update { it.copy(isPlaying = cfExo.isPlaying) }
+                        _state.update { it.copy(isPlaying = cfExo.isPlaying, crossfadeActive = false) }
                         // Rebuilding the MediaSession reinits the audio output pipeline —
                         // defer it so it doesn't gap the audio right at the swap.
                         viewModelScope.launch {
@@ -1379,7 +1383,7 @@ class PlayerViewModel @Inject constructor(
         webServer.addLog("PLR", "playQueueItem idx=$idx song=${song.title}${if (standalone) " [standalone]" else ""}")
         awaitingSongStart = song.id
         com.applemusicktv.media.GainProcessor.currentTrackKey = song.id   // per-track volume-leveling memory
-        _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = lyricsCache[song.id] ?: emptyList(), motionUrl = null, progressMs = 0L) }
+        _state.update { it.copy(currentSong = song, song = song, queueIndex = idx, lyrics = lyricsCache[song.id] ?: emptyList(), motionUrl = null, progressMs = 0L, crossfadeActive = false) }
         saveState()
         player.repeatMode = Player.REPEAT_MODE_OFF
         // Silence the outgoing track immediately on selection — building a standalone
@@ -2032,6 +2036,16 @@ class PlayerViewModel @Inject constructor(
         }
         _state.update { it.copy(queue = q, queueIndex = newIdx) }
     }
+    /**
+     * Seek used by the lyrics (tap/OK a line). Pushes progressMs into state IMMEDIATELY, instead of
+     * waiting up to ~1s for pollProgress to catch up — otherwise the smooth clock keeps interpolating
+     * from the stale anchor and the active lyric line + timestamp don't jump with the audio.
+     */
+    fun seekToMs(ms: Long) {
+        val target = ms.coerceAtLeast(0L)
+        player.seekTo(target)
+        _state.update { it.copy(progressMs = target) }
+    }
     fun seekForward() { webServer.addLog("PLR", "seekForward pos=${player.currentPosition}"); player.seekTo((player.currentPosition + 15_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }
     fun seekBack()    { webServer.addLog("PLR", "seekBack pos=${player.currentPosition}"); player.seekTo((player.currentPosition - 15_000L).coerceAtLeast(0L)) }
 
@@ -2335,6 +2349,9 @@ class PlayerViewModel @Inject constructor(
                     }
                     if (nextSong != null && s.isFullStream && !gapless && nextSong.id != crossfadeSkipSongId) {
                         crossfadeInProgress = true
+                        // Start fading the outgoing lyrics out NOW — before the midpoint flip — so the
+                        // previous song's lines don't keep scrolling through the first half of the fade.
+                        _state.update { it.copy(crossfadeActive = true) }
                         // buildCrossfadeExo has no DRM of its own, so in standalone mode
                         // the fade partner must get a Widevine source too — otherwise it
                         // fetches a proxy URL that may not even be reachable, errors out,
@@ -2415,7 +2432,7 @@ class PlayerViewModel @Inject constructor(
                                 _state.update { it.copy(
                                     currentSong = nextSong, song = nextSong, lyrics = emptyList(), motionUrl = null,
                                     queue = newQueue, queueIndex = actualNextIdx, userQueue = newUserQueue,
-                                    progressMs = 0L,
+                                    progressMs = 0L, crossfadeActive = false,
                                 )}
                                 loadLyrics(nextSong.id); loadMotion(nextSong.id)
                                 if (nextSong.artistId == null || nextSong.albumId == null) enrichSongIds(nextSong.id)

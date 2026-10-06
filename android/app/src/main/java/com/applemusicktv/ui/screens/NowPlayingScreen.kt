@@ -249,7 +249,7 @@ fun NowPlayingScreen(
                 offsetMs = state.avLyricsMs,
                 song = song,
                 isPlaying = state.isPlaying,
-                onSeek = { ms -> playerVm.player.seekTo(ms) },
+                onSeek = { ms -> playerVm.seekToMs(ms) },
                 onPrev = playerVm::prev,
                 onPlayPause = playerVm::togglePlayPause,
                 onNext = playerVm::next,
@@ -282,12 +282,41 @@ fun NowPlayingScreen(
         ) {
             // Left — artwork + info + controls, grouped and vertically centred so idle (controls
             // hidden) doesn't leave an awkward void. Eases up slightly as it settles into idle.
+            // Idle breathe: the whole left group grows + drifts DOWN a touch (scale 1.03 + 58px down) —
+            // the "move down and grow" the user liked. The motion SurfaceView can't follow a Compose
+            // graphicsLayer on this Fire TV, so we measure the cover's centre offset within the column
+            // and hand it to MotionCover, which reproduces the exact net transform on the PlayerView via
+            // real View props (scale + translation) so the video stays locked on the static cover.
+            val colCoords = remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+            val boxCoords = remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+            // Derived so it recomputes as soon as BOTH column + cover are measured (the cover's
+            // onGloballyPositioned can fire before the column's, which left the offset stuck at 0 and
+            // the video sliding off on idle).
+            val coverPivotOffsetPx by remember { androidx.compose.runtime.derivedStateOf {
+                val col = colCoords.value; val box = boxCoords.value
+                if (col != null && box != null && col.isAttached && box.isAttached) {
+                    val c = col.localPositionOf(box, Offset(box.size.width / 2f, box.size.height / 2f))
+                    c.y - col.size.height / 2f
+                } else 0f
+            } }
+            // Coordinated cover+title transition on song change: fade the old cover/title/artist OUT,
+            // swap to the new song at the bottom, fade IN. Cleaner than a cross-dissolve of two covers.
+            val npContentFade = remember { androidx.compose.animation.core.Animatable(1f) }
+            var shownNpSong by remember { mutableStateOf(song) }
+            LaunchedEffect(song.id) {
+                if (shownNpSong.id == song.id) return@LaunchedEffect
+                npContentFade.animateTo(0f, tween(220))
+                shownNpSong = song
+                npContentFade.animateTo(1f, tween(450))
+            }
             Column(
-                // No idle breathe here: it scaled/translated the whole group, but a motion-art
-                // SurfaceView can't follow an ancestor graphicsLayer on this Fire TV, so the video slid
-                // off the album cover (moved down / drifted left) on idle. Keeping the artwork fixed pins
-                // the motion video exactly on the cover. Controls still fade via chromeAlpha.
-                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp),
+                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp)
+                    .onGloballyPositioned { colCoords.value = it }
+                    .graphicsLayer {
+                        val s = 1f + 0.03f * idle
+                        scaleX = s; scaleY = s
+                        translationY = 58.dp.toPx() * idle
+                    },
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -308,21 +337,25 @@ fun NowPlayingScreen(
                 }
                 Box(
                     modifier = Modifier
+                        // Report the cover's coordinates; coverPivotOffsetPx (derived above) turns them +
+                        // the column's into the cover-centre offset MotionCover needs to match the breathe.
+                        .onGloballyPositioned { boxCoords.value = it }
                         .size(256.dp)
                         .clip(RoundedCornerShape(if (state.artworkRounded) 18.dp else 0.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
-                    // Cross-fade the cover instead of hard-swapping it on song change. Live radio
-                    // paused → show the station's own cover (there's no "current track" while paused).
-                    // 456px is plenty for this HDCP-capped (~432p) panel; 600 was ~45% more bytes to
-                    // fetch+decode for no visible gain, which is part of the "cover loads slow" delay.
+                    // Song-change cover transition is the coordinated fade-out/in below (npContentFade on
+                    // shownNpSong), not an inline cross-dissolve — so the cover + title + artist move
+                    // together. Live radio paused → show the station's own cover (no "current track").
+                    // 600px + ARGB_8888: the shared loader is RGB_565 which banded/softened this 256dp
+                    // cover — the one surface stared at up close — so it read as low-res.
                     val coverUrl = if (state.isLiveRadio && !state.isPlaying && state.radioStationArt != null)
-                        state.radioStationArt else song.artworkUrl(456)
+                        state.radioStationArt else shownNpSong.artworkUrl(600)
                     // Fallback FIRST (drawn under the image): many internet-radio stations have no
                     // favicon in the directory, so guarantee something branded shows — the station's
-                    // initial on a tinted tile. The real logo crossfades in on top when it exists.
+                    // initial on a tinted tile. The real logo fades in on top when it exists.
                     if (state.isLiveRadio) {
-                        val letter = (song.albumName.ifBlank { song.artistName }.ifBlank { song.title })
+                        val letter = (shownNpSong.albumName.ifBlank { shownNpSong.artistName }.ifBlank { shownNpSong.title })
                             .trim().firstOrNull()?.uppercaseChar()?.toString() ?: "♪"
                         Box(Modifier.fillMaxSize().background(
                             Brush.linearGradient(listOf(Color(0xFF2A2A3E), Color(0xFF14141F)))),
@@ -331,19 +364,17 @@ fun NowPlayingScreen(
                         }
                     }
                     if (coverUrl != null) {
-                        androidx.compose.animation.Crossfade(
-                            targetState = coverUrl,
-                            animationSpec = tween(1000),
-                            label = "cover",
-                        ) { url ->
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalContext.current)
-                                    .data(url).crossfade(1000).build(),
-                                contentDescription = song.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(coverUrl).crossfade(300)
+                                // Full-quality config just for this surface (loader default is RGB_565).
+                                .bitmapConfig(Bitmap.Config.ARGB_8888)
+                                .allowRgb565(false)
+                                .build(),
+                            contentDescription = shownNpSong.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = npContentFade.value },
+                        )
                     }
                     // DIAGNOSTIC: motion artwork spins up a SECOND ExoPlayer/video
                     // decoder. Gated off to test whether it starves the audio decoder
@@ -353,7 +384,7 @@ fun NowPlayingScreen(
                     // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
                     @Suppress("ConstantConditionIf")
                     if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
-                        MotionCover(url = state.motionUrl!!, idle = idle, modifier = Modifier.fillMaxSize())
+                        MotionCover(url = state.motionUrl!!, idle = idle, pivotOffsetY = coverPivotOffsetPx, modifier = Modifier.fillMaxSize())
                     }
                 }
 
@@ -370,9 +401,11 @@ fun NowPlayingScreen(
                 // height keeps title→artist spacing constant through the transition.
                 Box(Modifier.fillMaxWidth().heightIn(min = 32.dp), contentAlignment = Alignment.Center) {
                     MarqueeText(
-                        song.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        shownNpSong.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
                         letterSpacing = (-0.5).sp,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 38.dp),
+                        scroll = false,  // no back-and-forth ping-pong; long titles ellipsize
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 38.dp)
+                            .graphicsLayer { alpha = npContentFade.value },
                     )
                     // The ⋯ options button is chrome: it fades out with the controls on idle so the
                     // steady-state view is just artwork + text.
@@ -393,20 +426,24 @@ fun NowPlayingScreen(
                 }
                 // No gap between title and artist — a fixed spacer here read as an abrupt
                 // collapse against the idle chrome fade. Artist sits directly under the title.
-                if (song.artistId != null) {
+                val npArtistId = shownNpSong.artistId
+                if (npArtistId != null) {
                     Surface(
-                        onClick = { onArtistClick(song.artistId) },
+                        onClick = { onArtistClick(npArtistId) },
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
                         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0x1AFFFFFF)),
                         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-                        modifier = Modifier.focusRequester(artistFocusHolder).fillMaxWidth().padding(horizontal = 4.dp),
+                        modifier = Modifier.focusRequester(artistFocusHolder).fillMaxWidth().padding(horizontal = 4.dp)
+                            .graphicsLayer { alpha = npContentFade.value },
                     ) {
-                        MarqueeText(song.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
+                        MarqueeText(shownNpSong.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
+                            scroll = false,
                             modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp))
                     }
                 } else {
-                    MarqueeText(song.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
-                        modifier = Modifier.fillMaxWidth())
+                    MarqueeText(shownNpSong.artistName, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color(0xFFFA233B),
+                        scroll = false,
+                        modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = npContentFade.value })
                 }
                 LaunchedEffect(song.id) {
                     try { playFocus.requestFocus() } catch (_: Exception) {}
@@ -536,22 +573,48 @@ fun NowPlayingScreen(
                 var shownMaker by remember { mutableStateOf(state.lyricsMaker) }
                 var shownUploader by remember { mutableStateOf(state.lyricsUploader) }
                 var shownTranslation by remember { mutableStateOf(state.lyricsTranslation) }
+                // Fade-out is driven straight off the song id so it fires the instant you skip, before
+                // the new song's lyrics have loaded. We DON'T swap the snapshot to the new lyrics here
+                // (they're usually still empty at this point — swapping would blank the panel and there'd
+                // be nothing left to fade). The old lines fade out holding their own text; the swap +
+                // fade-in happen in the adopt effect once the new lyrics actually arrive.
                 LaunchedEffect(state.currentSong?.id) {
                     if (shownSongId == state.currentSong?.id) return@LaunchedEffect
-                    lyricFade.animateTo(0f, tween(180))
+                    lyricFade.animateTo(0f, tween(260))
                     shownSongId = state.currentSong?.id
-                    shownLyr = state.lyrics; shownCredits = state.lyricsCredits
-                    shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
-                    shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
-                    lyricFade.animateTo(1f, tween(400))
-                }
-                LaunchedEffect(state.lyrics, state.lyricsLoaded) {
-                    // Lyrics arrived (or changed) for the song already shown — adopt without a fade.
-                    if (state.currentSong?.id == shownSongId) {
+                    // If the new song's lyrics are already in hand (prefetched), swap + fade in now;
+                    // otherwise leave the panel faded out and let the adopt effect bring them in.
+                    if (state.lyrics.isNotEmpty()) {
                         shownLyr = state.lyrics; shownCredits = state.lyricsCredits
                         shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
                         shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
+                        lyricFade.animateTo(1f, tween(450))
                     }
+                }
+                LaunchedEffect(state.lyrics, state.lyricsLoaded) {
+                    // Lyrics arrived (or changed) for the current song. Adopt the snapshot, then fade in
+                    // if we were still faded out from the skip (the common case: new lyrics land after
+                    // the fade-out finished).
+                    if (state.currentSong?.id == shownSongId && state.lyrics.isNotEmpty()) {
+                        shownLyr = state.lyrics; shownCredits = state.lyricsCredits
+                        shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
+                        shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
+                        if (lyricFade.value < 1f) lyricFade.animateTo(1f, tween(450))
+                    }
+                }
+                // Credits ("Written by", "Provided by", "Made/Uploaded by") can land AFTER the lyrics,
+                // in their own update that doesn't change state.lyrics — so the adopt effect above never
+                // re-fires for them. Track them on their own keys so the footer always fills in.
+                LaunchedEffect(state.lyricsCredits, state.lyricsOrigin, state.lyricsMaker, state.lyricsUploader) {
+                    if (state.currentSong?.id == shownSongId) {
+                        shownCredits = state.lyricsCredits; shownOrigin = state.lyricsOrigin
+                        shownMaker = state.lyricsMaker; shownUploader = state.lyricsUploader
+                    }
+                }
+                // Crossfade: fade the outgoing song's lyrics out the instant the fade starts, so they
+                // don't keep scrolling through the first half before the midpoint display flip.
+                LaunchedEffect(state.crossfadeActive) {
+                    if (state.crossfadeActive) lyricFade.animateTo(0f, tween(400))
                 }
                 Box(modifier = Modifier.weight(1f).fillMaxWidth().fillMaxHeight().onFocusChanged { rightFocused = it.hasFocus }) {
                     if (state.isLiveRadio) {
@@ -575,7 +638,7 @@ fun NowPlayingScreen(
                                     credits = shownCredits,
                                     progressState = smoothProgress,
                                     offsetMs = state.avLyricsMs,
-                                    onSeek = { ms -> playerVm.player.seekTo(ms) },
+                                    onSeek = { ms -> playerVm.seekToMs(ms) },
                                     fontScale = state.lyricsScale,
                                     isPlaying = state.isPlaying,
                                     richMotion = !state.lowPowerMode && !state.reduceMotion,
@@ -590,7 +653,7 @@ fun NowPlayingScreen(
                                     lyrics = shownLyr,
                                     progressState = smoothProgress,
                                     offsetMs = state.avLyricsMs,
-                                    onSeek = { ms -> playerVm.player.seekTo(ms) },
+                                    onSeek = { ms -> playerVm.seekToMs(ms) },
                                     playFocus = playFocus,
                                     fontScale = state.lyricsScale,
                                     translations = shownTranslation,
@@ -755,7 +818,7 @@ private fun FullScreenLyrics(
                     progressState = progressState,
                     offsetMs = offsetMs,
                     onSeek = onSeek,
-                    fontScale = 0.95f * lyricsScale,
+                    fontScale = 0.85f * lyricsScale,
                     isPlaying = isPlaying,
                     richMotion = richMotion,
                     origin = origin,
@@ -771,7 +834,7 @@ private fun FullScreenLyrics(
                     offsetMs = offsetMs,
                     onSeek = onSeek,
                     playFocus = playFocus,
-                    fontScale = 0.95f * lyricsScale,
+                    fontScale = 0.85f * lyricsScale,
                     autoReturnMs = 5_000L,
                     translations = translations,
                     richMotion = richMotion,
@@ -912,7 +975,7 @@ private fun PlayerProgressBar(
 /** Looping, muted motion album-art video layered over the static cover. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Modifier) {
+internal fun MotionCover(url: String, idle: Float = 0f, pivotOffsetY: Float = 0f, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var ready by remember(url) { mutableStateOf(false) }
@@ -989,9 +1052,19 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
                 player = exo
             }
         },
-        // No view transform: the artwork no longer breathes on idle (the column's scale/translate was
-        // removed), so the motion surface stays exactly on the album cover — and isn't softly upscaled.
-        update = { view -> view.player = exo },
+        // Reproduce the column breathe on the surface. The column's graphicsLayer scales about the
+        // COLUMN centre and drifts down 58dp; the cover sits pivotOffsetY px from that centre, so its
+        // net shift is (s-1)*pivotOffsetY + 58dp. A Compose layer doesn't move the surface overlay, but
+        // these real View props do — so the video grows + moves down exactly with the static cover.
+        update = { view ->
+            view.player = exo
+            val s = 1f + 0.03f * idle
+            view.scaleX = s
+            view.scaleY = s
+            val d = view.resources.displayMetrics.density
+            view.translationX = 0f
+            view.translationY = 58f * d * idle + (s - 1f) * pivotOffsetY
+        },
         modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
 }
@@ -2320,6 +2393,8 @@ private fun MarqueeText(
     color: Color = Color.White,
     /** Tracking is size-specific: large text reads too loose at 0, so tighten it. */
     letterSpacing: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
+    /** When false the text never ping-pong scrolls; a long string ellipsizes instead. */
+    scroll: Boolean = true,
 ) {
     val scrollState = rememberScrollState()
     var overflows by remember(text) { mutableStateOf(false) }
@@ -2327,7 +2402,7 @@ private fun MarqueeText(
     // Ping-pong: glide left→right to reveal the tail, pause, then glide back right→left — smooth
     // both ways, no fade-and-jump. Ease-in-out easing softens each turnaround.
     LaunchedEffect(text, overflows) {
-        if (!overflows) return@LaunchedEffect
+        if (!overflows || !scroll) return@LaunchedEffect
         val ease = androidx.compose.animation.core.CubicBezierEasing(0.4f, 0f, 0.6f, 1f)
         scrollState.scrollTo(0)
         while (true) {
@@ -2371,13 +2446,13 @@ private fun MarqueeText(
                 shadow = Shadow(color = Color.Black.copy(alpha = 0.85f), offset = androidx.compose.ui.geometry.Offset(0f, 2f), blurRadius = 10f)),
             maxLines = 1, softWrap = false,
             textAlign = if (overflows) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center,
-            overflow = if (overflows) androidx.compose.ui.text.style.TextOverflow.Visible else androidx.compose.ui.text.style.TextOverflow.Clip,
+            overflow = if (overflows) androidx.compose.ui.text.style.TextOverflow.Visible else androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             modifier = if (overflows)
                 Modifier.horizontalScroll(scrollState, enabled = false)
             else
                 Modifier.fillMaxWidth(),
             onTextLayout = { result ->
-                if (!measured) { measured = true; overflows = result.didOverflowWidth }
+                if (!measured) { measured = true; overflows = scroll && result.didOverflowWidth }
             },
         )
     }
