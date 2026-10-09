@@ -60,7 +60,12 @@ fun SpicyLyricsPanel(
         lines = built.lines,
         documentId = docId,
         footer = footer,
-        currentTimeMs = { progressState.value + offsetMs },
+        currentTimeMs = {
+            val p = progressState.value
+            // Before the track has actually started (position still 0 — loading, or paused at the top),
+            // hold the lyric clock at -1s so the first word isn't pre-highlighted before it's sung.
+            if (p <= 0L) -1000L else p + offsetMs
+        },
         onSeekWord = onSeek,
         modifier = modifier.fillMaxSize(),
         // The renderer's base size scales with the (wide) TV canvas, so it reads large — trim it.

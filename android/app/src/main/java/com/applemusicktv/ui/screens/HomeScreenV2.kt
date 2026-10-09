@@ -1,5 +1,7 @@
 package com.applemusicktv.ui.screens
 
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -71,7 +73,7 @@ fun HomeScreenV2(
         verticalArrangement = Arrangement.spacedBy(AmTokens.Space.shelfGap),
     ) {
         if (state.needsRefresh) {
-            item(key = "home_refresh_banner") { HomeRefreshBanner(onRefresh = vm::load) }
+            item(key = "home_refresh_banner") { HomeRefreshBanner(isLoading = state.isLoading, onRefresh = vm::load) }
         }
         items(state.sections, key = { it.title }) { section ->
             ShelfV2(section, playerVm, onAlbumClick, onPlaylistClick, onCategoryClick)
@@ -86,9 +88,17 @@ fun HomeScreenV2(
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun HomeRefreshBanner(onRefresh: () -> Unit) {
+private fun HomeRefreshBanner(isLoading: Boolean, onRefresh: () -> Unit) {
+    // Local "I just pressed refresh" flag: load() doesn't flip state.isLoading when a cached feed is
+    // already showing, so track the press ourselves and show a spinner. Clears when the refresh
+    // finishes (needsRefresh flips → banner leaves) or after a bounded timeout as a safety.
+    var pressed by remember { mutableStateOf(false) }
+    val spinning = pressed || isLoading
+    LaunchedEffect(pressed) {
+        if (pressed) { kotlinx.coroutines.delay(8000); pressed = false }
+    }
     Surface(
-        onClick = onRefresh,
+        onClick = { if (!spinning) { pressed = true; onRefresh() } },
         shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color(0x1AFF453A),
@@ -103,10 +113,31 @@ private fun HomeRefreshBanner(onRefresh: () -> Unit) {
         ) {
             Column(Modifier.weight(1f)) {
                 Text("Oops — there was an issue loading your music", color = Color.White, fontSize = 15.sp)
-                Text("Showing charts for now. Select to try again.", color = Color(0xB3FFFFFF), fontSize = 12.sp)
+                Text(if (spinning) "Refreshing…" else "Showing charts for now. Select to try again.",
+                    color = Color(0xB3FFFFFF), fontSize = 12.sp)
             }
-            Text("↻  Refresh", color = Color(0xFFFF453A), fontSize = 15.sp, modifier = Modifier.padding(start = 16.dp))
+            if (spinning) RefreshSpinner(Modifier.padding(start = 16.dp).size(18.dp))
+            else Text("↻  Refresh", color = Color(0xFFFF453A), fontSize = 15.sp, modifier = Modifier.padding(start = 16.dp))
         }
+    }
+}
+
+/** Small rotating arc used while Home is refreshing. */
+@Composable
+private fun RefreshSpinner(modifier: Modifier = Modifier) {
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "refreshSpin")
+    val angle by t.animateFloat(
+        0f, 360f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(800, easing = androidx.compose.animation.core.LinearEasing)),
+        label = "angle",
+    )
+    androidx.compose.foundation.Canvas(modifier) {
+        drawArc(
+            color = Color(0xFFFF453A),
+            startAngle = angle, sweepAngle = 270f, useCenter = false,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.5f * density, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+        )
     }
 }
 

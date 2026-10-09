@@ -128,13 +128,20 @@ class DirectLyricsSource @Inject constructor(
         val catalogId = if (isLibrary) resolveCatalogId(songId) else songId
 
         val ttmlLines = if (catalogId.isNotEmpty()) tryAppleTtml(catalogId, sf, isLibrary = false, headers) else emptyList()
-        if (ttmlLines.isNotEmpty()) return@withContext ttmlLines.also { store(songId, it) }
+        // Apple counts as a GOOD answer only when it's actually timed (word- or line-synced). If Apple
+        // only has TEXT-ONLY (unsynced — every line startMs<=0), prefer lrclib, which often has a synced
+        // version, and only fall back to Apple's text if lrclib has nothing.
+        val appleSynced = ttmlLines.any { it.startMs > 0 }
+        if (appleSynced) return@withContext ttmlLines.also { store(songId, it) }
 
-        // 2. lrclib fallback
+        // 2. lrclib fallback (Apple missing OR text-only)
         if (title.isNotEmpty() && artist.isNotEmpty()) {
             val lrc = tryLrclib(title, artist, durationSec)
             if (lrc.isNotEmpty()) return@withContext lrc.also { store(songId, it) }
         }
+
+        // 3. last resort: Apple's text-only lines, if it had any.
+        if (ttmlLines.isNotEmpty()) return@withContext ttmlLines.also { store(songId, it) }
 
         emptyList()
     }

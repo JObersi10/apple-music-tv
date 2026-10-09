@@ -38,18 +38,26 @@ lyrics.get("/:songId", async (c) => {
     } catch (e: any) { console.warn(`[lyrics] ${songId} spicy failed: ${e.message}`); }
   }
 
-  // 1) Apple Music (word-by-word timed TTML) — fallback when Spicy misses.
+  // 1) Apple Music TTML — but only return it here if it's actually TIMED (word- or line-synced).
+  //    If Apple only has TEXT-ONLY (unsynced, startMs<0), hold it and prefer lrclib below (often has a
+  //    synced version); Apple's text is used as a last resort before plain/none.
+  let appleTextOnly: any[] | null = null;
   try {
     const appleLines = await fetchAppleLyrics(songId, headers);
     if (appleLines && appleLines.length > 0) {
-      const wordCount = appleLines.reduce((n, l) => n + l.words.length, 0);
+      const synced = appleLines.some((l: any) => l.startMs > 0);
+      const wordCount = appleLines.reduce((n: number, l: any) => n + l.words.length, 0);
       const lineCount = appleLines.length;
-      console.log(`[lyrics] ${songId} apple ${wordCount > 0 ? `word-by-word (${wordCount} words, ${lineCount} lines)` : `line-synced (${lineCount} lines)`} ${Date.now() - t0}ms`);
-      return c.json({ lines: appleLines, source: "apple" });
+      if (synced) {
+        console.log(`[lyrics] ${songId} apple ${wordCount > 0 ? `word-by-word (${wordCount} words, ${lineCount} lines)` : `line-synced (${lineCount} lines)`} ${Date.now() - t0}ms`);
+        return c.json({ lines: appleLines, source: "apple" });
+      }
+      // Text-only: remember it, try lrclib first.
+      appleTextOnly = appleLines;
     }
   } catch (e: any) { console.warn(`[lyrics] ${songId} apple failed: ${e.message}`); }
 
-  // 2) Fallback: lrclib.net
+  // 2) Fallback: lrclib.net (Apple missing OR text-only)
   try {
     const meta = await fetchSongMeta(songId, headers);
     if (meta) {
@@ -60,6 +68,12 @@ lyrics.get("/:songId", async (c) => {
       }
     }
   } catch (e: any) { console.warn(`[lyrics] ${songId} lrclib failed: ${e.message}`); }
+
+  // 2b) lrclib had nothing synced → use Apple's text-only lines if we held any.
+  if (appleTextOnly && appleTextOnly.length > 0) {
+    console.log(`[lyrics] ${songId} apple text-only (${appleTextOnly.length} lines) ${Date.now() - t0}ms`);
+    return c.json({ lines: appleTextOnly, source: "apple", synced: false });
+  }
 
   // 3) Last resort: unsynced plain text. Better than an empty panel — it just
   //    can't be highlighted or seeked, which the client renders dimmed.

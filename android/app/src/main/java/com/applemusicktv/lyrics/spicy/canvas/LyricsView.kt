@@ -165,6 +165,7 @@ fun LyricsView(
     val wake = remember(shownId) { Channel<Unit>(Channel.CONFLATED) }
     val context = LocalContext.current
     val haptics by rememberUpdatedState(LocalHapticFeedback.current)
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
     // ── D-pad line selection (TV). null = follow playback; a value = the user is browsing lines. ──
     var selectedIndex by remember(shownId) { mutableStateOf<Int?>(null) }
@@ -226,11 +227,15 @@ fun LyricsView(
             Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
                 if (selectedIndex != null) { seekToSelected(); true } else false
             }
-            // LEFT hands focus back to the controls (they sit to the left). RIGHT stays put — there's
-            // nothing to its right, so it would otherwise fall off to the nav/empty space.
+            // LEFT returns to the nearest control on the left (the skip button / ⋯ — whatever's
+            // adjacent), via the focus system's own spatial search, so you land on the last item you
+            // came from rather than always the play button. Falls back to escapeFocus if the search
+            // finds nothing. RIGHT stays put (nothing to its right).
             Key.DirectionLeft -> {
                 selectedIndex = null
-                escapeFocus?.let { runCatching { it.requestFocus() } }
+                if (!focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Left)) {
+                    escapeFocus?.let { runCatching { it.requestFocus() } }
+                }
                 true
             }
             Key.DirectionRight -> true

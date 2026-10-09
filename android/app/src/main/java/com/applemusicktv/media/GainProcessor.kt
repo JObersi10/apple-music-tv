@@ -53,7 +53,9 @@ class GainProcessor : BaseAudioProcessor() {
         val old = trackKey
         if (old != null) cachePut?.invoke(old, gain)   // remember where the last track settled
         trackKey = newKey
-        gain = newKey?.let { cacheGet?.invoke(it) } ?: 1f
+        // Clamp the remembered gain to the current range — an old cache entry from when MAX_GAIN was
+        // higher must not blast the track on start.
+        gain = (newKey?.let { cacheGet?.invoke(it) } ?: 1f).coerceIn(MIN_GAIN, MAX_GAIN)
         rms = TARGET_RMS / gain.coerceAtLeast(0.01f)    // keep rms consistent with the adopted gain
         samplesSinceLog = 0L
         samplesInTrack = 0L
@@ -162,7 +164,10 @@ class GainProcessor : BaseAudioProcessor() {
         private const val RMS_RATE   = 0.004f   // per-buffer RMS follow — slow window, no bass/vocal chase
         private const val GAIN_RATE  = 0.0012f  // per-buffer gain easing — very slow (~tens of s): between-track
         private const val MIN_GAIN   = 0.5f
-        private const val MAX_GAIN   = 4.0f
+        // Cap the BOOST hard. At 4.0 a quiet master could be amplified 4× — far past the soft knee,
+        // so it read as blasted/distorted at the start of such tracks. 1.6× is plenty of levelling
+        // headroom while staying clean. (Cuts still go down to MIN_GAIN.)
+        private const val MAX_GAIN   = 1.6f
         private const val KNEE       = 0.85f    // soft-limiter threshold
         private const val SILENCE_RMS = 0.02f   // below this a buffer is treated as silence (skip)
         private const val SETTLE_SAMPLES = 8L * 48000 * 2   // ~8 s stereo before the gain (nearly) locks

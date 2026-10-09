@@ -626,11 +626,13 @@ class LyricsAnimator(
         }
 
         val wordDuration = word.endMs - word.startMs
-        // Whole-word glow (full mode): every letter shares ONE glow driven by the word's own progress,
-        // so the entire word lights up and HOLDS. The old per-letter glow travelled with the active
-        // letter (glowFalloff by distance) — it lit only ~2 letters at a time and read as a flash on
-        // slow/held words. Scale + yOffset keep their per-letter travelling bump; only glow is unified.
-        val wordGlowTarget = glowSpline.at(progress(processedPosition, word.startMs, word.endMs))
+        // Whole-word glow (full mode): a letter-group word is always a held/slow word (only those get
+        // split into letters), so while it's the active word EVERY letter glows at a steady full level
+        // for the word's whole duration — the spring ramps it in at the start and the Sung branch fades
+        // it out at the end. A constant (not glowSpline-by-progress, which stayed ~0 for the first 55%
+        // and read as "glow only shows up at the start/end") keeps the entire word lit throughout.
+        // Scale + yOffset keep their per-letter travelling bump; only glow is unified + steady.
+        val wordGlowTarget = 1f
 
         return word.letters.mapIndexed { k, letter ->
             val letterState = elementState(processedPosition, letter.startMs, letter.endMs)

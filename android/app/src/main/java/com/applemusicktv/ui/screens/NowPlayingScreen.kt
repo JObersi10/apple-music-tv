@@ -282,23 +282,12 @@ fun NowPlayingScreen(
         ) {
             // Left — artwork + info + controls, grouped and vertically centred so idle (controls
             // hidden) doesn't leave an awkward void. Eases up slightly as it settles into idle.
-            // Idle breathe: the whole left group grows + drifts DOWN a touch (scale 1.03 + 58px down) —
-            // the "move down and grow" the user liked. The motion SurfaceView can't follow a Compose
-            // graphicsLayer on this Fire TV, so we measure the cover's centre offset within the column
-            // and hand it to MotionCover, which reproduces the exact net transform on the PlayerView via
-            // real View props (scale + translation) so the video stays locked on the static cover.
-            val colCoords = remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
-            val boxCoords = remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
-            // Derived so it recomputes as soon as BOTH column + cover are measured (the cover's
-            // onGloballyPositioned can fire before the column's, which left the offset stuck at 0 and
-            // the video sliding off on idle).
-            val coverPivotOffsetPx by remember { androidx.compose.runtime.derivedStateOf {
-                val col = colCoords.value; val box = boxCoords.value
-                if (col != null && box != null && col.isAttached && box.isAttached) {
-                    val c = col.localPositionOf(box, Offset(box.size.width / 2f, box.size.height / 2f))
-                    c.y - col.size.height / 2f
-                } else 0f
-            } }
+            // Idle breathe = GROW ONLY, no down-drift. A motion SurfaceView ignores a Compose
+            // graphicsLayer on any ancestor, so the only transform it can match is a pure scale about
+            // its own centre (which is the cover Box's centre). Translating anything made the video
+            // drift off the static cover no matter how the math was arranged, so we drop the move
+            // entirely: the cover Box scales about its centre, MotionCover scales the PlayerView by the
+            // same factor about its centre — identical, zero drift.
             // Coordinated cover+title transition on song change: fade the old cover/title/artist OUT,
             // swap to the new song at the bottom, fade IN. Cleaner than a cross-dissolve of two covers.
             val npContentFade = remember { androidx.compose.animation.core.Animatable(1f) }
@@ -310,12 +299,16 @@ fun NowPlayingScreen(
                 npContentFade.animateTo(1f, tween(450))
             }
             Column(
+                // Idle breathe on the WHOLE group (cover + title + artist + controls) so they move and
+                // grow together — grow 1.03 + drift down 40dp. The motion video can't follow a Compose
+                // layer, so instead of fighting to transform the surface (it kept drifting off), the
+                // MotionCover simply FADES OUT as idle rises — leaving the static cover, which breathes
+                // perfectly with the column. No surface transform, nothing to drift.
                 modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp)
-                    .onGloballyPositioned { colCoords.value = it }
                     .graphicsLayer {
                         val s = 1f + 0.03f * idle
                         scaleX = s; scaleY = s
-                        translationY = 58.dp.toPx() * idle
+                        translationY = 40.dp.toPx() * idle
                     },
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -337,9 +330,6 @@ fun NowPlayingScreen(
                 }
                 Box(
                     modifier = Modifier
-                        // Report the cover's coordinates; coverPivotOffsetPx (derived above) turns them +
-                        // the column's into the cover-centre offset MotionCover needs to match the breathe.
-                        .onGloballyPositioned { boxCoords.value = it }
                         .size(256.dp)
                         .clip(RoundedCornerShape(if (state.artworkRounded) 18.dp else 0.dp))
                         .background(Color(0xFF1A1A2E)),
@@ -347,10 +337,11 @@ fun NowPlayingScreen(
                     // Song-change cover transition is the coordinated fade-out/in below (npContentFade on
                     // shownNpSong), not an inline cross-dissolve — so the cover + title + artist move
                     // together. Live radio paused → show the station's own cover (no "current track").
-                    // 600px + ARGB_8888: the shared loader is RGB_565 which banded/softened this 256dp
-                    // cover — the one surface stared at up close — so it read as low-res.
+                    // 1000px + ARGB_8888: the shared loader is RGB_565 which banded/softened this 256dp
+                    // cover — the one surface stared at up close. Apple serves exact {w}x{h} so this is a
+                    // crisp 1000x1000 source downscaled to the box; no source is smaller than this.
                     val coverUrl = if (state.isLiveRadio && !state.isPlaying && state.radioStationArt != null)
-                        state.radioStationArt else shownNpSong.artworkUrl(600)
+                        state.radioStationArt else shownNpSong.artworkUrl(1000)
                     // Fallback FIRST (drawn under the image): many internet-radio stations have no
                     // favicon in the directory, so guarantee something branded shows — the station's
                     // initial on a tinted tile. The real logo fades in on top when it exists.
@@ -384,7 +375,7 @@ fun NowPlayingScreen(
                     // the Fire TV's low-memory killer answers by killing us. onDispose releases it.
                     @Suppress("ConstantConditionIf")
                     if (MOTION_ENABLED && state.motionUrl != null && !state.isInPip && !state.lowPowerMode) {
-                        MotionCover(url = state.motionUrl!!, idle = idle, pivotOffsetY = coverPivotOffsetPx, modifier = Modifier.fillMaxSize())
+                        MotionCover(url = state.motionUrl!!, idle = idle, modifier = Modifier.fillMaxSize())
                     }
                 }
 
@@ -573,6 +564,25 @@ fun NowPlayingScreen(
                 var shownMaker by remember { mutableStateOf(state.lyricsMaker) }
                 var shownUploader by remember { mutableStateOf(state.lyricsUploader) }
                 var shownTranslation by remember { mutableStateOf(state.lyricsTranslation) }
+                // Freeze the OLD lyrics' time while transitioning: once the song flips, progressMs resets
+                // to 0, and feeding that to the still-shown old lyrics made them jump to line 1 for a
+                // split second (the "prev lyrics bleed over the next track"). We sample the live time
+                // ~2×/sec while in sync; when the song changes this sampler cancels, holding the last
+                // value, so the old lyrics stay put as they fade out. New lyrics render live once adopted.
+                var frozenLyricMs by remember { mutableLongStateOf(0L) }
+                // Stop sampling the moment a transition begins (song changed OR a crossfade started), so
+                // the frozen value is the pre-transition position.
+                val lyricsTransitioning = shownSongId != state.currentSong?.id || state.crossfadeActive
+                LaunchedEffect(lyricsTransitioning) {
+                    if (lyricsTransitioning) return@LaunchedEffect
+                    while (true) { frozenLyricMs = smoothProgress.value; kotlinx.coroutines.delay(500) }
+                }
+                val lyricProgress = remember {
+                    androidx.compose.runtime.derivedStateOf {
+                        if (shownSongId == state.currentSong?.id && !state.crossfadeActive)
+                            smoothProgress.value else frozenLyricMs
+                    }
+                }
                 // Fade-out is driven straight off the song id so it fires the instant you skip, before
                 // the new song's lyrics have loaded. We DON'T swap the snapshot to the new lyrics here
                 // (they're usually still empty at this point — swapping would blank the panel and there'd
@@ -636,7 +646,7 @@ fun NowPlayingScreen(
                                 SpicyLyricsPanel(
                                     lyrics = shownLyr,
                                     credits = shownCredits,
-                                    progressState = smoothProgress,
+                                    progressState = lyricProgress,
                                     offsetMs = state.avLyricsMs,
                                     onSeek = { ms -> playerVm.seekToMs(ms) },
                                     fontScale = state.lyricsScale,
@@ -651,7 +661,7 @@ fun NowPlayingScreen(
                             } else {
                                 LyricsPanel(
                                     lyrics = shownLyr,
-                                    progressState = smoothProgress,
+                                    progressState = lyricProgress,
                                     offsetMs = state.avLyricsMs,
                                     onSeek = { ms -> playerVm.seekToMs(ms) },
                                     playFocus = playFocus,
@@ -975,7 +985,7 @@ private fun PlayerProgressBar(
 /** Looping, muted motion album-art video layered over the static cover. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-internal fun MotionCover(url: String, idle: Float = 0f, pivotOffsetY: Float = 0f, modifier: Modifier = Modifier) {
+internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var ready by remember(url) { mutableStateOf(false) }
@@ -1052,20 +1062,14 @@ internal fun MotionCover(url: String, idle: Float = 0f, pivotOffsetY: Float = 0f
                 player = exo
             }
         },
-        // Reproduce the column breathe on the surface. The column's graphicsLayer scales about the
-        // COLUMN centre and drifts down 58dp; the cover sits pivotOffsetY px from that centre, so its
-        // net shift is (s-1)*pivotOffsetY + 58dp. A Compose layer doesn't move the surface overlay, but
-        // these real View props do — so the video grows + moves down exactly with the static cover.
-        update = { view ->
-            view.player = exo
-            val s = 1f + 0.03f * idle
-            view.scaleX = s
-            view.scaleY = s
-            val d = view.resources.displayMetrics.density
-            view.translationX = 0f
-            view.translationY = 58f * d * idle + (s - 1f) * pivotOffsetY
-        },
-        modifier = modifier.graphicsLayer { this.alpha = alpha },
+        // No surface transform: the video can't follow the column's breathe, so we just reattach the
+        // player. The surface fades out as the screen goes idle (alpha below), letting the static cover
+        // do the breathing — so the video is never on screen while it would be mis-transformed.
+        update = { view -> view.player = exo },
+        // Fade the video out as the screen goes idle, so the static cover (which breathes correctly
+        // with the column) is what shows during the idle grow/drift — the surface never appears
+        // mis-transformed.
+        modifier = modifier.graphicsLayer { this.alpha = alpha * (1f - idle) },
     )
 }
 

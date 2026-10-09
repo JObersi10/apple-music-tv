@@ -1064,15 +1064,24 @@ class PlayerViewModel @Inject constructor(
             // can come back empty (and empty isn't cached). Retry a few times while this song is
             // still the current one — otherwise lyrics never appear until you skip tracks.
             launch {
-                // On a COLD open the proxy may still be unreachable (bearer scrape / reachability check
-                // not settled) for longer than a few seconds, so a short 4×1.5s window gave up before the
-                // server came up — lyrics then never appeared until a skip. Retry longer, and only re-fetch
-                // (which clears to empty) while we still have nothing, so a late success isn't stomped.
+                // First proper attempt sets lyricsLoaded=true even when empty, so "No Lyrics Found" shows
+                // right away on a cold open when all sources (Spicy/Apple/lrclib) genuinely have nothing.
+                loadLyrics(song.id)
+                // Then retry SILENTLY for a while (a cold proxy — bearer scrape / reachability — can come
+                // up late). Silent = re-fetch WITHOUT clearing, so a late success swaps lyrics in but a
+                // persistent miss leaves "No Lyrics Found" up instead of flickering it away every attempt.
                 repeat(12) {
-                    if (_state.value.currentSong?.id != song.id) return@launch
-                    if (_state.value.lyrics.isEmpty()) loadLyrics(song.id)
                     kotlinx.coroutines.delay(2000)
-                    if (_state.value.lyrics.isNotEmpty() || _state.value.currentSong?.id != song.id) return@launch
+                    if (_state.value.currentSong?.id != song.id) return@launch
+                    if (_state.value.lyrics.isNotEmpty()) return@launch
+                    val s = _state.value.currentSong?.takeIf { it.id == song.id } ?: return@launch
+                    val lines = fetchLyricsShared(song.id, s.title, s.artistName, s.durationMs / 1000).await()
+                    if (_state.value.currentSong?.id == song.id && lines.isNotEmpty()) {
+                        val fx = footerCache[song.id]
+                        _state.update { it.copy(lyrics = lines, lyricsLoaded = true, lyricsCredits = creditsCache[song.id] ?: emptyList(), lyricsOrigin = fx?.origin, lyricsMaker = fx?.maker, lyricsUploader = fx?.uploader) }
+                        if (_state.value.translateLyrics) fetchTranslation(song.id)
+                        return@launch
+                    }
                 }
             }
             // Motion art has the same cold-start problem: a single fetch before the server/bearer are
