@@ -177,7 +177,14 @@ async function ensureDecrypted(songId: string, mut: string, background = false):
         if (code === 0) resolve();
         else {
           try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
-          const err = new Error(`decrypt exited ${code}: ${stderr}`);
+          // The one failure mode that looks like a dead MUT but isn't: the decrypt
+          // script's TLS handshake hitting a MITM proxy. Name the cause so the log
+          // doesn't send the next reader hunting for a token problem.
+          const hint = stderr.includes("CERTIFICATE_VERIFY_FAILED")
+            ? " — TLS cert rejected; a system/VPN proxy is intercepting the connection. " +
+              "stream_decrypt.py ignores OS proxy settings; set AM_HTTP_PROXY + AM_CA_BUNDLE in server/.env to use one deliberately."
+            : "";
+          const err = new Error(`decrypt exited ${code}: ${stderr}${hint}`);
           (err as any).exitCode = code;
           reject(err);
         }
@@ -295,11 +302,16 @@ async function getStreamParams(songId: string, mut: string) {
   const assets: any[] = entry.assets ?? [];
   console.log(`[stream] adamId=${adamId} assets=${assets.map((a: any) => a.flavor).join(", ")}`);
 
-  // Prefer ctrp64 (smaller/compressed) over ctrp256 (likely lossless/hi-res).
-  // ctrp = CTR-mode protected; 64 vs 256 suffix appears to be quality tier, not key size.
+  // Prefer 28:ctrp256 (AAC-LC 256k) over 32:ctrp64 (HE-AAC 64k). Apple's own asset
+  // metadata states the distinction plainly — `metadata.bitRate` is 256 for ctrp256
+  // and 64 for ctrp64 — so the "64 vs 256 is a quality tier" reading was right, but
+  // the preference was inverted: this picked the 64k HE-AAC, and the old 17x
+  // duplicate-download bug then inflated its byte count enough to look like a
+  // lossless source and get transcoded back up to 256k. Fixing the download revealed
+  // it. HE-AAC's SBR also makes Android's FDK decoder emit silence on some tracks.
   const asset =
-    assets.find((a: any) => a.flavor === "32:ctrp64") ||
     assets.find((a: any) => a.flavor === "28:ctrp256") ||
+    assets.find((a: any) => a.flavor === "32:ctrp64") ||
     assets.find((a: any) => a.flavor?.includes("ctrp")) ||
     assets.find((a: any) => typeof a.URL === "string" && a.URL);
 

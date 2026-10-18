@@ -22,6 +22,21 @@ LICENSE_URL = 'https://play.itunes.apple.com/WebObjects/MZPlay.woa/wa/acquireWeb
 MP4DECRYPT  = os.environ.get('MP4DECRYPT_BIN', 'mp4decrypt')
 FFMPEG      = os.environ.get('FFMPEG_BIN', 'ffmpeg')
 
+# Never inherit the OS proxy settings. httpx defaults to trust_env=True, which on
+# Windows picks up the WinINET proxy (a VPN/accelerator's local MITM listener).
+# That listener presents its own root CA; httpx validates against certifi and the
+# handshake dies with CERTIFICATE_VERIFY_FAILED — so every stream 500s while
+# browse/search (Bun, which ignores the system proxy) keeps working. Set
+# AM_HTTP_PROXY=http://host:port to route through a proxy deliberately, and
+# AM_CA_BUNDLE=/path/to/ca.pem if that proxy terminates TLS with a private CA.
+_HTTP_PROXY = os.environ.get('AM_HTTP_PROXY', '')
+_CA_BUNDLE = os.environ.get('AM_CA_BUNDLE', '')
+HTTP_KW = {'trust_env': False}
+if _HTTP_PROXY:
+    HTTP_KW['proxy'] = _HTTP_PROXY
+if _CA_BUNDLE:
+    HTTP_KW['verify'] = _CA_BUNDLE
+
 # Above this, the source is lossless (ALAC ~1.9 Mbps) and worth transcoding.
 # At or below, it's already AAC and we just stream-copy it.
 LOSSY_CEILING_KBPS = 400
@@ -42,7 +57,7 @@ async def get_kid_and_key(adam_id: str, key_uri: str, bearer: str, mut: str):
         challenge = base64.b64encode(
             cdm.get_license_challenge(session, PSSH(pssh_bytes))
         ).decode()
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(**HTTP_KW) as client:
             resp = await client.post(
                 LICENSE_URL,
                 json={'challenge': challenge, 'key-system': 'com.widevine.alpha',
@@ -92,7 +107,7 @@ async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str)
     """Download encrypted audio. Returns (is_multi_seg, duration_s)."""
     headers = {'Authorization': f'Bearer {bearer}', 'Cookie': f'media-user-token={mut}'}
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(**HTTP_KW) as client:
         pl_text = (await client.get(stream_url, headers=headers, timeout=60.0)).text
     base = stream_url.rsplit('/', 1)[0] + '/'
 
@@ -118,33 +133,68 @@ async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str)
         best_url = best_url or fallback_url
         if not best_url:
             raise ValueError("No variant in master playlist")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(**HTTP_KW) as client:
             pl_text = (await client.get(best_url, headers=headers, timeout=60.0)).text
         base = best_url.rsplit('/', 1)[0] + '/'
 
-    init_url = None
-    seg_urls = []
+    # Apple's ctrp playlists are ONE mp4 addressed by 16+ #EXT-X-BYTERANGE slices,
+    # not 16 separate files. Ignoring the range made every slice re-download the
+    # whole file: 17 full copies (21.9 MB instead of 1.29 MB for ctrp64, 84.7 MB
+    # for ctrp256). It also inflated the decrypted size, which then tripped the
+    # lossless check below and forced a pointless transcode of a 256k AAC source.
+    parts = []          # ordered (url, start, end); start/end None = whole resource
     duration_s = 0.0
+    pending_range = None
+    has_init = False
+    seg_count = 0
     for line in pl_text.splitlines():
         line = line.strip()
-        if line.startswith('#EXT-X-MAP:URI="'):
-            uri = line.split('"')[1]
-            init_url = uri if uri.startswith('http') else base + uri
+        if not line:
+            continue
+        if line.startswith('#EXT-X-MAP:'):
+            m = _re.search(r'URI="([^"]+)"', line)
+            if not m:
+                continue
+            url = m.group(1)
+            url = url if url.startswith('http') else base + url
+            br = _re.search(r'BYTERANGE="(\d+)@(\d+)"', line)
+            if br:
+                n, o = int(br.group(1)), int(br.group(2))
+                parts.append((url, o, o + n - 1))
+            else:
+                parts.append((url, None, None))
+            has_init = True
+        elif line.startswith('#EXT-X-BYTERANGE:'):
+            m = _re.match(r'#EXT-X-BYTERANGE:(\d+)(?:@(\d+))?', line)
+            if m:
+                n = int(m.group(1))
+                if m.group(2) is not None:
+                    o = int(m.group(2))
+                else:
+                    # Offset omitted: continues where the previous slice ended.
+                    prev = parts[-1] if parts else None
+                    o = (prev[2] + 1) if prev and prev[2] is not None else 0
+                pending_range = (o, o + n - 1)
         elif line.startswith('#EXTINF:'):
             try:
                 duration_s += float(line[len('#EXTINF:'):].split(',')[0])
             except ValueError:
                 pass
-        elif line and not line.startswith('#'):
-            seg_urls.append(line if line.startswith('http') else base + line)
+        elif not line.startswith('#'):
+            url = line if line.startswith('http') else base + line
+            if pending_range:
+                parts.append((url, pending_range[0], pending_range[1]))
+                pending_range = None
+            else:
+                parts.append((url, None, None))
+            seg_count += 1
 
-    if not init_url and not seg_urls:
+    if not parts:
         raise ValueError(f"No media URLs in playlist:\n{pl_text[:500]}")
 
     # fMP4 multi-seg: explicit init segment + multiple audio segments.
     # Regular HLS has no init segment — single download, no re-encode needed.
-    is_multi_seg = init_url is not None and len(seg_urls) > 1
-    urls = ([init_url] if init_url else []) + seg_urls
+    is_multi_seg = has_init and seg_count > 1
 
     async def _dl(client, url, retries=3):
         for attempt in range(retries):
@@ -161,12 +211,17 @@ async def fetch_encrypted(stream_url: str, bearer: str, mut: str, enc_path: str)
                     raise
                 await asyncio.sleep(2 ** attempt)
 
-    async with httpx.AsyncClient(http2=False) as client:
-        data_list = await asyncio.gather(*[_dl(client, url) for url in urls])
+    # One request per unique URL; slice the ranges locally. A ranged playlist then
+    # costs a single download instead of one per slice.
+    unique_urls = list(dict.fromkeys(p[0] for p in parts))
+    async with httpx.AsyncClient(http2=False, **HTTP_KW) as client:
+        fetched = await asyncio.gather(*[_dl(client, u) for u in unique_urls])
+    by_url = dict(zip(unique_urls, fetched))
 
     with open(enc_path, 'wb') as f:
-        for data in data_list:
-            f.write(data)
+        for url, start, end in parts:
+            data = by_url[url]
+            f.write(data if start is None else data[start:end + 1])
 
     return is_multi_seg, duration_s
 
@@ -185,8 +240,11 @@ async def run(args: dict):
     kid_hex, key_hex = await get_kid_and_key(adam_id, key_uri, bearer, mut)
     print(f'[timing] license: {time.time()-t0:.1f}s', flush=True)
 
-    enc_path = f'/tmp/am_enc_{adam_id}.mp4'
-    dec_path = out_path or f'/tmp/am_dec_{adam_id}.mp4'
+    # tempfile.gettempdir() rather than a literal /tmp: on Windows that path does
+    # not exist, and the download's open() would fail before decryption started.
+    tmp_dir = tempfile.gettempdir()
+    enc_path = os.path.join(tmp_dir, f'am_enc_{adam_id}.mp4')
+    dec_path = out_path or os.path.join(tmp_dir, f'am_dec_{adam_id}.mp4')
     try:
         t1 = time.time()
         is_multi_seg, duration_s = await fetch_encrypted(stream_url, bearer, mut, enc_path)
@@ -234,26 +292,52 @@ async def run(args: dict):
                   f'flags={flags}  in={dec_size//1024}KB out={out_size//1024}KB', flush=True)
             return r, out_size
 
-        def _out_duration():
-            """Duration of tmp_remux in seconds, or None if ffprobe isn't usable."""
-            probe = (FFMPEG[:-6] + 'ffprobe') if FFMPEG.endswith('ffmpeg') else 'ffprobe'
+        def _probe(entries, path):
+            """ffprobe a file → {key: value}. Empty dict if ffprobe is unusable."""
+            # Derive ffprobe from FFMPEG_BIN when it's a full path, so a Windows
+            # install that only sets FFMPEG_BIN still works.
+            # (FFMPEG ends in "ffmpeg.exe" there, not "ffmpeg".)
+            base = FFMPEG[:-4] if FFMPEG.lower().endswith('.exe') else FFMPEG
+            exe = '.exe' if FFMPEG.lower().endswith('.exe') else ''
+            probe = (base[:-6] + 'ffprobe' + exe) if base.endswith('ffmpeg') else 'ffprobe'
             try:
                 out = subprocess.run(
-                    [probe, '-v', 'error', '-show_entries', 'format=duration',
-                     '-of', 'csv=p=0', tmp_remux],
+                    [probe, '-v', 'error', '-show_entries', entries,
+                     '-of', 'default=noprint_wrappers=1', path],
                     capture_output=True, timeout=15,
                 )
-                return float(out.stdout.decode().strip())
+                return dict(
+                    line.split('=', 1) for line in out.stdout.decode().splitlines()
+                    if '=' in line
+                )
+            except Exception:
+                return {}
+
+        def _out_duration():
+            """Duration of tmp_remux in seconds, or None if ffprobe isn't usable."""
+            try:
+                return float(_probe('format=duration', tmp_remux).get('duration', ''))
             except Exception:
                 return None
 
-        # Decide by what we actually got, not by segment layout. Apple's ctrp
-        # assets are sometimes AAC (~256 kbps) and sometimes lossless (~1.9 Mbps)
-        # for the same flavor string, so measure it.
+        # Decide by the CODEC we actually got, not by average byte rate. Measuring
+        # bitrate misclassified a 256k AAC source as lossless whenever the byte
+        # count was inflated (duplicate BYTERANGE downloads did exactly that, and
+        # the result was a 256k→256k transcode: a whole generation of lossy loss
+        # plus ~10s of CPU for nothing). Only a real lossless source needs the
+        # re-encode — its 65 MB would otherwise blow up the cache and the LAN.
+        src = _probe('stream=codec_name,bit_rate', tmp_dec)
+        src_codec = (src.get('codec_name') or '').lower()
         src_kbps = (dec_size * 8 / duration_s / 1000) if duration_s > 0 else 0
         t3 = time.time()
 
-        if src_kbps > 0 and src_kbps <= LOSSY_CEILING_KBPS:
+        if src_codec:
+            lossless = src_codec in ('alac', 'flac')
+        else:
+            # Probe unavailable — keep the old measurement as a fallback.
+            lossless = src_kbps > LOSSY_CEILING_KBPS
+
+        if not lossless:
             # Already compressed — stream-copy. ~1s instead of a re-encode, and
             # no second generation of lossy loss.
             ff, out_size = _remux(['-c:a', 'copy'])
@@ -281,7 +365,7 @@ async def run(args: dict):
             strategy = f'transcode({AAC_ENCODER})'
 
         print(f'[timing] remux total: {time.time()-t3:.1f}s  strategy={strategy}  '
-              f'src={src_kbps:.0f}kbps', flush=True)
+              f'src={src_codec or "?"}/{src_kbps:.0f}kbps', flush=True)
         if ff.returncode == 0 and out_size > 0:
             try:
                 os.remove(tmp_dec)
