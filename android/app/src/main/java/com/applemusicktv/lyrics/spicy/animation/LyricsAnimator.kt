@@ -162,7 +162,7 @@ class LyricsAnimator(
         /** Where Simple mode's Animate sweep (SLM_Animation) starts, in percent. */
         const val SLM_FROM = -27.5f
         /** `.line` opacity (and line-synced scale) transition: 0.2s. */
-        const val LINE_TRANSITION_MS = 200
+        const val LINE_TRANSITION_MS = 300
         /** Minimal Lyrics Mode (Mixed.css): scale 0.4s ease-in-out, opacity 0.4s linear. */
         const val MINIMAL_TRANSITION_MS = 400
         val EASE_IN_OUT = CubicBezierEasing(0.42f, 0f, 0.58f, 1f)
@@ -441,7 +441,10 @@ class LyricsAnimator(
                 config.isMinimal && !line.isSongwriter -> tween<Float>(MINIMAL_TRANSITION_MS, easing = LinearEasing)
                 // The line-synced `.line` rule swaps the easing for its scale curve.
                 lyricsType == LyricsType.Line -> tween<Float>(LINE_TRANSITION_MS, easing = SCALE_EASING)
-                else -> tween<Float>(LINE_TRANSITION_MS, easing = OPACITY_EASING)
+                // Full mode: use the SAME ease-in-out as the line scale so a line's opacity and its
+                // shrink move TOGETHER. With the old fast-start OPACITY_EASING the line greyed out well
+                // before it shrank ("grays abruptly, then shrinks") — the two were desynced.
+                else -> tween<Float>(LINE_TRANSITION_MS, easing = SCALE_EASING)
             }
             coroutineScope.launch { animatable.animateTo(target, spec) }
         }
@@ -692,10 +695,11 @@ class LyricsAnimator(
                 }
             }
 
-            // Full mode: override whatever per-letter glow the falloff/Sung-override computed with the
-            // steady whole-word glow, so the full word glows as one and holds (no travelling flash).
-            // Simple mode keeps its own per-letter strength-based glow.
-            if (!simple) targetGlow = wordGlowTarget
+            // Glow TRACKS THE GROWTH: the per-letter travelling glow computed above (baseGlow × the
+            // distance falloff) rises as a letter swells and fades as the active position moves on — so
+            // the glow breathes with the scale bump instead of sitting flat. (The old flat
+            // wordGlowTarget override was only there to force the glow visible while the DRAW was broken;
+            // now that the halo renders every frame, the travelling curve is what reads right.)
 
             val s = letterSprings(lineIndex, wordIndex, k)
             s.scale.setGoal(targetScale)

@@ -126,6 +126,10 @@ data class PlayerState(
     /** Translated text per lyric line, aligned by index to [lyrics]. Empty = not translated. */
     val lyricsTranslation: List<String>   = emptyList(),
     val translateLyrics:  Boolean         = false,
+    /** Target language code for lyric translation (ISO 639-1, e.g. "en", "es", "ja"). */
+    val translateLang:    String          = "en",
+    /** Show the lyrics credits footer (Provided by / Written by / Made by / Uploaded by). */
+    val showLyricsCredits: Boolean        = true,
     /** Use the ported Spicy Player Canvas lyrics renderer instead of the built-in Compose one. */
     val lyricsRendererV2: Boolean         = false,
     val isFullStream:     Boolean         = false,
@@ -200,6 +204,14 @@ private const val LYRICS_BASELINE_MS = 200L
 /** Added to BOTH the beat and the lyrics when a Bluetooth output is live (Automatic mode). Bluetooth
  *  delays the actual sound by roughly this much; an estimate, since Android exposes no exact figure. */
 private const val BT_DELTA_MS = 350L
+
+/** Target languages offered for lyric translation (ISO 639-1 code → display name). */
+val TRANSLATE_LANGS: List<Pair<String, String>> = listOf(
+    "en" to "English", "es" to "Spanish", "fr" to "French", "de" to "German",
+    "it" to "Italian", "pt" to "Portuguese", "nl" to "Dutch", "ru" to "Russian",
+    "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "hi" to "Hindi",
+    "ar" to "Arabic", "tr" to "Turkish", "pl" to "Polish", "sv" to "Swedish",
+)
 
 @HiltViewModel
 class PlayerViewModel @Inject constructor(
@@ -1047,7 +1059,7 @@ class PlayerViewModel @Inject constructor(
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), lyricsRendererV2 = prefs.getBoolean("lyrics_renderer_v2", false), progressMs = posMs) }
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRendererV2 = prefs.getBoolean("lyrics_renderer_v2", false), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {
@@ -2108,10 +2120,26 @@ class PlayerViewModel @Inject constructor(
     }
 
     // Add to end of user priority queue (plays before rest of playlist)
-    fun addToQueue(song: Song) { _state.update { it.copy(userQueue = it.userQueue + song) }; prefetchSong(song); saveState() }
+    fun addToQueue(song: Song) { _state.update { it.copy(userQueue = it.userQueue + song) }; prefetchSong(song); enrichQueuedDuration(song); saveState() }
+
+    /** A song added from Browse/New/Search often has durationMs=0 (cards carry no length), which made the
+     *  queue's TOTAL time read 0:00. Fetch the real length and patch every copy of it in the queues. */
+    private fun enrichQueuedDuration(song: Song) {
+        if (song.durationMs > 0L) return
+        viewModelScope.launch {
+            val dur = repo.getSong(song.id).getOrNull()?.durationMs ?: return@launch
+            if (dur <= 0L) return@launch
+            _state.update { s ->
+                s.copy(
+                    userQueue = s.userQueue.map { if (it.id == song.id && it.durationMs <= 0L) it.copy(durationMs = dur) else it },
+                    queue     = s.queue.map     { if (it.id == song.id && it.durationMs <= 0L) it.copy(durationMs = dur) else it },
+                )
+            }
+        }
+    }
 
     // Insert at front of user priority queue (plays immediately next)
-    fun playNext(song: Song) { _state.update { it.copy(userQueue = listOf(song) + it.userQueue) }; prefetchSong(song); saveState() }
+    fun playNext(song: Song) { _state.update { it.copy(userQueue = listOf(song) + it.userQueue) }; prefetchSong(song); enrichQueuedDuration(song); saveState() }
 
     // Play a specific userQueue item immediately, removing it from the queue
     fun playFromUserQueue(idx: Int) {
@@ -2156,6 +2184,7 @@ class PlayerViewModel @Inject constructor(
                 val fx = footerCache[songId]
                 _state.update { it.copy(lyrics = cached, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList(), lyricsOrigin = fx?.origin, lyricsMaker = fx?.maker, lyricsUploader = fx?.uploader) }
                 if (_state.value.translateLyrics) fetchTranslation(songId)
+                prefetchNextLyrics(songId)
             }
             return
         }
@@ -2167,14 +2196,52 @@ class PlayerViewModel @Inject constructor(
                 val fx = footerCache[songId]
                 _state.update { it.copy(lyrics = lines, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList(), lyricsOrigin = fx?.origin, lyricsMaker = fx?.maker, lyricsUploader = fx?.uploader) }
                 if (lines.isNotEmpty() && _state.value.translateLyrics) fetchTranslation(songId)
+                // Current song's lyrics are in — warm the NEXT song's lyrics (N+1 only) so a skip shows
+                // them with no blank flash. Not N+2: the next boundary re-runs this for whatever we land on.
+                prefetchNextLyrics(songId)
             }
         }
     }
 
+    /** Prefetch ONLY the immediate next queue item's lyrics, relative to the song that just loaded. */
+    private fun prefetchNextLyrics(afterSongId: String) {
+        val q = _state.value.queue
+        val idx = q.indexOfFirst { it.id == afterSongId }
+        if (idx < 0) return
+        q.getOrNull(idx + 1)?.takeIf { !it.isMusicVideo }?.let { prefetchLyrics(it) }
+    }
+
 
     /** Preferred translation language — the device language, falling back to English. */
-    private val translateLang: String get() = java.util.Locale.getDefault().language.ifBlank { "en" }
+    // Target language for lyric translation — a user setting (Settings → Translate Language), defaulting
+    // to the device language. Translating English lyrics to an English target is a no-op (output==input),
+    // which is why it looked broken; now it's pickable.
+    private val translateLang: String get() = prefs.getString("translate_lang", null)
+        ?: java.util.Locale.getDefault().language.ifBlank { "en" }
     private var translateJob: kotlinx.coroutines.Job? = null
+
+    /** Show/hide the lyrics credits footer (Settings). */
+    fun toggleLyricsCredits() {
+        val on = !_state.value.showLyricsCredits
+        _state.update { it.copy(showLyricsCredits = on) }
+        prefs.edit { putBoolean("lyrics_credits_shown", on) }
+    }
+
+    /** Change the lyric-translation target language and re-fetch if translation is on. */
+    fun setTranslateLang(code: String) {
+        prefs.edit { putString("translate_lang", code) }
+        _state.update { it.copy(translateLang = code) }
+        val id = _state.value.currentSong?.id
+        if (_state.value.translateLyrics && id != null) fetchTranslation(id)
+    }
+
+    /** Cycle the translate target language through [TRANSLATE_LANGS] (Settings stepper). */
+    fun stepTranslateLang(dir: Int) {
+        val codes = TRANSLATE_LANGS.map { it.first }
+        val cur = codes.indexOf(_state.value.translateLang).coerceAtLeast(0)
+        val next = ((cur + dir) % codes.size + codes.size) % codes.size
+        setTranslateLang(codes[next])
+    }
 
     /** Toggle the Now Playing lyrics translation (··· menu). Persisted so it stays on across songs. */
     fun toggleTranslateLyrics() {

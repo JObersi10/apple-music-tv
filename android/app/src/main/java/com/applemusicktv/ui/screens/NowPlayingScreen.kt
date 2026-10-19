@@ -256,11 +256,11 @@ fun NowPlayingScreen(
                 translations = state.lyricsTranslation,
                 lyricsScale = state.lyricsScale,
                 richMotion = !state.lowPowerMode && !state.reduceMotion,
-                credits = state.lyricsCredits,
+                credits = if (state.showLyricsCredits) state.lyricsCredits else emptyList(),
                 rendererV2 = state.lyricsRendererV2,
-                origin = state.lyricsOrigin,
-                maker = state.lyricsMaker,
-                uploader = state.lyricsUploader,
+                origin = if (state.showLyricsCredits) state.lyricsOrigin else null,
+                maker = if (state.showLyricsCredits) state.lyricsMaker else null,
+                uploader = if (state.showLyricsCredits) state.lyricsUploader else null,
             )
             else -> {
         // Responsive sizing: scale the outer padding, the left column and the cover off the actual
@@ -269,7 +269,7 @@ fun NowPlayingScreen(
         val npCfg = androidx.compose.ui.platform.LocalConfiguration.current
         val npHPad = (npCfg.screenWidthDp * 0.055f).dp.coerceIn(20.dp, 72.dp)
         val npVPad = (npCfg.screenHeightDp * 0.07f).dp.coerceIn(16.dp, 40.dp)
-        val npColW = (npCfg.screenWidthDp * 0.30f).dp.coerceIn(240.dp, 360.dp)
+        val npColW = (npCfg.screenWidthDp * 0.36f).dp.coerceIn(280.dp, 440.dp)
         val npCoverSz = (npColW.value * 0.753f).dp   // ~256dp at the 340dp reference column
         val npGap = (npCfg.screenWidthDp * 0.045f).dp.coerceIn(28.dp, 56.dp)
         Row(
@@ -373,7 +373,11 @@ fun NowPlayingScreen(
                                 .build(),
                             contentDescription = shownNpSong.title,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = npContentFade.value },
+                            // scale 1.02 overscans the image a hair past the Box edges so the dark Box
+                            // background (0xFF1A1A2E) can't show as a 1px black rim at the clip's AA edge.
+                            // The Box's clip trims the overflow. Same reason the motion video overscans.
+                            modifier = Modifier.fillMaxSize()
+                                .graphicsLayer { alpha = npContentFade.value; scaleX = 1.02f; scaleY = 1.02f },
                         )
                     }
                     // DIAGNOSTIC: motion artwork spins up a SECOND ExoPlayer/video
@@ -651,19 +655,20 @@ fun NowPlayingScreen(
                         )
                     } else if (shownLyr.isNotEmpty()) {
                         Box(Modifier.fillMaxSize().graphicsLayer { alpha = lyricFade.value }) {
+            val creditsOn = state.showLyricsCredits
                             if (state.lyricsRendererV2) {
                                 SpicyLyricsPanel(
                                     lyrics = shownLyr,
-                                    credits = shownCredits,
+                                    credits = if (creditsOn) shownCredits else emptyList(),
                                     progressState = lyricProgress,
                                     offsetMs = state.avLyricsMs,
                                     onSeek = { ms -> playerVm.seekToMs(ms) },
                                     fontScale = state.lyricsScale,
                                     isPlaying = state.isPlaying,
                                     richMotion = !state.lowPowerMode && !state.reduceMotion,
-                                    origin = shownOrigin,
-                                    maker = shownMaker,
-                                    uploader = shownUploader,
+                                    origin = if (creditsOn) shownOrigin else null,
+                                    maker = if (creditsOn) shownMaker else null,
+                                    uploader = if (creditsOn) shownUploader else null,
                                     dpadFocus = lyricsV2Focus,
                                     escapeFocus = playFocus,
                                 )
@@ -677,7 +682,7 @@ fun NowPlayingScreen(
                                     fontScale = state.lyricsScale,
                                     translations = shownTranslation,
                                     richMotion = !state.lowPowerMode && !state.reduceMotion,
-                                    credits = shownCredits,
+                                    credits = if (creditsOn) shownCredits else emptyList(),
                                 )
                             }
                         }

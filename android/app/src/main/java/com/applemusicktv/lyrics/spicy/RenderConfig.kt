@@ -31,8 +31,11 @@ data class RenderConfig(
     /** Already scoped to a fullscreen, non-compact surface by the caller. */
     val minimalLyricsMode: Boolean,
     val simpleAnimationStyle: SimpleAnimationStyle = SimpleAnimationStyle.CALCULATE,
-    /** Mixed.css `--gradient-alpha`: 1 under `.SimpleLyricsMode`. Background vocals keep 0.6. */
-    val gradientAlphaBright: Float = if (simpleLyricsMode) 1f else 0.85f,
+    /** Mixed.css `--gradient-alpha`: 1 under `.SimpleLyricsMode`. Background vocals keep 0.6.
+     *  Full mode raised 0.85→1.0: our glow is a rim-only halo (it doesn't brighten the glyph interior
+     *  like the reference's overlapping shadow did), so at 0.85 the SUNG text read as grey. At 1.0 the
+     *  sung word is true white; the unsung dim (0.5) still gives the wipe its contrast. */
+    val gradientAlphaBright: Float = if (simpleLyricsMode) 1f else 1f,
     /** `--gradient-alpha-end` on words and letters: 0.3 under `.SimpleLyricsMode`. */
     val gradientAlphaDim: Float = if (simpleLyricsMode) 0.3f else 0.5f,
     /** A whole line's `--gradient-alpha-end` (line-synced lyrics), `!important` in every mode. */

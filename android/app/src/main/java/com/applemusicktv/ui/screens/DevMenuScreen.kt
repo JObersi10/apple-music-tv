@@ -156,6 +156,20 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleLyricsRendererV2() },
             )
             Toggle(
+                label = "Lyrics credits", on = pstate.showLyricsCredits,
+                sub = if (pstate.showLyricsCredits) "Show the “Written by / Provided by / Made by” footer under lyrics"
+                      else "Hide the lyrics credits footer",
+                onToggle = { playerVm.toggleLyricsCredits() },
+            )
+            Stepper(
+                label = "Translate language",
+                value = com.applemusicktv.ui.viewmodel.TRANSLATE_LANGS
+                    .firstOrNull { it.first == pstate.translateLang }?.second ?: pstate.translateLang,
+                sub = "Target language for “Translate Lyrics” (in the Now Playing ··· menu)",
+                onDec = { playerVm.stepTranslateLang(-1) },
+                onInc = { playerVm.stepTranslateLang(1) },
+            )
+            Toggle(
                 label = "Reduce motion", on = pstate.reduceMotion,
                 sub = if (pstate.reduceMotion) "Background holds still" else "Background drifts and pulses",
                 onToggle = { playerVm.toggleReduceMotion() },

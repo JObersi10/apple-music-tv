@@ -548,12 +548,17 @@ internal fun DrawScope.drawLineModeLine(
 
     // Whole-line glow spring (reference Line-mode: shadow blur 4 + 8·glow, alpha glow·0.5),
     // layered with the inactive-line distance blur when present.
-    val glowAlpha = (lineAnim.lineGlow * 0.5f).coerceIn(0f, 1f)
+    // SCALED BY THE FILL: a line-synced line fills top→bottom over its whole duration, so for most of
+    // the line the lower text is still grey (unfilled). The raw lineGlow spring peaks mid-line, which lit
+    // a glow over that grey text ("text grey but glowing"). Multiplying the glow by the fill fraction
+    // makes the glow track the brightness — ~0 while grey, full once the line is sung.
+    val fill = (lineAnim.lineGradientPercent / 100f).coerceIn(0f, 1f)
+    val glowAlpha = (lineAnim.lineGlow * 0.5f * fill).coerceIn(0f, 1f)
     val lineCssPx = layout.words.firstOrNull()?.let { cssPx(it.textLayoutResult, lineAnim.isBackground) } ?: 1f
     val shadow = when {
         !lineAnim.suppressShadows && glowAlpha > 0.02f -> Shadow(
             color = Color.White.copy(alpha = glowAlpha * lineAnim.opacity),
-            blurRadius = (4f + 8f * lineAnim.lineGlow) * lineCssPx,
+            blurRadius = (4f + 8f * lineAnim.lineGlow * fill) * lineCssPx,
         )
         else -> null
     }
