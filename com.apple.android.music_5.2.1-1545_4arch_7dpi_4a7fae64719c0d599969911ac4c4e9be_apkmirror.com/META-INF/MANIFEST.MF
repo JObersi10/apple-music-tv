@@ -1,0 +1,48 @@
+Manifest-Version: 1.0
+Created-By: 11.0.30 (Oracle Corporation)
+
+Name: split_config.x86_64.apk
+SHA1-Digest: Wkhk0oSZeLkat4GuQ67iScXgC2g=
+
+Name: split_config.armeabi_v7a.apk
+SHA1-Digest: bAGFixjYyakjaXU1YR85zYixXYg=
+
+Name: split_config.tvdpi.apk
+SHA1-Digest: M+JZ3hXc7I9kvYQDvrdNLiJfzS4=
+
+Name: split_config.mdpi.apk
+SHA1-Digest: L+XVfNMHI2aPvybANaTlu2HRlPw=
+
+Name: icon.png
+SHA1-Digest: M3EA06SBPmJB08Griue8faNtH4o=
+
+Name: split_config.xxxhdpi.apk
+SHA1-Digest: TxDpP4ahOV9+hx1fGe8ifnbLEik=
+
+Name: base.apk
+SHA1-Digest: FSlU8Fo6CA0gfO9QzjHnstTC03M=
+
+Name: split_config.xhdpi.apk
+SHA1-Digest: Yu5yeAqu8+ymjAtT/wRrX1io/dM=
+
+Name: split_config.hdpi.apk
+SHA1-Digest: nnNvohl9vvWdSxM/6bhdGuH7GBI=
+
+Name: split_config.x86.apk
+SHA1-Digest: N06MbTctO04IJUfa30T3/MftBaw=
+
+Name: split_config.ldpi.apk
+SHA1-Digest: HKcjsCj7B4ICSTCM0lee5nrvVxo=
+
+Name: APKM_installer.url
+SHA1-Digest: WXG2Fx7AAOCZOW45becgkaGPhgg=
+
+Name: split_config.arm64_v8a.apk
+SHA1-Digest: pLCih2I0cQy/nHw7b0L3msAUkCI=
+
+Name: info.json
+SHA1-Digest: XLSen5v5RshQebRBydRqErOIcCk=
+
+Name: split_config.xxhdpi.apk
+SHA1-Digest: BivNoTKRDvXURTYw2pynj352bkQ=
+

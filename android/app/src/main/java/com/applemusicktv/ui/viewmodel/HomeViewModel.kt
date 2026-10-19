@@ -97,31 +97,38 @@ class HomeViewModel @Inject constructor(
                             }
                         }
                         // A non-personalized fetch isn't the final word — recs may recover on a later
-                        // attempt in this same load. Only stop early once we actually have personalization.
-                        if (fresh || !haveCached) return@launch
+                        // attempt. Only stop the foreground loop once we actually have personalization;
+                        // otherwise fall through to the background self-heal below.
+                        if (fresh) return@launch
                     }
                 }.onFailure { lastErr = it.message }
                 if (attempt < 3) kotlinx.coroutines.delay(1500)
             }
-            // Total failure: keep any cached feed rather than blanking.
-            if (cached.isNotEmpty()) { _state.value = HomeUiState(isLoading = false, sections = cached, needsRefresh = fallbackBanner(cached)); return@launch }
-            // No cache AND every source 500'd (Apple's recommendations service streaks 500s, and a
-            // fresh install right after an update has nothing cached — that's the "home is gone"). Don't
-            // give up: keep retrying in the background with backoff so Home self-heals once Apple
-            // recovers, instead of stranding the user on an empty screen until they relaunch.
-            _state.value = HomeUiState(isLoading = false, error = lastErr)
+            // We got here WITHOUT personalization (every attempt 500'd, or only charts/moods came back —
+            // /me/recommendations streaks 500s and is often not ready on a cold start). Show the best feed
+            // we have (cached or the last non-personalized fetch), then keep retrying in the BACKGROUND
+            // with backoff so Home self-heals once recs recover — instead of stranding the user on the
+            // "needs refresh" banner until they relaunch. This is the fix for "home keeps needing refresh
+            // on startup": the banner now clears itself when personalization lands.
+            val best = if (cached.isNotEmpty()) cached else _state.value.sections
+            if (best.isNotEmpty()) _state.value = HomeUiState(isLoading = false, sections = best, needsRefresh = fallbackBanner(best))
+            else _state.value = HomeUiState(isLoading = false, error = lastErr)
             var backoff = 4_000L
             repeat(15) {
                 kotlinx.coroutines.delay(backoff)
                 backoff = (backoff * 3 / 2).coerceAtMost(30_000L)
                 val r = repo.getHome().getOrNull() ?: return@repeat
                 val secs = r.sections.map { s -> HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style) }
-                if (secs.isNotEmpty()) {
-                    _state.value = HomeUiState(isLoading = false, sections = secs, needsRefresh = fallbackBanner(secs))
-                    if (secs.isPersonalized()) launch(kotlinx.coroutines.Dispatchers.Default) {
+                if (secs.isEmpty()) return@repeat
+                val personalized = secs.isPersonalized()
+                // Never downgrade a personalized feed we're already showing to a non-personalized one.
+                if (!personalized && _state.value.sections.isPersonalized()) return@repeat
+                _state.value = HomeUiState(isLoading = false, sections = secs, needsRefresh = fallbackBanner(secs))
+                if (personalized) {
+                    launch(kotlinx.coroutines.Dispatchers.Default) {
                         runCatching { prefs.edit().putString("sections", adapter.toJson(secs)).apply() }
                     }
-                    return@launch
+                    return@launch   // healed — stop retrying
                 }
             }
         }
