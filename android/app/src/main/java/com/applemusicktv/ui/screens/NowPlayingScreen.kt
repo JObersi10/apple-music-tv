@@ -610,12 +610,14 @@ fun NowPlayingScreen(
                     // the new ones appeared. Only pay the long blank fade when the fetch is genuinely cold.
                     val haveNew = state.lyrics.isNotEmpty() && state.lyricsLoaded
                     if (haveNew) {
-                        lyricFade.animateTo(0f, tween(110))
+                        // Swap the content SOONER (short fade-out) then a longer graceful fade-in, so the
+                        // new lyrics are up fast and the transition still reads smooth, not a blink.
+                        lyricFade.animateTo(0f, tween(70))
                         shownSongId = state.currentSong?.id
                         shownLyr = state.lyrics; shownCredits = state.lyricsCredits
                         shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
                         shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
-                        lyricFade.animateTo(1f, tween(220))
+                        lyricFade.animateTo(1f, tween(340))
                     } else {
                         lyricFade.animateTo(0f, tween(260))
                         shownSongId = state.currentSong?.id
