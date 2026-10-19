@@ -835,7 +835,9 @@ class PlayerViewModel @Inject constructor(
         // capped so it can't grow without bound. (The VOL live logger is wired in AppleMusicApp so it goes
         // to the APP log, not the network log.)
         run {
-            val gainCache = context.getSharedPreferences("gain_cache", Context.MODE_PRIVATE)
+            // _v2: the old "gain_cache" held half-settled running-AGC values; the rewritten
+            // GainProcessor stores true integrated-loudness constants, so start a fresh store.
+            val gainCache = context.getSharedPreferences("gain_cache_v2", Context.MODE_PRIVATE)
             com.applemusicktv.media.GainProcessor.cacheGet = { key -> if (gainCache.contains(key)) gainCache.getFloat(key, 1f) else null }
             com.applemusicktv.media.GainProcessor.cachePut = { key, g ->
                 if (gainCache.all.size > 500) gainCache.edit().clear().apply()

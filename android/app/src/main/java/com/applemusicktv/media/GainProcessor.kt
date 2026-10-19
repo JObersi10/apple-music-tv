@@ -9,60 +9,73 @@ import kotlin.math.sqrt
 import kotlin.math.tanh
 
 /**
- * Volume leveling — a slow automatic-gain pass that nudges every track toward the same perceived
- * loudness, so quiet masters come up and loud ones come down instead of being "all over the place".
+ * Volume leveling — ReplayGain-style: ONE constant gain per track, decided before the track starts and
+ * held dead-flat for its whole duration. This is a full rewrite of the old running-AGC design, which
+ * eased the gain toward a target over the first ~8 s and then kept drifting — so every track started at
+ * the wrong level (the "amplified/distorted at the start"), the level moved *within* a track (the one
+ * thing a normalizer must never do), and the per-track memory held a half-settled moving value.
  *
- * It's an RMS AGC, not full LUFS: measure the running RMS, aim it at [TARGET_RMS], and move a single
- * broadband gain there VERY slowly so it levels BETWEEN tracks without pumping WITHIN one. The gain is
- * updated once per input buffer and held constant across that buffer's samples; a soft limiter on the
- * output stops a boost from hard-clipping peaky material.
+ * How it works now:
+ *  - The gain applied this play is a single constant, [appliedGain], chosen in [onTrackChanged] from the
+ *    track's remembered measurement ([cacheGet]) — or **1.0 (flat, untouched)** the first time we ever
+ *    see the track. Nothing eases it; every sample in the track gets the same gain.
+ *  - Meanwhile we silently MEASURE the track's integrated loudness (sum of squares over all non-silent
+ *    samples, independent of the gain we're applying). On track change / flush we convert that to the
+ *    correct constant gain and store it ([cachePut]). The NEXT play of that track starts pre-levelled
+ *    from sample 0, with no ramp and no drift.
+ *  - A soft limiter on the output keeps a boosted peak from hard-clipping.
  *
- * Per-track memory: the settled gain for a track is remembered (via [cacheGet]/[cachePut], persisted by
- * the ViewModel), so replaying it starts at the right level immediately with no audible ramp. The
- * current track is announced through [currentTrackKey].
+ * Trade: a brand-new track plays flat (gain 1.0) on its first listen, then is correctly levelled on
+ * every replay. That's deliberate — a look-ahead loudness measurement is impossible inside the realtime
+ * playback path, and a flat first listen is far better than the old audible start-ramp + pumping.
  *
  * App-wide on/off via [enabled]; when off it's a straight pass-through with no math on the hot path.
  */
 class GainProcessor : BaseAudioProcessor() {
 
     private var isFloat = false
-    private var sampleRate = 48000
 
-    private var rms = TARGET_RMS   // smoothed running RMS estimate
-    private var gain = 1f          // current applied gain, eased toward target
     private var trackKey: String? = null
-    private var samplesSinceLog = 0L
-    private var samplesInTrack = 0L   // for the settle-then-lock behaviour
-    private var lastLoggedGain = -1f  // last gain we emitted a VOL line for (-1 = none yet)
-    private var settleLogsSent = 0    // how many of the 3 "analyzing" lines we've sent this track
-    private var settledLogged = false // emitted the single "settled" summary yet?
+    private var appliedGain = 1f          // constant gain applied for the whole current track
+
+    // Integrated-loudness measurement of the RAW (pre-gain) signal for the current track.
+    private var measSumSq = 0.0
+    private var measCount = 0L
+    private var measuredLogged = false    // emitted the one "measured" line for this track yet
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return when (inputAudioFormat.encoding) {
             C.ENCODING_PCM_16BIT, C.ENCODING_PCM_FLOAT -> {
                 isFloat = inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT
-                sampleRate = inputAudioFormat.sampleRate
                 inputAudioFormat
             }
             else -> AudioProcessor.AudioFormat.NOT_SET
         }
     }
 
-    /** Save the last track's settled gain and adopt the new track's remembered gain (or a neutral start). */
+    /** Commit the finished track's measurement, then adopt the new track's constant gain. */
     private fun onTrackChanged(newKey: String?) {
-        val old = trackKey
-        if (old != null) cachePut?.invoke(old, gain)   // remember where the last track settled
+        commitMeasurement()                     // store what the outgoing track measured to
         trackKey = newKey
-        // Clamp the remembered gain to the current range — an old cache entry from when MAX_GAIN was
-        // higher must not blast the track on start.
-        gain = (newKey?.let { cacheGet?.invoke(it) } ?: 1f).coerceIn(MIN_GAIN, MAX_GAIN)
-        rms = TARGET_RMS / gain.coerceAtLeast(0.01f)    // keep rms consistent with the adopted gain
-        samplesSinceLog = 0L
-        samplesInTrack = 0L
-        lastLoggedGain = -1f
-        settleLogsSent = 0
-        settledLogged = false
-        logger?.invoke("VOL", "track=${newKey ?: "?"} start gain=${"%.2f".format(gain)} (${if (newKey != null && cacheGet?.invoke(newKey) != null) "remembered" else "fresh"})")
+        // The gain for this play is the remembered measured constant, clamped — or a flat 1.0 the first
+        // time we see the track. No easing, no running estimate: this value is used for every sample.
+        val remembered = newKey?.let { cacheGet?.invoke(it) }
+        appliedGain = (remembered ?: 1f).coerceIn(MIN_GAIN, MAX_GAIN)
+        measSumSq = 0.0
+        measCount = 0L
+        measuredLogged = false
+        logger?.invoke("VOL", "track=${newKey ?: "?"} gain=${"%.2f".format(appliedGain)} " +
+            "(${if (remembered != null) "levelled" else "flat — first listen, measuring"})")
+    }
+
+    /** Turn the current track's integrated loudness into a constant gain and remember it. */
+    private fun commitMeasurement() {
+        val key = trackKey ?: return
+        if (measCount < MIN_MEASURE_SAMPLES) return   // too little non-silent audio to trust
+        val integratedRms = sqrt(measSumSq / measCount).toFloat()
+        if (integratedRms < SILENCE_RMS) return
+        val g = (TARGET_RMS / integratedRms).coerceIn(MIN_GAIN, MAX_GAIN)
+        cachePut?.invoke(key, g)
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
@@ -76,7 +89,7 @@ class GainProcessor : BaseAudioProcessor() {
 
         val inp = inputBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
         out.order(ByteOrder.LITTLE_ENDIAN)
-        val g = gain
+        val g = appliedGain
         var sumSq = 0.0
         var count = 0
         if (isFloat) {
@@ -96,42 +109,24 @@ class GainProcessor : BaseAudioProcessor() {
         }
         inputBuffer.position(inputBuffer.limit())   // we consumed it all
         // asShortBuffer()/asFloatBuffer() are VIEWS — writing through them does NOT advance `out`'s own
-        // position, so a bare out.flip() here would flip at position 0 and emit an EMPTY buffer (dead
-        // silence). We wrote exactly `size` bytes, so advance to there before flipping.
+        // position, so a bare out.flip() would flip at position 0 and emit an EMPTY buffer (silence).
+        // We wrote exactly `size` bytes, so advance to there before flipping.
         out.position(size)
         out.flip()
 
-        // Update loudness + ease the gain once per buffer — VERY slow, so leveling is between tracks and
-        // a bass drop after a quiet vocal doesn't yank the gain (which was the audible pumping).
+        // Accumulate the RAW signal's loudness (pre-gain) for this track. Skip near-silence so lead-in /
+        // lead-out / a crossfade partner feeding quiet doesn't drag the integrated figure down.
         if (count > 0) {
             val bufRms = sqrt(sumSq / count).toFloat()
-            samplesInTrack += count
-            // Ignore near-silence buffers entirely: they drag the RMS toward 0 and make `target` shoot to
-            // MAX (the crossfade player feeding silence was the `target=3.74 buf=0.000` garbage). No update,
-            // no log for those.
             if (bufRms >= SILENCE_RMS) {
-                rms += RMS_RATE * (bufRms - rms)
-                val target = (TARGET_RMS / (rms + 1e-4f)).coerceIn(MIN_GAIN, MAX_GAIN)
-                // Settle then (nearly) lock: adapt normally for the first few seconds of a track to find
-                // its level, then a much slower rate so the gain holds steady instead of wandering with
-                // each verse/chorus. Replays start pre-settled from the remembered gain.
-                val rate = if (samplesInTrack > SETTLE_SAMPLES) GAIN_RATE * 0.12f else GAIN_RATE
-                gain += rate * (target - gain)
-
-                val locked = samplesInTrack > SETTLE_SAMPLES
-                if (!locked) {
-                    // Settling: shoot exactly 3 "analyzing" lines across the settle window — at ~1/4, 1/2
-                    // and 3/4 of the way — not a per-second stream.
-                    val next = SETTLE_SAMPLES * (settleLogsSent + 1) / 4
-                    if (settleLogsSent < 3 && samplesInTrack >= next) {
-                        settleLogsSent++
-                        logger?.invoke("VOL", "analyzing… gain=${"%.2f".format(gain)} rms=${"%.3f".format(rms)} → target=${"%.2f".format(target)}")
-                    }
-                } else if (!settledLogged) {
-                    // Just crossed into locked: emit ONE line of what it ended up doing, then go quiet.
-                    settledLogged = true
-                    lastLoggedGain = gain
-                    logger?.invoke("VOL", "settled at gain=${"%.2f".format(gain)} (${if (gain > 1.01f) "boosted +${"%.0f".format((gain - 1f) * 100)}%" else if (gain < 0.99f) "cut ${"%.0f".format((1f - gain) * 100)}%" else "unchanged"})")
+                measSumSq += sumSq
+                measCount += count
+                // One informational line once we've gathered enough to know where this track will land.
+                if (!measuredLogged && measCount >= MIN_MEASURE_SAMPLES) {
+                    measuredLogged = true
+                    val integrated = sqrt(measSumSq / measCount).toFloat()
+                    val wouldBe = (TARGET_RMS / (integrated + 1e-4f)).coerceIn(MIN_GAIN, MAX_GAIN)
+                    logger?.invoke("VOL", "measured rms=${"%.3f".format(integrated)} → next-play gain=${"%.2f".format(wouldBe)}")
                 }
             }
         }
@@ -145,8 +140,10 @@ class GainProcessor : BaseAudioProcessor() {
     }
 
     override fun onFlush() {
-        // Persist the settled gain on flush (track change/seek) so it's remembered even mid-listen.
-        trackKey?.let { cachePut?.invoke(it, gain) }
+        // Track change / seek / stop: commit whatever the current track measured so a full listen is
+        // remembered even if the user moves on. (A seek re-flushes mid-track; partial measurements below
+        // MIN_MEASURE_SAMPLES are simply ignored by commitMeasurement.)
+        commitMeasurement()
     }
 
     companion object {
@@ -156,20 +153,19 @@ class GainProcessor : BaseAudioProcessor() {
         @Volatile var currentTrackKey: String? = null
         /** Live-log sink (tag, msg). Wired to NetworkLog by the player. */
         @Volatile var logger: ((String, String) -> Unit)? = null
-        /** Per-track gain memory, backed by a tiny prefs store the player wires in. */
+        /** Per-track MEASURED-gain memory, backed by a tiny prefs store the player wires in. */
         @Volatile var cacheGet: ((String) -> Float?)? = null
         @Volatile var cachePut: ((String, Float) -> Unit)? = null
 
         private const val TARGET_RMS = 0.16f    // ~ -16 dBFS RMS — a comfortable, loud-but-safe target
-        private const val RMS_RATE   = 0.004f   // per-buffer RMS follow — slow window, no bass/vocal chase
-        private const val GAIN_RATE  = 0.0012f  // per-buffer gain easing — very slow (~tens of s): between-track
-        private const val MIN_GAIN   = 0.5f
-        // Cap the BOOST hard. At 4.0 a quiet master could be amplified 4× — far past the soft knee,
-        // so it read as blasted/distorted at the start of such tracks. 1.6× is plenty of levelling
-        // headroom while staying clean. (Cuts still go down to MIN_GAIN.)
-        private const val MAX_GAIN   = 1.6f
+        private const val MIN_GAIN   = 0.5f     // deepest cut
+        private const val MAX_GAIN   = 2.0f     // biggest boost. Constant (not chased), so a correct 2×
+                                                // on a quiet master is the right steady level, not a blast;
+                                                // the soft limiter catches any boosted peak.
         private const val KNEE       = 0.85f    // soft-limiter threshold
-        private const val SILENCE_RMS = 0.02f   // below this a buffer is treated as silence (skip)
-        private const val SETTLE_SAMPLES = 8L * 48000 * 2   // ~8 s stereo before the gain (nearly) locks
+        private const val SILENCE_RMS = 0.02f   // below this a buffer/track is treated as silence (skip)
+        // Need at least this much non-silent audio before a measurement is trustworthy enough to store
+        // (~10 s stereo @ 48k). Shorter snippets (fast skips, seeks) don't poison the per-track memory.
+        private const val MIN_MEASURE_SAMPLES = 10L * 48000 * 2
     }
 }

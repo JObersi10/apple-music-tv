@@ -403,7 +403,7 @@ fun NowPlayingScreen(
                     MarqueeText(
                         shownNpSong.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
                         letterSpacing = (-0.5).sp,
-                        scroll = false,  // no back-and-forth ping-pong; long titles ellipsize
+                        scroll = true,  // long titles auto-scroll (ping-pong, edge-faded)
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 38.dp)
                             .graphicsLayer { alpha = npContentFade.value },
                     )
@@ -684,12 +684,18 @@ fun NowPlayingScreen(
                     } else if (state.lyricsLoaded) {
                         // Lyrics view, fetch finished, and this song genuinely has none — say so in the
                         // middle (queue is one Menu press away). Only after loading, never while fetching.
+                        // Fades away after 10 s so it doesn't sit there forever; resets per track.
+                        val noLyrAlpha = remember(shownSongId) { androidx.compose.animation.core.Animatable(1f) }
+                        LaunchedEffect(shownSongId) {
+                            kotlinx.coroutines.delay(10_000)
+                            noLyrAlpha.animateTo(0f, tween(700))
+                        }
                         Text(
                             "No Lyrics Found",
                             fontSize = 16.sp,
                             color = Color(0xFF8E8E93),
                             fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.align(Alignment.Center),
+                            modifier = Modifier.align(Alignment.Center).graphicsLayer { alpha = noLyrAlpha.value },
                         )
                     }
                     // else: still fetching lyrics — show nothing (no premature "No Lyrics Found").
@@ -1069,9 +1075,11 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
             android.view.TextureView(ctx).apply { exo.setVideoTextureView(this) }
         },
         update = { view -> exo.setVideoTextureView(view) },
-        // Only the ready-fade here; the breathe (scale + drift) comes from the Column's graphicsLayer
-        // above, which — unlike with a SurfaceView — now actually reaches this TextureView.
-        modifier = modifier.graphicsLayer { this.alpha = alpha },
+        // alpha = the ready-fade. scale 1.02 = a tiny overscan so the video bleeds a hair past the box
+        // edges — kills the 1px black hairline left/right from subpixel rounding of the stretched frame.
+        // The parent cover Box clips the overflow. The breathe (scale + drift) comes from the Column's
+        // graphicsLayer above, which — unlike with a SurfaceView — now actually reaches this TextureView.
+        modifier = modifier.graphicsLayer { this.alpha = alpha; scaleX = 1.02f; scaleY = 1.02f },
     )
 }
 
