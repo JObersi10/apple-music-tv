@@ -36,3 +36,6 @@ __pycache__/
 *.pyc
 /tmp/
 scratchpad/
+
+# Reverse-engineering reference sources (local only — large APK + 3rd-party src)
+inspo : source codes/
