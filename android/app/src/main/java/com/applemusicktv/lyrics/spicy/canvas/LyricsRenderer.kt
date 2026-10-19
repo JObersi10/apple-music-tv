@@ -154,7 +154,28 @@ private inline fun DrawScope.drawGlowThenText(
     shadow: Shadow?,
     drawBody: () -> Unit,
 ) {
-    if (shadow != null) drawText(layoutResult, color = Color.Transparent, shadow = shadow, topLeft = topLeft)
+    if (shadow != null) {
+        // A Compose `Shadow` casts from the alpha of the drawn glyphs, so the old
+        // `drawText(color = Transparent, shadow = …)` cast NOTHING — a fully transparent glyph has no
+        // coverage, so on this device the glow never actually rendered (why tuning the glow value never
+        // helped). Fix: draw a SOLID white glyph WITH the shadow (now there's a real caster), then punch
+        // the solid glyph back out with BlendMode.Clear inside a layer — leaving only the blurred halo
+        // that extended past the glyph edges. The body (gradient text) draws on top, so there's no white
+        // show-through; what remains is a genuine rim glow.
+        val w = layoutResult.size.width.toFloat()
+        val h = layoutResult.size.height.toFloat()
+        val pad = shadow.blurRadius + h / 2f   // room for the blur to spread past the glyph box
+        drawIntoCanvas {
+            it.saveLayer(
+                Rect(topLeft.x - pad, topLeft.y - pad, topLeft.x + w + pad, topLeft.y + h + pad),
+                Paint(),
+            )
+        }
+        drawText(layoutResult, color = Color.White, shadow = shadow, topLeft = topLeft)
+        drawText(layoutResult, color = Color.White, shadow = Shadow.None, topLeft = topLeft,
+            blendMode = BlendMode.Clear)
+        drawIntoCanvas { it.restore() }
+    }
     drawBody()
 }
 
