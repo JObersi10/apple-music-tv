@@ -604,15 +604,23 @@ fun NowPlayingScreen(
                 // fade-in happen in the adopt effect once the new lyrics actually arrive.
                 LaunchedEffect(state.currentSong?.id) {
                     if (shownSongId == state.currentSong?.id) return@LaunchedEffect
-                    lyricFade.animateTo(0f, tween(260))
-                    shownSongId = state.currentSong?.id
-                    // If the new song's lyrics are already in hand (prefetched), swap + fade in now;
-                    // otherwise leave the panel faded out and let the adopt effect bring them in.
-                    if (state.lyrics.isNotEmpty()) {
+                    // If the next song's lyrics are ALREADY in hand (N+1 prefetch hit the lyrics cache,
+                    // so loadLyrics repopulated state.lyrics in the same frame), do a quick crossfade —
+                    // NOT the full 260ms-out + 450ms-in, which left the old lyrics hanging ~0.5s before
+                    // the new ones appeared. Only pay the long blank fade when the fetch is genuinely cold.
+                    val haveNew = state.lyrics.isNotEmpty() && state.lyricsLoaded
+                    if (haveNew) {
+                        lyricFade.animateTo(0f, tween(110))
+                        shownSongId = state.currentSong?.id
                         shownLyr = state.lyrics; shownCredits = state.lyricsCredits
                         shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
                         shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
-                        lyricFade.animateTo(1f, tween(450))
+                        lyricFade.animateTo(1f, tween(220))
+                    } else {
+                        lyricFade.animateTo(0f, tween(260))
+                        shownSongId = state.currentSong?.id
+                        // Cold fetch: leave the panel faded out; the adopt effect fades the new lines in
+                        // once they land.
                     }
                 }
                 LaunchedEffect(state.lyrics, state.lyricsLoaded) {

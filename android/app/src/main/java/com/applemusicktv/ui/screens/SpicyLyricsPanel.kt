@@ -60,7 +60,12 @@ fun SpicyLyricsPanel(
     // Footer under the lyrics: "Written by …", "Provided by: <origin>", the community note, and the
     // "Made by @…" / "Uploaded by @…" credits with avatars — exactly like Spicy Player.
     val footer = remember(credits, origin, maker, uploader) {
-        LyricsFooter(
+        // When Show Credits is OFF the callers null EVERYTHING (credits/origin/maker/uploader). In that
+        // case emit a bare empty footer — NOT one carrying a provenance — or the hardcoded provider line
+        // ("Provided by: Spicy Lyrics") still renders. Only attach provenance when there's real credit.
+        val hasAny = credits.isNotEmpty() || origin != null || maker != null || uploader != null
+        if (!hasAny) LyricsFooter()
+        else LyricsFooter(
             songwriters = credits,
             provenance = LyricsProvenance(provider = "Spicy Lyrics", contributor = origin),
             maker = maker?.let { LyricsCredit(it.name, it.url, it.avatar) },

@@ -59,7 +59,12 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
         webServer.boot(appScope)   // starts only if the Dev toggle is on
         // Route volume-leveling diagnostics into the APP log (so they show under App Log, not Network,
         // and stream live on the :8081 event port).
-        com.applemusicktv.media.GainProcessor.logger = { tag, msg -> webServer.addLog(tag, msg) }
+        // Also mirror to logcat (`adb logcat -s AMVOL`) — webServer.addLog skips the HTTP mirror when the
+        // proxy is unreachable and never writes to logcat, so leveling diagnostics were invisible there.
+        com.applemusicktv.media.GainProcessor.logger = { tag, msg ->
+            webServer.addLog(tag, msg)
+            android.util.Log.i("AMVOL", "$tag $msg")
+        }
         // Sync locally-stored MUT to proxy server on startup so ExoPlayer stream requests work
         val mut = mutPrefs.getMUT()
         if (mut.isNotEmpty()) {

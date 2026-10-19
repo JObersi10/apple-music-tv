@@ -2236,12 +2236,15 @@ class PlayerViewModel @Inject constructor(
         prefs.edit { putBoolean("lyrics_credits_shown", on) }
     }
 
-    /** Change the lyric-translation target language and re-fetch if translation is on. */
+    /** Change the lyric-translation target language. Picking a language IS the intent to translate, so
+     *  this turns translation ON (the Settings stepper was a dead no-op otherwise — it only re-fetched
+     *  when the separate ··· "Translate Lyrics" toggle happened to already be on). Fetches immediately. */
     fun setTranslateLang(code: String) {
         prefs.edit { putString("translate_lang", code) }
-        _state.update { it.copy(translateLang = code) }
+        if (!_state.value.translateLyrics) prefs.edit { putBoolean("translate_lyrics", true) }
+        _state.update { it.copy(translateLang = code, translateLyrics = true) }
         val id = _state.value.currentSong?.id
-        if (_state.value.translateLyrics && id != null) fetchTranslation(id)
+        if (id != null) fetchTranslation(id)
     }
 
     /** Cycle the translate target language through [TRANSLATE_LANGS] (Settings stepper). */
