@@ -71,8 +71,14 @@ class HomeViewModel @Inject constructor(
         load()
     }
 
+    private var loadJob: kotlinx.coroutines.Job? = null
+
     fun load() {
-        viewModelScope.launch {
+        // One load at a time: tapping the "needs refresh" banner repeatedly used to stack several
+        // background self-heal loops, each re-pushing state every few seconds → the banner flickered
+        // back ("loads, says refresh, click, normal, refresh again a sec later"). Cancel the prior run.
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             val cached = _state.value.sections
             if (cached.isEmpty()) _state.value = HomeUiState(isLoading = true)
             var lastErr: String? = null
@@ -121,15 +127,16 @@ class HomeViewModel @Inject constructor(
                 val secs = r.sections.map { s -> HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style) }
                 if (secs.isEmpty()) return@repeat
                 val personalized = secs.isPersonalized()
-                // Never downgrade a personalized feed we're already showing to a non-personalized one.
-                if (!personalized && _state.value.sections.isPersonalized()) return@repeat
-                _state.value = HomeUiState(isLoading = false, sections = secs, needsRefresh = fallbackBanner(secs))
-                if (personalized) {
-                    launch(kotlinx.coroutines.Dispatchers.Default) {
-                        runCatching { prefs.edit().putString("sections", adapter.toJson(secs)).apply() }
-                    }
-                    return@launch   // healed — stop retrying
+                // Only COMMIT when personalization finally lands. While it's still non-personalized we
+                // leave the already-shown feed untouched — re-pushing an equivalent non-personalized feed
+                // every few seconds was what re-raised the banner and reset the scroll ("refresh again a
+                // sec later"). We keep retrying silently; nothing on screen changes until recs recover.
+                if (!personalized) return@repeat
+                _state.value = HomeUiState(isLoading = false, sections = secs, needsRefresh = false)
+                launch(kotlinx.coroutines.Dispatchers.Default) {
+                    runCatching { prefs.edit().putString("sections", adapter.toJson(secs)).apply() }
                 }
+                return@launch   // healed — stop retrying
             }
         }
     }

@@ -1174,7 +1174,7 @@ private fun CheapLavaLampBackground(coverUrl: String?, playing: Boolean, reduceM
         // clearly visible and moving (heavier overlays crushed it to near-black and looked static).
         Box(Modifier.fillMaxSize().background(
             Brush.radialGradient(listOf(Color(0x1A000000), Color(0x80000000)))))
-        Box(Modifier.fillMaxSize().background(Color(0x22000000)))
+        Box(Modifier.fillMaxSize().background(Color(0x38000000)))   // flat darken (was 0x22)
     }
 }
 
@@ -1601,7 +1601,7 @@ private fun DynamicBackground(artworkUrlTemplate: String?, songKey: String, beat
             )
             // Kept low: the flat veil mutes every hue equally, so readability comes
             // from the right-side gradient above instead.
-            drawRect(Color(0x22000000))
+            drawRect(Color(0x3A000000))   // flat darken (was 0x22) — lifts lyric/queue contrast on bright covers
         })
     }
 }
@@ -2167,6 +2167,9 @@ private fun LyricLineRow(
     }
 }
 
+/** Soft dark drop-shadow so Up-Next text reads on a bright DynamicBackground instead of fading into it. */
+private val QueueTextShadow = Shadow(Color.Black.copy(alpha = 0.7f), blurRadius = 8f)
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun QueuePanel(
@@ -2191,7 +2194,7 @@ private fun QueuePanel(
     }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Up Next", fontSize = 13.sp, color = Color(0xFFAAAAAA), fontWeight = FontWeight.Medium)
+            Text("Up Next", style = TextStyle(fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Medium, shadow = QueueTextShadow))
             if (movingIndex != null) Text("Hold OK to drop", fontSize = 10.sp, color = Color(0xFF888888))
         }
         Spacer(Modifier.height(12.dp))
@@ -2215,10 +2218,10 @@ private fun QueuePanel(
                         Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text("◆", fontSize = 9.sp, color = Color(0xFFFA233B), modifier = Modifier.width(20.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(song.title + if (song.isMusicVideo) " (MV)" else "", fontSize = 13.sp, color = Color(0xFFDDDDDD), maxLines = 1)
-                                Text(song.artistName, fontSize = 11.sp, color = Color(0xFFAAAAAA), maxLines = 1)
+                                Text(song.title + if (song.isMusicVideo) " (MV)" else "", style = TextStyle(fontSize = 13.sp, color = Color.White, shadow = QueueTextShadow), maxLines = 1)
+                                Text(song.artistName, style = TextStyle(fontSize = 11.sp, color = Color(0xFFCFCFCF), shadow = QueueTextShadow), maxLines = 1)
                             }
-                            Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
+                            Text(song.durationFormatted, style = TextStyle(fontSize = 11.sp, color = Color(0xFFCFCFCF), shadow = QueueTextShadow))
                         }
                     }
                 }
@@ -2271,15 +2274,14 @@ private fun QueuePanel(
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
                             if (isMoving) "⠿" else "${idx + 1}",
-                            fontSize = 11.sp,
-                            color = if (isMoving) Color(0xFFFA233B) else if (isCurrent) Color(0xFFFA233B) else Color(0xFFAAAAAA),
+                            style = TextStyle(fontSize = 11.sp, color = if (isMoving || isCurrent) Color(0xFFFA233B) else Color(0xFFC8C8C8), shadow = QueueTextShadow),
                             modifier = Modifier.width(20.dp),
                         )
                         Column(Modifier.weight(1f)) {
-                            Text(song.title + if (song.isMusicVideo) " (MV)" else "", fontSize = 13.sp, color = if (isCurrent || isMoving) Color.White else Color(0xFFDDDDDD), maxLines = 1, fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal)
-                            Text(song.artistName, fontSize = 11.sp, color = Color(0xFFAAAAAA), maxLines = 1)
+                            Text(song.title + if (song.isMusicVideo) " (MV)" else "", style = TextStyle(fontSize = 13.sp, color = Color.White, shadow = QueueTextShadow, fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal), maxLines = 1)
+                            Text(song.artistName, style = TextStyle(fontSize = 11.sp, color = Color(0xFFCFCFCF), shadow = QueueTextShadow), maxLines = 1)
                         }
-                        Text(song.durationFormatted, fontSize = 11.sp, color = Color(0xFFAAAAAA))
+                        Text(song.durationFormatted, style = TextStyle(fontSize = 11.sp, color = Color(0xFFCFCFCF), shadow = QueueTextShadow))
                     }
                 }
             }

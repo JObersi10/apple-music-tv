@@ -36,10 +36,12 @@ data class RenderConfig(
      *  like the reference's overlapping shadow did), so at 0.85 the SUNG text read as grey. At 1.0 the
      *  sung word is true white; the unsung dim (0.5) still gives the wipe its contrast. */
     val gradientAlphaBright: Float = if (simpleLyricsMode) 1f else 1f,
-    /** `--gradient-alpha-end` on words and letters: 0.3 under `.SimpleLyricsMode`. */
-    val gradientAlphaDim: Float = if (simpleLyricsMode) 0.3f else 0.5f,
+    /** `--gradient-alpha-end` on words and letters: 0.3 under `.SimpleLyricsMode`.
+     *  Full mode raised 0.5→0.62: not-yet-sung lyrics read too faint on a bright (yellow) backdrop; a
+     *  bit more alpha keeps the upcoming line legible while still clearly dimmer than the white sung text. */
+    val gradientAlphaDim: Float = if (simpleLyricsMode) 0.3f else 0.62f,
     /** A whole line's `--gradient-alpha-end` (line-synced lyrics), `!important` in every mode. */
-    val lineGradientAlphaDim: Float = 0.35f,
+    val lineGradientAlphaDim: Float = 0.45f,
     val opacityActive: Float = 1f,
     /** `--Vocal-NotSung-opacity` / `--Vocal-Sung-opacity`; Minimal's own values live in the animator. */
     val opacityNotSung: Float = if (simpleLyricsMode) 0.45f else 0.51f,
