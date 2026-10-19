@@ -263,8 +263,17 @@ fun NowPlayingScreen(
                 uploader = state.lyricsUploader,
             )
             else -> {
+        // Responsive sizing: scale the outer padding, the left column and the cover off the actual
+        // screen so the split layout holds up on smaller/larger panels (phones, tablets, 720p→4K TVs)
+        // instead of the old hardcoded 72/340/256 that cramped narrow screens and under-filled wide ones.
+        val npCfg = androidx.compose.ui.platform.LocalConfiguration.current
+        val npHPad = (npCfg.screenWidthDp * 0.055f).dp.coerceIn(20.dp, 72.dp)
+        val npVPad = (npCfg.screenHeightDp * 0.07f).dp.coerceIn(16.dp, 40.dp)
+        val npColW = (npCfg.screenWidthDp * 0.30f).dp.coerceIn(240.dp, 360.dp)
+        val npCoverSz = (npColW.value * 0.753f).dp   // ~256dp at the 340dp reference column
+        val npGap = (npCfg.screenWidthDp * 0.045f).dp.coerceIn(28.dp, 56.dp)
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 72.dp, vertical = 40.dp)
+            modifier = Modifier.fillMaxSize().padding(horizontal = npHPad, vertical = npVPad)
                 .onPreviewKeyEvent { e ->
                     // Navigation only: media keys don't count as activity, so they neither wake the
                     // chrome nor postpone the screensaver.
@@ -278,7 +287,7 @@ fun NowPlayingScreen(
                     }
                     false
                 },
-            horizontalArrangement = Arrangement.spacedBy(56.dp),
+            horizontalArrangement = Arrangement.spacedBy(npGap),
         ) {
             // Left — artwork + info + controls, grouped and vertically centred so idle (controls
             // hidden) doesn't leave an awkward void. Eases up slightly as it settles into idle.
@@ -304,7 +313,7 @@ fun NowPlayingScreen(
                 // layer, so instead of fighting to transform the surface (it kept drifting off), the
                 // MotionCover simply FADES OUT as idle rises — leaving the static cover, which breathes
                 // perfectly with the column. No surface transform, nothing to drift.
-                modifier = Modifier.width(340.dp).fillMaxHeight().padding(vertical = 8.dp)
+                modifier = Modifier.width(npColW).fillMaxHeight().padding(vertical = 8.dp)
                     .graphicsLayer {
                         val s = 1f + 0.03f * idle
                         scaleX = s; scaleY = s
@@ -330,7 +339,7 @@ fun NowPlayingScreen(
                 }
                 Box(
                     modifier = Modifier
-                        .size(256.dp)
+                        .size(npCoverSz)
                         .clip(RoundedCornerShape(if (state.artworkRounded) 18.dp else 0.dp))
                         .background(Color(0xFF1A1A2E)),
                 ) {
@@ -1044,32 +1053,25 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
         label = "motionFade",
     )
 
-    // PlayerView → SurfaceView: the video gets its OWN hardware overlay plane, so the GPU
-    // barely touches it. A TextureView composites the 1080p HEVC frame through the shared
-    // GPU layer every frame, fighting the DynamicBackground Screen-blend passes — that made
-    // the cover choppy on Fire TV. RESIZE_MODE_ZOOM fills the box; the black shutter + alpha
-    // fade hide the green-frame handoff instead.
+    // PlayerView → TEXTURE_VIEW: a TextureView draws INSIDE the Compose/view hierarchy, so it is
+    // transformed by a graphicsLayer on any ancestor — unlike a SurfaceView, which owns a separate
+    // hardware overlay plane that ignores Compose transforms. That overlay plane was the whole reason
+    // the motion video couldn't follow the idle breathe (grow + drift) and had to be faded out while
+    // the static cover did the breathing. With a TextureView the video scales/translates exactly with
+    // the cover, so there is nothing to drift and no fade-out hack. The art is capped to 640px/1.5Mbps
+    // (above), so compositing it through the GPU is cheap enough here; the black shutter + the ready
+    // alpha still hide the first-frame handoff.
+    // Raw TextureView + exo.setVideoTextureView: PlayerView only honours surface_type from XML, so a
+    // bare TextureView is the clean programmatic way to force texture (hierarchy-drawn) rendering.
+    // Both the cover box and Apple's motion art are square, so filling the box = no distortion.
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
-            androidx.media3.ui.PlayerView(ctx).apply {
-                useController = false
-                // FILL (not ZOOM): both the cover box and Apple's motion art are square, so filling the
-                // frame exactly is distortion-free — and unlike ZOOM it forces the inner SurfaceView to
-                // the full frame size immediately. ZOOM left the surface anchored top-left, smaller than
-                // the box, for a beat after a fast skip → black gap on the right/bottom.
-                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
-                setShutterBackgroundColor(android.graphics.Color.BLACK)
-                player = exo
-            }
+            android.view.TextureView(ctx).apply { exo.setVideoTextureView(this) }
         },
-        // No surface transform: the video can't follow the column's breathe, so we just reattach the
-        // player. The surface fades out as the screen goes idle (alpha below), letting the static cover
-        // do the breathing — so the video is never on screen while it would be mis-transformed.
-        update = { view -> view.player = exo },
-        // Fade the video out as the screen goes idle, so the static cover (which breathes correctly
-        // with the column) is what shows during the idle grow/drift — the surface never appears
-        // mis-transformed.
-        modifier = modifier.graphicsLayer { this.alpha = alpha * (1f - idle) },
+        update = { view -> exo.setVideoTextureView(view) },
+        // Only the ready-fade here; the breathe (scale + drift) comes from the Column's graphicsLayer
+        // above, which — unlike with a SurfaceView — now actually reaches this TextureView.
+        modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
 }
 
