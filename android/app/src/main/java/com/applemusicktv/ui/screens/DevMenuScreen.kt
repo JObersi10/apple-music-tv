@@ -156,6 +156,12 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleLyricsRendererV2() },
             )
             Toggle(
+                label = "Lyrics pronunciation", on = pstate.lyricsRomanize,
+                sub = if (pstate.lyricsRomanize) "Show romaji / pinyin under non-Latin lyrics (v2 renderer)"
+                      else "Off — original script only",
+                onToggle = { playerVm.toggleLyricsRomanize() },
+            )
+            Toggle(
                 label = "Lyrics credits", on = pstate.showLyricsCredits,
                 sub = if (pstate.showLyricsCredits) "Show the “Written by / Provided by / Made by” footer under lyrics"
                       else "Hide the lyrics credits footer",

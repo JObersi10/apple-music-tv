@@ -3,6 +3,7 @@ package com.applemusicktv.ui.screens
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.applemusicktv.data.network.LyricLine
@@ -41,8 +42,21 @@ fun SpicyLyricsPanel(
     uploader: LyricsCreditDto? = null,
     dpadFocus: androidx.compose.ui.focus.FocusRequester? = null,
     escapeFocus: androidx.compose.ui.focus.FocusRequester? = null,
+    romanize: Boolean = false,
 ) {
-    val built = remember(lyrics) { buildSpicyDocument(lyrics) }
+    // Pronunciation: romanize the lyrics off the main thread (dictionary-backed Japanese etc. is heavy),
+    // keyed on the lyrics + the toggle. Null until computed / when off. Applied per-word below so the
+    // renderer can draw romaji/pinyin under the original text.
+    val romanizedData by androidx.compose.runtime.produceState<List<List<String?>>?>(null, lyrics, romanize) {
+        value = if (!romanize || lyrics.isEmpty()) null
+            else runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    com.applemusicktv.lyrics.spicy.romanization.RomanizationService.romanize(leadWordTexts(lyrics))
+                }
+            }.getOrNull()
+    }
+    val built = remember(lyrics, romanizedData) { buildSpicyDocument(lyrics, romanizedData) }
+    val romanizeActive = romanize && built.lines.any { l -> l.words.any { it.romanizedText != null } }
     // Footer under the lyrics: "Written by …", "Provided by: <origin>", the community note, and the
     // "Made by @…" / "Uploaded by @…" credits with avatars — exactly like Spicy Player.
     val footer = remember(credits, origin, maker, uploader) {
@@ -77,7 +91,7 @@ fun SpicyLyricsPanel(
         config = (if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE)
             .copy(distanceBlurEnabled = richMotion),
         lyricsType = built.type,
-        romanize = false,
+        romanize = romanizeActive,
         isPlaying = isPlaying,
         // Keep the active line a bit lower than the default 0.25 (more context above it).
         focusAnchorFraction = 0.4f,
@@ -90,14 +104,36 @@ private const val V2_FONT_SCALE = 0.72f
 
 private class SpicyDoc(val lines: List<SLine>, val type: LyricsType)
 
+/**
+ * The per-word text of each lead line, in the SAME order [buildSpicyDocument] emits lead words — so a
+ * romanization computed from this list lines up index-for-index when fed back in. Background lines are
+ * left out (romanization is for the lead vocal).
+ */
+private fun leadWordTexts(lyrics: List<LyricLine>): List<List<String>> {
+    if (lyrics.isEmpty()) return emptyList()
+    val allUnsynced = lyrics.all { it.startMs < 0 }
+    return lyrics.map { ln ->
+        when {
+            allUnsynced -> tokenize(ln.text, 0L, 0L).map { it.text }
+            ln.startMs < 0 -> emptyList()
+            ln.words.isNotEmpty() -> ln.words.map { it.text }
+            else -> tokenize(ln.text, ln.startMs, ln.endMs).map { it.text }
+        }
+    }
+}
+
 /** Our LyricLine list → Spicy renderer lines. Lead + background become sibling lines sharing a groupId. */
-private fun buildSpicyDocument(lyrics: List<LyricLine>): SpicyDoc {
+private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<String?>>? = null): SpicyDoc {
     if (lyrics.isEmpty()) return SpicyDoc(emptyList(), LyricsType.Static)
+    fun rom(line: Int, word: Int): String? = romanized?.getOrNull(line)?.getOrNull(word)
 
     // Unsynced (plain) — tokenize so the Static render path can wrap each line.
     if (lyrics.all { it.startMs < 0 }) {
         return SpicyDoc(
-            lyrics.map { SLine(tokenize(it.text, 0L, 0L), 0L, 0L, role = LineRole.LEAD) },
+            lyrics.mapIndexed { i, ln ->
+                SLine(tokenize(ln.text, 0L, 0L).mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) },
+                    0L, 0L, role = LineRole.LEAD)
+            },
             LyricsType.Static,
         )
     }
@@ -106,10 +142,11 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>): SpicyDoc {
     val out = ArrayList<SLine>()
     lyrics.forEachIndexed { i, ln ->
         if (ln.startMs < 0) return@forEachIndexed
-        val leadWords = if (ln.words.isNotEmpty()) {
+        val leadWords = (if (ln.words.isNotEmpty()) {
             anyWords = true
             ln.words.map { SWord(it.text, it.startMs, it.endMs) }
-        } else tokenize(ln.text, ln.startMs, ln.endMs) // line-synced: split so the line can wrap
+        } else tokenize(ln.text, ln.startMs, ln.endMs)) // line-synced: split so the line can wrap
+            .mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) }
         out.add(SLine(leadWords, ln.startMs, ln.endMs, role = LineRole.LEAD, groupId = i,
             oppositeAligned = ln.oppositeAligned)) // duet/alternate vocals → right-aligned
 
