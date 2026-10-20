@@ -2,6 +2,7 @@ package com.applemusicktv.ui.screens
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ fun SpicyLyricsPanel(
     escapeFocus: androidx.compose.ui.focus.FocusRequester? = null,
     romanize: Boolean = false,
     translations: List<String> = emptyList(),
+    translateNonLatinOnly: Boolean = false,
 ) {
     // Pronunciation: romanize the lyrics off the main thread (dictionary-backed Japanese etc. is heavy),
     // keyed on the lyrics + the toggle. Null until computed / when off. Applied per-word below so the
@@ -56,7 +58,7 @@ fun SpicyLyricsPanel(
                 }
             }.getOrNull()
     }
-    val built = remember(lyrics, romanizedData, translations) { buildSpicyDocument(lyrics, romanizedData, translations) }
+    val built = remember(lyrics, romanizedData, translations, translateNonLatinOnly) { buildSpicyDocument(lyrics, romanizedData, translations, translateNonLatinOnly) }
     val romanizeActive = romanize && built.lines.any { l -> l.words.any { it.romanizedText != null } }
     // Footer under the lyrics: "Written by …", "Provided by: <origin>", the community note, and the
     // "Made by @…" / "Uploaded by @…" credits with avatars — exactly like Spicy Player.
@@ -76,7 +78,16 @@ fun SpicyLyricsPanel(
     val docId = remember(lyrics) {
         "${built.lines.size}:${lyrics.firstOrNull()?.startMs ?: 0}:${lyrics.firstOrNull()?.text?.hashCode() ?: 0}"
     }
+    // Translation lands ~1s after the lyrics; fade the gloss in instead of popping it in. Reset on song
+    // change (docId), then ease up once the translation lines actually exist in the document.
+    val hasTrans = built.lines.any { it.isTranslation }
+    val transReveal = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(docId, hasTrans) {
+        if (!hasTrans) transReveal.snapTo(0f)
+        else transReveal.animateTo(1f, androidx.compose.animation.core.tween(450))
+    }
     LyricsView(
+        translationAlpha = transReveal.value,
         lines = built.lines,
         documentId = docId,
         footer = footer,
@@ -129,13 +140,15 @@ private fun leadWordTexts(lyrics: List<LyricLine>): List<List<String>> {
 }
 
 /** Our LyricLine list → Spicy renderer lines. Lead + background become sibling lines sharing a groupId. */
-private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<String?>>? = null, translations: List<String> = emptyList()): SpicyDoc {
+private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<String?>>? = null, translations: List<String> = emptyList(), nonLatinOnly: Boolean = false): SpicyDoc {
     if (lyrics.isEmpty()) return SpicyDoc(emptyList(), LyricsType.Static)
     fun rom(line: Int, word: Int): String? = romanized?.getOrNull(line)?.getOrNull(word)
     // A translation gloss for line i, only when it's real (non-blank, and not identical to the original —
-    // skips instrumentals / untranslatable lines / English→English no-ops). Built as a BACKGROUND-role
-    // sibling so it inherits the layout/scroll machinery, flagged isTranslation so the renderer dims it.
+    // skips instrumentals / untranslatable lines / lines already in the target language). Built as a
+    // BACKGROUND-role sibling so it inherits the layout/scroll machinery, flagged isTranslation.
+    // nonLatinOnly: only gloss lines that actually contain a non-Latin script (JP/CN/KR/…).
     fun transLine(i: Int, startMs: Long, endMs: Long, original: String): SLine? {
+        if (nonLatinOnly && com.applemusicktv.lyrics.spicy.romanization.ScriptDetector.detect(original).isEmpty()) return null
         val t = translations.getOrNull(i)?.trim()?.takeIf { it.isNotBlank() && !it.equals(original.trim(), ignoreCase = true) } ?: return null
         return SLine(tokenize(t, startMs, endMs), startMs, endMs,
             role = LineRole.BACKGROUND, groupId = i, oppositeAligned = false, isTranslation = true)

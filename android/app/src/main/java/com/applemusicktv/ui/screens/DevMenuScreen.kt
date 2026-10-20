@@ -176,6 +176,12 @@ fun DevMenuScreen(
                 onInc = { playerVm.stepTranslateLang(1) },
             )
             Toggle(
+                label = "Translate non-Latin only", on = pstate.translateNonLatinOnly,
+                sub = if (pstate.translateNonLatinOnly) "Only gloss Japanese / Chinese / Korean / … lines"
+                      else "Gloss every foreign line (skips lines already in your language)",
+                onToggle = { playerVm.toggleTranslateNonLatin() },
+            )
+            Toggle(
                 label = "Reduce motion", on = pstate.reduceMotion,
                 sub = if (pstate.reduceMotion) "Background holds still" else "Background drifts and pulses",
                 onToggle = { playerVm.toggleReduceMotion() },

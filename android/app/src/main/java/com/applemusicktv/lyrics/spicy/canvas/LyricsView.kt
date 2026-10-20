@@ -96,6 +96,8 @@ fun LyricsView(
     config: RenderConfig = RenderConfig.FULL,
     lyricsType: LyricsType = LyricsType.Syllable,
     romanize: Boolean = false,
+    /** Extra opacity multiplier for translation gloss lines (fades them in when they arrive). */
+    translationAlpha: Float = 1f,
     focusAnchorFraction: Float = 0.25f,
     // When set, the active line's top (not its centre) is kept this far below the view's top,
     // ("Top" scrolling); focusAnchorFraction is then unused.
@@ -660,7 +662,7 @@ fun LyricsView(
                     layout.isInterlude -> drawInterludeGroup(layout, lineAnim, lineStartX, scrollOffset, dynamicY)
                     // A translation gloss renders flat (no karaoke wipe, no per-word "play") regardless of
                     // the document type — otherwise its words all light up at once with the lead's timing.
-                    layout.line.isTranslation -> drawStaticLine(layout, lineAnim, lineStartX, scrollOffset, dynamicY)
+                    layout.line.isTranslation -> drawStaticLine(layout, lineAnim.copy(opacity = lineAnim.opacity * translationAlpha), lineStartX, scrollOffset, dynamicY)
                     lyricsType == LyricsType.Static -> drawStaticLine(layout, lineAnim, lineStartX, scrollOffset, dynamicY)
                     lyricsType == LyricsType.Line -> drawLineModeLine(layout, lineAnim, lineStartX, scrollOffset, dynamicY, config)
                     // Minimal Lyrics Mode shrinks inactive lines (a CSS `scale`: paint only, no reflow)

@@ -128,6 +128,9 @@ data class PlayerState(
     val translateLyrics:  Boolean         = false,
     /** Target language code for lyric translation (ISO 639-1, e.g. "en", "es", "ja"). */
     val translateLang:    String          = "en",
+    /** Scope: when true, only gloss non-Latin-script lines (JP/CN/KR/…), skipping Latin-script lines
+     *  (Spanish/French/English/…). A line already in the target language is skipped either way. */
+    val translateNonLatinOnly: Boolean    = false,
     /** Show the lyrics credits footer (Provided by / Written by / Made by / Uploaded by). */
     val showLyricsCredits: Boolean        = true,
     /** Show on-device pronunciation (romaji / pinyin / …) under non-Latin lyrics (v2 renderer). */
@@ -1061,7 +1064,7 @@ class PlayerViewModel @Inject constructor(
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), lyricsRendererV2 = prefs.getBoolean("lyrics_renderer_v2", true), progressMs = posMs) }
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), lyricsRendererV2 = prefs.getBoolean("lyrics_renderer_v2", true), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {
@@ -2227,6 +2230,13 @@ class PlayerViewModel @Inject constructor(
         val on = !_state.value.lyricsRomanize
         _state.update { it.copy(lyricsRomanize = on) }
         prefs.edit { putBoolean("lyrics_romanize", on) }
+    }
+
+    /** Translate scope: all foreign lines vs only non-Latin-script lines (Settings). */
+    fun toggleTranslateNonLatin() {
+        val on = !_state.value.translateNonLatinOnly
+        _state.update { it.copy(translateNonLatinOnly = on) }
+        prefs.edit { putBoolean("translate_non_latin", on) }
     }
 
     /** Show/hide the lyrics credits footer (Settings). */

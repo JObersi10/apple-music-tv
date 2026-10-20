@@ -262,6 +262,7 @@ fun NowPlayingScreen(
                 maker = if (state.showLyricsCredits) state.lyricsMaker else null,
                 uploader = if (state.showLyricsCredits) state.lyricsUploader else null,
                 romanize = state.lyricsRomanize,
+                translateNonLatinOnly = state.translateNonLatinOnly,
             )
             else -> {
         // Responsive sizing: scale the outer padding, the left column and the cover off the actual
@@ -690,6 +691,7 @@ fun NowPlayingScreen(
                                     escapeFocus = playFocus,
                                     romanize = state.lyricsRomanize,
                                     translations = shownTranslation,
+                                    translateNonLatinOnly = state.translateNonLatinOnly,
                                 )
                             } else {
                                 LyricsPanel(
@@ -834,6 +836,7 @@ private fun FullScreenLyrics(
     maker: com.applemusicktv.data.network.LyricsCreditDto? = null,
     uploader: com.applemusicktv.data.network.LyricsCreditDto? = null,
     romanize: Boolean = false,
+    translateNonLatinOnly: Boolean = false,
 ) {
     // Focus lands on the play button (not the top lyric line). Passing it to LyricsPanel
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
@@ -878,6 +881,7 @@ private fun FullScreenLyrics(
                     escapeFocus = playFocus,
                     romanize = romanize,
                     translations = translations,
+                    translateNonLatinOnly = translateNonLatinOnly,
                 )
             } else {
                 LyricsPanel(
