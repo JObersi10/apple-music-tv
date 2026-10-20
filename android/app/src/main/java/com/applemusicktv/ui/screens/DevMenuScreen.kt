@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -98,7 +99,9 @@ fun DevMenuScreen(
             )
             Toggle(
                 label = "Background play", on = pstate.backgroundPlayEnabled,
-                sub = if (pstate.backgroundPlayEnabled) "Keep playing when you leave the app" else "Pause when the app goes to the background",
+                sub = if (pstate.quitOnExit) "Off — Quit on exit ends the app instead"
+                      else if (pstate.backgroundPlayEnabled) "Keep playing when you leave the app" else "Pause when the app goes to the background",
+                enabled = !pstate.quitOnExit,
                 onToggle = { playerVm.toggleBackgroundPlay() },
             )
             Toggle(
@@ -672,13 +675,14 @@ private fun StepBtn(sym: String, onClick: () -> Unit) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun Toggle(label: String, on: Boolean, sub: String, onToggle: () -> Unit) {
+private fun Toggle(label: String, on: Boolean, sub: String, enabled: Boolean = true, onToggle: () -> Unit) {
+    val dim = if (enabled) 1f else 0.4f
     Surface(
-        onClick = onToggle,
+        onClick = { if (enabled) onToggle() },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF161618), focusedContainerColor = Color(0xFF232325)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().alpha(dim),
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {

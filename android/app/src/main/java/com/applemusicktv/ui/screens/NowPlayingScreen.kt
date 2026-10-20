@@ -730,13 +730,19 @@ fun NowPlayingScreen(
                     } else if (state.lyricsLoaded) {
                         // Lyrics view, fetch finished, and this song genuinely has none — say so in the
                         // middle (queue is one Menu press away). Only after loading, never while fetching.
-                        // Fades away after 10 s so it doesn't sit there forever; resets per track.
+                        // Hold it back ~1.2s first: lyricsLoaded can flip true-but-empty for a frame on a
+                        // song change before the real lines land, which flashed "No Lyrics Found"; the
+                        // delay lets arriving lyrics (which switch to the panel branch) pre-empt it.
+                        // Then fades after 10 s so it doesn't sit forever; resets per track.
+                        var showNoLyrics by remember(shownSongId) { mutableStateOf(false) }
                         val noLyrAlpha = remember(shownSongId) { androidx.compose.animation.core.Animatable(1f) }
                         LaunchedEffect(shownSongId) {
+                            kotlinx.coroutines.delay(1_200)
+                            showNoLyrics = true
                             kotlinx.coroutines.delay(10_000)
                             noLyrAlpha.animateTo(0f, tween(700))
                         }
-                        Text(
+                        if (showNoLyrics) Text(
                             "No Lyrics Found",
                             fontSize = 16.sp,
                             color = Color(0xFF8E8E93),

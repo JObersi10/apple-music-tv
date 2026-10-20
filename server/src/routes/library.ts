@@ -265,6 +265,7 @@ library.post("/playlists/:id/tracks/add", async (c) => {
   const { id, type } = await c.req.json().catch(() => ({} as any));
   if (!mut) return c.json({ error: "no MUT" }, 401);
   if (!id) return c.json({ error: "song id required" }, 400);
+  console.log(`[library/playlist-add] pl=${playlistId} id=${id} type=${type ?? "songs"}`);
   try {
     await ensureBearer();
     const res = await axios.post(
@@ -275,7 +276,8 @@ library.post("/playlists/:id/tracks/add", async (c) => {
     return c.json({ ok: true, status: res.status });
   } catch (e: any) {
     if (e?.response?.status === 401 || e?.response?.status === 403) invalidateBearer();
-    console.warn("[library/playlist-add] failed:", e?.response?.status, e?.message);
+    console.warn(`[library/playlist-add] FAILED id=${id} type=${type ?? "songs"} status=${e?.response?.status} body=`,
+      JSON.stringify(e?.response?.data)?.slice(0, 400) ?? e?.message);
     return c.json({ error: e?.response?.data ?? e.message }, e?.response?.status ?? 500);
   }
 });
