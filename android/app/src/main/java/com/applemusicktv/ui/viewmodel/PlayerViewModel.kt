@@ -751,9 +751,12 @@ class PlayerViewModel @Inject constructor(
                         if (src != null) {
                             usingStandalone = true
                             player.setMediaSource(src); player.prepare()
+                            // Resume where it failed instead of snapping to 0:00 — a mid-track
+                            // standalone DRM failure had already played several seconds.
+                            if (pos > 0) player.seekTo(pos)
                             player.volume = 1f; player.playWhenReady = wasPlaying
                             _state.update { it.copy(standaloneActive = true) }
-                            webServer.addLog("PLR", "catalog copy on-device OK for ${cur.title}")
+                            webServer.addLog("PLR", "catalog copy on-device OK for ${cur.title} @${pos}ms")
                         } else {
                             webServer.addLog("PLR", "catalog copy on-device failed for ${cur.title}")
                             retryStandaloneOrProxy(cur, pos, wasPlaying, song)
@@ -792,7 +795,9 @@ class PlayerViewModel @Inject constructor(
                 val cur = s.queue.getOrNull(s.queueIndex)
                 if (cur != null) {
                     player.setMediaItem(buildMediaItem(cur, repo.streamUrl(cur.id)))
-                    player.prepare(); player.volume = 1f; player.playWhenReady = wasPlaying
+                    player.prepare()
+                    if (pos > 0) player.seekTo(pos)   // resume where it failed, not 0:00
+                    player.volume = 1f; player.playWhenReady = wasPlaying
                     return
                 }
             }
