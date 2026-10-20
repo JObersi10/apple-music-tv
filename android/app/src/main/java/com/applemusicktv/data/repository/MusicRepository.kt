@@ -235,11 +235,12 @@ class MusicRepository @Inject constructor(
         if (!useProxy) runCatching {
             val lines = directLyrics.getLyrics(songId, direct.storefront, title, artist, durationSec)
             val fx = directLyrics.footerFor(songId)
+            // Standalone has no single "none" signal; treat a completed empty fetch as confirmed-none.
             com.applemusicktv.data.network.LyricsResult(lines, directLyrics.creditsFor(songId),
-                fx?.origin, fx?.maker, fx?.uploader)
+                fx?.origin, fx?.maker, fx?.uploader, source = if (lines.isEmpty()) "none" else null)
         } else runCatching {
             val r = api.getLyrics(songId, only)
-            com.applemusicktv.data.network.LyricsResult(r.lines, r.writtenBy, r.origin, r.maker, r.uploader)
+            com.applemusicktv.data.network.LyricsResult(r.lines, r.writtenBy, r.origin, r.maker, r.uploader, r.source)
         }
 
     /** Warm the lyrics cache for an upcoming song so it shows instantly on switch. */

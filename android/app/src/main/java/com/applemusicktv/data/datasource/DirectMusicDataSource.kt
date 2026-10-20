@@ -19,9 +19,14 @@ class DirectMusicDataSource @Inject constructor(private val api: DirectAppleApi)
 
     /** Append a song to an editable library playlist. */
     suspend fun addToPlaylist(playlistId: String, songId: String, type: String = "songs"): Result<Unit> = runCatching {
+        android.util.Log.i("AMPL", "addToPlaylist pl=$playlistId id=$songId type=$type")
         val res = api.addTracksToPlaylist(playlistId,
             com.applemusicktv.data.network.AddTracksBody(listOf(com.applemusicktv.data.network.AddTrackRef(songId, type))))
-        if (!res.isSuccessful) error("HTTP ${res.code()}")
+        if (!res.isSuccessful) {
+            val body = runCatching { res.errorBody()?.string() }.getOrNull()
+            android.util.Log.e("AMPL", "add FAILED http=${res.code()} id=$songId type=$type body=${body?.take(300)}")
+            error("HTTP ${res.code()}")
+        }
     }
 
     suspend fun detectStorefront() {

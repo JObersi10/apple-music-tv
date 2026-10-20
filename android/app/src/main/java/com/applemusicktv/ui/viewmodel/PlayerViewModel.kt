@@ -285,6 +285,8 @@ class PlayerViewModel @Inject constructor(
     // instantly (from the N+1 prefetch) instead of blanking to empty and re-fetching — which, in
     // full-screen lyrics, flashed the view back to the player for a beat.
     private val lyricsCache = java.util.concurrent.ConcurrentHashMap<String, List<LyricLine>>()
+    /** Last fetch's `source` per song: "none" = all 3 sources confirmed-missed; null = failed fetch. */
+    private val lyricsSourceCache = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val creditsCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
     // Spicy footer extras (origin, maker, uploader) per song id, for the v2 renderer footer.
     private val footerCache = java.util.concurrent.ConcurrentHashMap<String, com.applemusicktv.data.network.LyricsResult>()
@@ -2221,6 +2223,7 @@ class PlayerViewModel @Inject constructor(
             val res = repo.getLyrics(id, title, artist, durationSec, only)
                 .getOrDefault(com.applemusicktv.data.network.LyricsResult())
             if (res.lines.isNotEmpty()) { lyricsCache[id] = res.lines; creditsCache[id] = res.writtenBy; footerCache[id] = res }
+            lyricsSourceCache[id] = res.source ?: ""   // "" = failed fetch (not a confirmed all-miss)
             lyricsInFlight.remove(id)
             res.lines
         }
@@ -2244,15 +2247,33 @@ class PlayerViewModel @Inject constructor(
         }
         val song = _state.value.currentSong?.takeIf { it.id == songId }
         lyricsJob = viewModelScope.launch {
-            val lines = fetchLyricsShared(songId, song?.title ?: "", song?.artistName ?: "", (song?.durationMs ?: 0L) / 1000).await()
-            if (_state.value.currentSong?.id == songId) {
-                // Mark loaded whether or not lines came back, so "No Lyrics Found" can show only now.
-                val fx = footerCache[songId]
-                _state.update { it.copy(lyrics = lines, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList(), lyricsOrigin = fx?.origin, lyricsMaker = fx?.maker, lyricsUploader = fx?.uploader) }
-                if (lines.isNotEmpty() && _state.value.translateLyrics) fetchTranslation(songId)
-                // Current song's lyrics are in — warm the NEXT song's lyrics (N+1 only) so a skip shows
-                // them with no blank flash. Not N+2: the next boundary re-runs this for whatever we land on.
-                prefetchNextLyrics(songId)
+            // "No Lyrics Found" must appear ONLY on a real all-sources miss (server source=="none"),
+            // not on a transient fetch failure (DNS blip / timeout → empty with null source). On a
+            // failed-empty, hold the panel blank (lyricsLoaded stays false → UI shows nothing) and
+            // retry with a cooldown; only after a few failures do we give up and show the message.
+            var attempt = 0
+            while (true) {
+                val lines = fetchLyricsShared(songId, song?.title ?: "", song?.artistName ?: "", (song?.durationMs ?: 0L) / 1000).await()
+                if (_state.value.currentSong?.id != songId) return@launch
+                val src = lyricsSourceCache[songId]
+                if (lines.isNotEmpty()) {
+                    val fx = footerCache[songId]
+                    _state.update { it.copy(lyrics = lines, lyricsLoaded = true, lyricsCredits = creditsCache[songId] ?: emptyList(), lyricsOrigin = fx?.origin, lyricsMaker = fx?.maker, lyricsUploader = fx?.uploader) }
+                    if (_state.value.translateLyrics) fetchTranslation(songId)
+                    prefetchNextLyrics(songId)
+                    return@launch
+                }
+                // Empty. Confirmed all-miss → show the message now. Otherwise cooldown + retry.
+                val confirmedNone = src == "none"
+                if (confirmedNone || attempt >= 3) {
+                    _state.update { it.copy(lyrics = emptyList(), lyricsLoaded = true) }
+                    prefetchNextLyrics(songId)
+                    return@launch
+                }
+                attempt++
+                lyricsInFlight.remove(songId); lyricsSourceCache.remove(songId)
+                delay(4000)
+                if (_state.value.currentSong?.id != songId) return@launch
             }
         }
     }
@@ -2623,11 +2644,15 @@ class PlayerViewModel @Inject constructor(
                                 loadLyrics(nextSong.id); loadMotion(nextSong.id)
                                 if (nextSong.artistId == null || nextSong.albumId == null) enrichSongIds(nextSong.id)
                             }
+                            // Flip the visuals ~1s BEFORE the audio midpoint — the on-screen song was
+                            // changing a touch late. Clamp so very short fades still flip around their
+                            // middle (never at step 0).
+                            val flipFrac = ((fadeDurationMs / 2f - 1000f) / fadeDurationMs).coerceIn(0.12f, 0.5f)
                             for (i in 1..steps) {
                                 val frac = i.toFloat() / steps
                                 oldPlayer.volume = (startVol * (1f - frac)).coerceAtLeast(0f)
                                 cfExo.volume = frac.coerceAtMost(1f)
-                                if (frac >= 0.5f) {
+                                if (frac >= flipFrac) {
                                     flipDisplay()
                                     if (!beatPromoted && cfExo.playbackState == Player.STATE_READY) {
                                         promoteCrossfadeBeat(); beatPromoted = true

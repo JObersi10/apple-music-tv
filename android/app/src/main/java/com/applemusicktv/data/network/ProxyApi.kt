@@ -202,6 +202,9 @@ data class LyricsResult(
     val origin: String? = null,
     val maker: LyricsCreditDto? = null,
     val uploader: LyricsCreditDto? = null,
+    /** "none" ONLY when all three sources (Spicy/Apple/lrclib) confirmed-missed; null on a failed
+     *  fetch. Lets the UI hold "No Lyrics Found" until a real all-sources miss, not a transient error. */
+    val source: String? = null,
 )
 
 @JsonClass(generateAdapter = true)
