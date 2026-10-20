@@ -101,6 +101,11 @@ fun DevMenuScreen(
                 sub = if (pstate.backgroundPlayEnabled) "Keep playing when you leave the app" else "Pause when the app goes to the background",
                 onToggle = { playerVm.toggleBackgroundPlay() },
             )
+            Toggle(
+                label = "Quit on exit (Low Power)", on = pstate.quitOnExit,
+                sub = if (pstate.quitOnExit) "End the app on exit to free memory (cold start next time)" else "Keep the app resident when you leave",
+                onToggle = { playerVm.toggleQuitOnExit() },
+            )
 
             // ── NOW PLAYING ───────────────────────────────────────────────
             SectionLabel("Now Playing")

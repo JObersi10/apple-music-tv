@@ -190,6 +190,7 @@ data class PlayerState(
     val reduceMotion: Boolean = false,
     /** Low Power Mode: cheaper background rendering (also forces motion art off). */
     val lowPowerMode: Boolean = false,
+    val quitOnExit: Boolean = false,
     /** Volume leveling (loudness AGC) on the audio path. */
     val volumeLeveling: Boolean = false,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
@@ -885,6 +886,7 @@ class PlayerViewModel @Inject constructor(
             artworkRounded = prefs.getBoolean("artwork_rounded", true),
             reduceMotion = prefs.getBoolean("reduce_motion", false),
             lowPowerMode = prefs.getBoolean("low_power", false),
+            quitOnExit = prefs.getBoolean("quit_on_exit", false),
             volumeLeveling = prefs.getBoolean("volume_leveling", false),
             isShuffled = prefs.getBoolean("shuffle_on", false),
             repeatMode = repeatFromPrefs(),
@@ -1005,7 +1007,8 @@ class PlayerViewModel @Inject constructor(
      */
     private fun useStandalone() = standalonePrefs.isEnabled() || !serverPrefs.serverReachable
 
-    private fun saveState() {
+    private fun saveState() = saveState(false)
+    private fun saveState(commit: Boolean) {
         val s = _state.value
         val song = s.currentSong ?: return
         // Mid-crossfade _state already points at the NEXT song while `player` is still
@@ -1018,7 +1021,7 @@ class PlayerViewModel @Inject constructor(
         val adapter = moshi.adapter(Song::class.java)
         val listType = Types.newParameterizedType(List::class.java, Song::class.java)
         val listAdapter = moshi.adapter<List<Song>>(listType)
-        prefs.edit {
+        prefs.edit(commit = commit) {
             putString("song",  adapter.toJson(song))
             putString("queue", listAdapter.toJson(s.queue))
             // User-added songs (Play Next / Add to Queue) live in userQueue — persist them too,
@@ -1031,6 +1034,24 @@ class PlayerViewModel @Inject constructor(
             putBoolean("crossfade_enabled", s.crossfadeEnabled)
             putBoolean("background_play", s.backgroundPlayEnabled)
         }
+    }
+
+    /** Low Power: quit the process when the app leaves the foreground (frees the Widevine CDM,
+     *  decoders and artwork caches on 1.5–2GB boxes). Default OFF — a toggle, so normal users keep
+     *  background audio. Read by MainActivity.onStop. */
+    fun isQuitOnExit(): Boolean = prefs.getBoolean("quit_on_exit", false)
+    val quitOnExit: Boolean get() = _state.value.quitOnExit
+    fun toggleQuitOnExit() {
+        val next = !_state.value.quitOnExit
+        _state.update { it.copy(quitOnExit = next) }
+        prefs.edit { putBoolean("quit_on_exit", next) }
+    }
+    /** Save the current position SYNCHRONOUSLY, in order, before the process is killed — so the
+     *  restore lands on the position actually left, not 0. */
+    fun prepareForQuit() {
+        runCatching { player.pause() }
+        _state.update { it.copy(isPlaying = false) }
+        saveState(commit = true)
     }
 
     /** True when the app should keep playing after it leaves the foreground. */
@@ -1068,7 +1089,7 @@ class PlayerViewModel @Inject constructor(
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), lyricsRendererV2 = prefs.getBoolean("lyrics_renderer_v2", true), progressMs = posMs) }
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), lyricsRendererV2 = prefs.getBoolean("lyrics_renderer_v2", true), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {

@@ -116,8 +116,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Background audio is for Picture-in-Picture only: leaving the app any other way pauses.
-        if (!isInPictureInPictureMode) playerVm.pause()
+        if (isInPictureInPictureMode) return   // background audio is for PiP only
+        // Low Power quit-on-exit (toggle, default OFF): leaving the app — home, recents, standby —
+        // saves the position SYNCHRONOUSLY and ends the process so nothing stays resident holding the
+        // Widevine CDM, decoders and artwork caches on these 1.5–2GB boxes. Every launch is then a
+        // cold start; Now Playing restores the last track paused at the position left.
+        if (playerVm.isQuitOnExit()) {
+            playerVm.prepareForQuit()
+            finishAndRemoveTask()
+            android.os.Process.killProcess(android.os.Process.myPid())
+            return
+        }
+        playerVm.pause()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

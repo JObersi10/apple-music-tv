@@ -3,6 +3,7 @@ name: Android APK
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -77,6 +78,24 @@ jobs:
 
             commit ${{ github.sha }}
           prerelease: true
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publish a STABLE release when a vX.Y tag is pushed (`git tag v1.6 && git push --tags`).
+      # The rolling `dev` build above stays the beta channel; this is the named, non-prerelease
+      # download. The `commit <sha>` line is kept so the in-app updater can version-compare.
+      - name: Publish stable release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Apple Music TV ${{ github.ref_name }}"
+          body: |
+            Stable release ${{ github.ref_name }}. Sideload: `adb install -r app-debug.apk`
+
+            commit ${{ github.sha }}
+          prerelease: false
           files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
