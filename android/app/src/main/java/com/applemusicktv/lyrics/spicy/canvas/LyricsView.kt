@@ -658,6 +658,9 @@ fun LyricsView(
 
                 when {
                     layout.isInterlude -> drawInterludeGroup(layout, lineAnim, lineStartX, scrollOffset, dynamicY)
+                    // A translation gloss renders flat (no karaoke wipe, no per-word "play") regardless of
+                    // the document type — otherwise its words all light up at once with the lead's timing.
+                    layout.line.isTranslation -> drawStaticLine(layout, lineAnim, lineStartX, scrollOffset, dynamicY)
                     lyricsType == LyricsType.Static -> drawStaticLine(layout, lineAnim, lineStartX, scrollOffset, dynamicY)
                     lyricsType == LyricsType.Line -> drawLineModeLine(layout, lineAnim, lineStartX, scrollOffset, dynamicY, config)
                     // Minimal Lyrics Mode shrinks inactive lines (a CSS `scale`: paint only, no reflow)

@@ -209,7 +209,9 @@ internal object LyricsLayoutCalculator {
             val zero = textMeasurer.measure(text = AnnotatedString("0"), style = gapStyle)
             // Word-synced lines are rows of word elements spaced by `margin-right: 0.32ch`; line-
             // synced and static lines are plain text, spaced by a real space.
-            val textMode = lyricsType == LyricsType.Line || lyricsType == LyricsType.Static
+            // A translation gloss is plain prose, not sung syllables — space it with a real space and
+            // wrap it like text, even inside a word-synced (Syllable) document, or its words glue together.
+            val textMode = lyricsType == LyricsType.Line || lyricsType == LyricsType.Static || line.isTranslation
             val wordGap = if (textMode) {
                 textMeasurer.measure(text = AnnotatedString("a a"), style = gapStyle).size.width -
                     textMeasurer.measure(text = AnnotatedString("aa"), style = gapStyle).size.width.toFloat()
