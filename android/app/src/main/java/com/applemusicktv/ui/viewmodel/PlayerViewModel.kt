@@ -191,6 +191,8 @@ data class PlayerState(
     /** Low Power Mode: cheaper background rendering (also forces motion art off). */
     val lowPowerMode: Boolean = false,
     val quitOnExit: Boolean = false,
+    /** Lyrics-source override for the CURRENT song (#11 picker): "" = Auto, else spicy|apple|lrclib. */
+    val lyricsSource: String = "",
     /** Volume leveling (loudness AGC) on the audio path. */
     val volumeLeveling: Boolean = false,
     /** Decrypt/buffer in flight — a cold track takes 15-20s, so the UI must say so. */
@@ -2195,11 +2197,28 @@ class PlayerViewModel @Inject constructor(
     // the same Deferred.
     private val lyricsInFlight = mutableMapOf<String, kotlinx.coroutines.Deferred<List<LyricLine>>>()
 
+    // ── Lyrics source picker (#11) ───────────────────────────────────────────
+    /** Per-song source override, persisted so the choice sticks for that song. "" / null = Auto. */
+    private fun lyricsSourceOverride(songId: String): String =
+        prefs.getString("lyrics_src::$songId", "") ?: ""
+    /** Cycle the CURRENT song's lyrics source: Auto → Spicy → Apple → lrclib → Auto, then re-fetch. */
+    fun cycleLyricsSource() {
+        val id = _state.value.currentSong?.id ?: return
+        val order = listOf("", "spicy", "apple", "lrclib")
+        val next = order[(order.indexOf(lyricsSourceOverride(id)).coerceAtLeast(0) + 1) % order.size]
+        prefs.edit { putString("lyrics_src::$id", next) }
+        _state.update { it.copy(lyricsSource = next) }
+        // Drop caches for this song so the forced source is actually fetched.
+        lyricsCache.remove(id); creditsCache.remove(id); footerCache.remove(id); lyricsInFlight.remove(id)
+        loadLyrics(id)
+    }
+
     private fun fetchLyricsShared(id: String, title: String, artist: String, durationSec: Long): kotlinx.coroutines.Deferred<List<LyricLine>> {
         lyricsCache[id]?.let { return kotlinx.coroutines.CompletableDeferred(it) }
         lyricsInFlight[id]?.let { return it }
+        val only = lyricsSourceOverride(id).ifBlank { null }
         val d = viewModelScope.async {
-            val res = repo.getLyrics(id, title, artist, durationSec)
+            val res = repo.getLyrics(id, title, artist, durationSec, only)
                 .getOrDefault(com.applemusicktv.data.network.LyricsResult())
             if (res.lines.isNotEmpty()) { lyricsCache[id] = res.lines; creditsCache[id] = res.writtenBy; footerCache[id] = res }
             lyricsInFlight.remove(id)
@@ -2213,7 +2232,7 @@ class PlayerViewModel @Inject constructor(
         lyricsJob?.cancel()
         // New song → clear stale lyrics/translation and mark "not loaded yet" so the UI shows nothing
         // (not "No Lyrics Found") until the fetch actually completes.
-        _state.update { it.copy(lyrics = emptyList(), lyricsTranslation = emptyList(), lyricsTranslationBg = emptyList(), lyricsLoaded = false, lyricsCredits = emptyList(), lyricsOrigin = null, lyricsMaker = null, lyricsUploader = null) }
+        _state.update { it.copy(lyrics = emptyList(), lyricsTranslation = emptyList(), lyricsTranslationBg = emptyList(), lyricsLoaded = false, lyricsCredits = emptyList(), lyricsOrigin = null, lyricsMaker = null, lyricsUploader = null, lyricsSource = lyricsSourceOverride(songId)) }
         lyricsCache[songId]?.let { cached ->
             if (_state.value.currentSong?.id == songId) {
                 val fx = footerCache[songId]

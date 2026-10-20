@@ -338,7 +338,7 @@ interface ProxyApi {
 
     // ── Lyrics ────────────────────────────────────────────────────────────
     @GET("api/lyrics/{id}")
-    suspend fun getLyrics(@Path("id") id: String): LyricsResponse
+    suspend fun getLyrics(@Path("id") id: String, @retrofit2.http.Query("only") only: String? = null): LyricsResponse
 
     // ── Motion artwork ────────────────────────────────────────────────────
     @GET("api/motion/{id}")

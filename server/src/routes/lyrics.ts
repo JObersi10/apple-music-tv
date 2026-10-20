@@ -9,6 +9,11 @@ lyrics.get("/:songId", async (c) => {
   if (!hasMUT()) return c.json({ error: "Music-User-Token not set" }, 401);
   const songId = c.req.param("songId");
   const t0 = Date.now();
+  // Lyrics-source picker (#11): ?only=spicy|apple|lrclib forces one source instead of the default
+  // Spicy→Apple→lrclib order, so the user can override a song whose auto-winner is wrong. Empty/other
+  // = Auto (the normal order). A forced source that misses just falls through to "none".
+  const only = (c.req.query("only") || "").toLowerCase();
+  const wants = (src: string) => !only || only === src;
 
   const headers = {
     Authorization: `Bearer ${getBearerToken()}`,
@@ -21,7 +26,7 @@ lyrics.get("/:songId", async (c) => {
   //    Spotify and a community upload pool, so it covers songs Apple's own endpoint misses. Needs
   //    the song's title/artist to resolve a Spotify id (via anonymous Spotify search). Apple +
   //    lrclib below are the fallback for when Spicy is down, missing, or has no key.
-  if (spicyEnabled()) {
+  if (spicyEnabled() && wants("spicy")) {
     try {
       const meta = await fetchSongMeta(songId, headers);
       if (meta) {
@@ -42,7 +47,7 @@ lyrics.get("/:songId", async (c) => {
   //    If Apple only has TEXT-ONLY (unsynced, startMs<0), hold it and prefer lrclib below (often has a
   //    synced version); Apple's text is used as a last resort before plain/none.
   let appleTextOnly: any[] | null = null;
-  try {
+  if (wants("apple")) try {
     const appleLines = await fetchAppleLyrics(songId, headers);
     if (appleLines && appleLines.length > 0) {
       const synced = appleLines.some((l: any) => l.startMs > 0);
@@ -58,7 +63,7 @@ lyrics.get("/:songId", async (c) => {
   } catch (e: any) { console.warn(`[lyrics] ${songId} apple failed: ${e.message}`); }
 
   // 2) Fallback: lrclib.net (Apple missing OR text-only)
-  try {
+  if (wants("lrclib")) try {
     const meta = await fetchSongMeta(songId, headers);
     if (meta) {
       const fallbackLines = await fetchLrclibLyrics(meta);
@@ -77,7 +82,7 @@ lyrics.get("/:songId", async (c) => {
 
   // 3) Last resort: unsynced plain text. Better than an empty panel — it just
   //    can't be highlighted or seeked, which the client renders dimmed.
-  try {
+  if (wants("lrclib")) try {
     const meta = await fetchSongMeta(songId, headers);
     if (meta) {
       const plain = await fetchLrclibPlain(meta);

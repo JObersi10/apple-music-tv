@@ -229,14 +229,16 @@ class MusicRepository @Inject constructor(
         else runCatching { emptyList<Song>() }
 
     // ── Lyrics ────────────────────────────────────────────────────────────
-    suspend fun getLyrics(songId: String, title: String = "", artist: String = "", durationSec: Long = 0) =
+    // `only` (spicy|apple|lrclib) forces a lyrics source (the #11 picker); null = Auto order. Honoured
+    // on the proxy path; standalone keeps Auto (DirectLyricsSource has its own order).
+    suspend fun getLyrics(songId: String, title: String = "", artist: String = "", durationSec: Long = 0, only: String? = null) =
         if (!useProxy) runCatching {
             val lines = directLyrics.getLyrics(songId, direct.storefront, title, artist, durationSec)
             val fx = directLyrics.footerFor(songId)
             com.applemusicktv.data.network.LyricsResult(lines, directLyrics.creditsFor(songId),
                 fx?.origin, fx?.maker, fx?.uploader)
         } else runCatching {
-            val r = api.getLyrics(songId)
+            val r = api.getLyrics(songId, only)
             com.applemusicktv.data.network.LyricsResult(r.lines, r.writtenBy, r.origin, r.maker, r.uploader)
         }
 
