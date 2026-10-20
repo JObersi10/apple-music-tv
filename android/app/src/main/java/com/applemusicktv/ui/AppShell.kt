@@ -506,7 +506,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                     verticalArrangement = Arrangement.spacedBy(24.dp),
                 ) {
                     androidx.compose.material3.Text(
-                        "Exit Apple Music TV?",
+                        androidx.compose.ui.res.stringResource(com.applemusicktv.R.string.exit_title),
                         color = Color.White,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -522,7 +522,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                             ),
                         ) {
                             androidx.compose.material3.Text(
-                                "Cancel",
+                                androidx.compose.ui.res.stringResource(com.applemusicktv.R.string.action_cancel),
                                 color = Color.White,
                                 modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
                             )
@@ -549,7 +549,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                             ),
                         ) {
                             androidx.compose.material3.Text(
-                                "Exit",
+                                androidx.compose.ui.res.stringResource(com.applemusicktv.R.string.action_exit),
                                 color = Color.White,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
