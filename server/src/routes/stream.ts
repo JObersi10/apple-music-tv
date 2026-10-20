@@ -349,11 +349,14 @@ async function getStreamParams(songId: string, mut: string) {
 
   console.log(`[stream] asset flavor=${asset.flavor} url=${asset.URL.substring(0, 80)}…`);
 
-  // Uploaded / iTunes-Match songs (`is-itunes-stream`) hand back the user's OWN file directly — an
-  // unprotected audio blob (store-***.blobstore.apple.com), not an encrypted HLS stream. There's no
-  // flavor and no CENC key; the asset URL IS the playable file. Serve it directly (download + remux),
-  // skipping the whole decrypt pipeline. This is the fix for uploaded-song playback.
-  const isDirectUpload = Boolean(entry["is-itunes-stream"]) || asset.flavor == null;
+  // GENUINE uploads hand back the user's OWN file directly — an unprotected audio blob
+  // (store-***.blobstore.apple.com) with NO flavor and no CENC key; the asset URL IS the playable
+  // file, so we serve it directly (download + remux), skipping decrypt. The ONLY reliable signal is a
+  // flavorless chosen asset. `is-itunes-stream` is NOT enough: iTunes-MATCHED tracks also carry that
+  // flag but DO have real ctrp (CENC) assets — flagging those direct downloaded the ENCRYPTED ctrp URL
+  // raw → garbage → ERROR_CODE_DECODING_FAILED → every matched song skipped. Only fall direct when the
+  // asset selection landed on a flavorless blob (no ctrp existed).
+  const isDirectUpload = asset.flavor == null;
   if (isDirectUpload) {
     console.log(`[stream] DIRECT upload (no CENC) ${songId} — serving the raw asset`);
     return { streamUrl: asset.URL, adamId, keyUri: "", direct: true };
