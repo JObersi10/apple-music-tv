@@ -254,6 +254,7 @@ fun NowPlayingScreen(
                 onPlayPause = playerVm::togglePlayPause,
                 onNext = playerVm::next,
                 translations = state.lyricsTranslation,
+                translationsBg = state.lyricsTranslationBg,
                 lyricsScale = state.lyricsScale,
                 richMotion = !state.lowPowerMode && !state.reduceMotion,
                 credits = if (state.showLyricsCredits) state.lyricsCredits else emptyList(),
@@ -579,6 +580,7 @@ fun NowPlayingScreen(
                 var shownMaker by remember { mutableStateOf(state.lyricsMaker) }
                 var shownUploader by remember { mutableStateOf(state.lyricsUploader) }
                 var shownTranslation by remember { mutableStateOf(state.lyricsTranslation) }
+                var shownTranslationBg by remember { mutableStateOf(state.lyricsTranslationBg) }
                 // Freeze the OLD lyrics' time while transitioning: once the song flips, progressMs resets
                 // to 0, and feeding that to the still-shown old lyrics made them jump to line 1 for a
                 // split second (the "prev lyrics bleed over the next track"). We sample the live time
@@ -617,13 +619,17 @@ fun NowPlayingScreen(
                         shownSongId = state.currentSong?.id
                         shownLyr = state.lyrics; shownCredits = state.lyricsCredits
                         shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
-                        shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
+                        shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation; shownTranslationBg = state.lyricsTranslationBg
                         lyricFade.animateTo(1f, tween(340))
                     } else {
-                        lyricFade.animateTo(0f, tween(260))
+                        // Cold fetch: fade the old lines out, then CLEAR them so the previous song's lyrics
+                        // can't linger (just alpha-0 kept them mounted, and they reappeared / scrolled on
+                        // the new song's clock). The panel is blank until the new lyrics land; the adopt
+                        // effect then fades them in (lyricFade left at 0).
+                        lyricFade.animateTo(0f, tween(200))
                         shownSongId = state.currentSong?.id
-                        // Cold fetch: leave the panel faded out; the adopt effect fades the new lines in
-                        // once they land.
+                        shownLyr = emptyList(); shownTranslation = emptyList(); shownTranslationBg = emptyList()
+                        shownCredits = emptyList(); shownOrigin = null; shownMaker = null; shownUploader = null
                     }
                 }
                 LaunchedEffect(state.lyrics, state.lyricsLoaded) {
@@ -633,7 +639,7 @@ fun NowPlayingScreen(
                     if (state.currentSong?.id == shownSongId && state.lyrics.isNotEmpty()) {
                         shownLyr = state.lyrics; shownCredits = state.lyricsCredits
                         shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
-                        shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation
+                        shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation; shownTranslationBg = state.lyricsTranslationBg
                         if (lyricFade.value < 1f) lyricFade.animateTo(1f, tween(450))
                     }
                 }
@@ -650,7 +656,7 @@ fun NowPlayingScreen(
                 // state.lyrics), so the adopt effect never re-fires for it — shownTranslation stayed
                 // empty and the gloss never appeared. Sync it on its own key.
                 LaunchedEffect(state.lyricsTranslation) {
-                    if (state.currentSong?.id == shownSongId) shownTranslation = state.lyricsTranslation
+                    if (state.currentSong?.id == shownSongId) shownTranslation = state.lyricsTranslation; shownTranslationBg = state.lyricsTranslationBg
                 }
                 // Crossfade: fade the outgoing song's lyrics out the instant the fade starts, so they
                 // don't keep scrolling through the first half before the midpoint display flip.
@@ -691,6 +697,7 @@ fun NowPlayingScreen(
                                     escapeFocus = playFocus,
                                     romanize = state.lyricsRomanize,
                                     translations = shownTranslation,
+                                    translationsBg = shownTranslationBg,
                                     translateNonLatinOnly = state.translateNonLatinOnly,
                                     romanizeReloadKey = state.jaPackDownloading,
                                     durationMs = state.currentSong?.durationMs ?: 0L,
@@ -830,6 +837,7 @@ private fun FullScreenLyrics(
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     translations: List<String> = emptyList(),
+    translationsBg: List<String> = emptyList(),
     lyricsScale: Float = 1f,
     richMotion: Boolean = true,
     credits: List<String> = emptyList(),
@@ -883,6 +891,7 @@ private fun FullScreenLyrics(
                     escapeFocus = playFocus,
                     romanize = romanize,
                     translations = translations,
+                    translationsBg = translationsBg,
                     translateNonLatinOnly = translateNonLatinOnly,
                     durationMs = song?.durationMs ?: 0L,
                 )

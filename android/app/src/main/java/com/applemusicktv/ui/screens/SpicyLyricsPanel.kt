@@ -45,6 +45,7 @@ fun SpicyLyricsPanel(
     escapeFocus: androidx.compose.ui.focus.FocusRequester? = null,
     romanize: Boolean = false,
     translations: List<String> = emptyList(),
+    translationsBg: List<String> = emptyList(),
     translateNonLatinOnly: Boolean = false,
     /** Flips when the downloadable Japanese pronunciation pack finishes, so romanization re-runs and
      *  kanji readings appear without needing a song change. */
@@ -63,7 +64,7 @@ fun SpicyLyricsPanel(
                 }
             }.getOrNull()
     }
-    val built = remember(lyrics, romanizedData, translations, translateNonLatinOnly) { buildSpicyDocument(lyrics, romanizedData, translations, translateNonLatinOnly) }
+    val built = remember(lyrics, romanizedData, translations, translationsBg, translateNonLatinOnly) { buildSpicyDocument(lyrics, romanizedData, translations, translationsBg, translateNonLatinOnly) }
     val romanizeActive = romanize && built.lines.any { l -> l.words.any { it.romanizedText != null } }
     // Footer under the lyrics: "Written by …", "Provided by: <origin>", the community note, and the
     // "Made by @…" / "Uploaded by @…" credits with avatars — exactly like Spicy Player.
@@ -150,7 +151,7 @@ private fun leadWordTexts(lyrics: List<LyricLine>): List<List<String>> {
 }
 
 /** Our LyricLine list → Spicy renderer lines. Lead + background become sibling lines sharing a groupId. */
-private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<String?>>? = null, translations: List<String> = emptyList(), nonLatinOnly: Boolean = false): SpicyDoc {
+private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<String?>>? = null, translations: List<String> = emptyList(), translationsBg: List<String> = emptyList(), nonLatinOnly: Boolean = false): SpicyDoc {
     if (lyrics.isEmpty()) return SpicyDoc(emptyList(), LyricsType.Static)
     fun rom(line: Int, word: Int): String? = romanized?.getOrNull(line)?.getOrNull(word)
     // A translation gloss for line i, only when it's real (non-blank, and not identical to the original —
@@ -162,6 +163,13 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
         val t = translations.getOrNull(i)?.trim()?.takeIf { it.isNotBlank() && !it.equals(original.trim(), ignoreCase = true) } ?: return null
         return SLine(tokenize(t, startMs, endMs), startMs, endMs,
             role = LineRole.BACKGROUND, groupId = i, oppositeAligned = false, isTranslation = true)
+    }
+    // Same, for a line's background-vocal translation (from the parallel translationsBg list).
+    fun bgTransLine(i: Int, startMs: Long, endMs: Long, original: String): SLine? {
+        if (nonLatinOnly && com.applemusicktv.lyrics.spicy.romanization.ScriptDetector.detect(original).isEmpty()) return null
+        val t = translationsBg.getOrNull(i)?.trim()?.takeIf { it.isNotBlank() && !it.equals(original.trim(), ignoreCase = true) } ?: return null
+        return SLine(tokenize(t, startMs, endMs), startMs, endMs,
+            role = LineRole.BACKGROUND, groupId = i, oppositeAligned = true, isTranslation = true)
     }
 
     // Unsynced (plain) — tokenize so the Static render path can wrap each line.
@@ -195,10 +203,15 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
             val bgWords = if (bg.words.isNotEmpty()) bg.words.map { SWord(it.text, it.startMs, it.endMs) }
                 else tokenize(bg.text, bg.startMs, bgEnd)
             out.add(SLine(bgWords, bg.startMs, bgEnd, role = LineRole.BACKGROUND, groupId = i, oppositeAligned = true))
+            bgTransLine(i, bg.startMs, bgEnd, bg.text)?.let { out.add(it) }
         }
         transLine(i, ln.startMs, ln.endMs, ln.text)?.let { out.add(it) }
     }
-    return SpicyDoc(out, if (anyWords) LyricsType.Syllable else LyricsType.Line)
+    // Insert the 3-dot interlude placeholders for instrumental gaps (≥3s between lead lines). This was
+    // never applied on V2, so pauses showed nothing. buildDisplayTimeline measures gaps on the LEAD
+    // lines only, so the background/translation sibling lines don't throw it off.
+    val timeline = com.applemusicktv.lyrics.spicy.models.buildDisplayTimeline(out, minimalMode = false)
+    return SpicyDoc(timeline, if (anyWords) LyricsType.Syllable else LyricsType.Line)
 }
 
 /**

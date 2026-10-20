@@ -125,6 +125,8 @@ data class PlayerState(
     val lyricsUploader:   com.applemusicktv.data.network.LyricsCreditDto? = null,
     /** Translated text per lyric line, aligned by index to [lyrics]. Empty = not translated. */
     val lyricsTranslation: List<String>   = emptyList(),
+    /** Translated background-vocal text per lyric line (aligned to [lyrics]; "" where no bg vocal). */
+    val lyricsTranslationBg: List<String> = emptyList(),
     val translateLyrics:  Boolean         = false,
     /** Target language code for lyric translation (ISO 639-1, e.g. "en", "es", "ja"). */
     val translateLang:    String          = "en",
@@ -2185,7 +2187,7 @@ class PlayerViewModel @Inject constructor(
         lyricsJob?.cancel()
         // New song → clear stale lyrics/translation and mark "not loaded yet" so the UI shows nothing
         // (not "No Lyrics Found") until the fetch actually completes.
-        _state.update { it.copy(lyrics = emptyList(), lyricsTranslation = emptyList(), lyricsLoaded = false, lyricsCredits = emptyList(), lyricsOrigin = null, lyricsMaker = null, lyricsUploader = null) }
+        _state.update { it.copy(lyrics = emptyList(), lyricsTranslation = emptyList(), lyricsTranslationBg = emptyList(), lyricsLoaded = false, lyricsCredits = emptyList(), lyricsOrigin = null, lyricsMaker = null, lyricsUploader = null) }
         lyricsCache[songId]?.let { cached ->
             if (_state.value.currentSong?.id == songId) {
                 val fx = footerCache[songId]
@@ -2279,7 +2281,7 @@ class PlayerViewModel @Inject constructor(
         val next = ((cur + dir) % size + size) % size
         if (next == 0) {
             // Off
-            _state.update { it.copy(translateLyrics = false, lyricsTranslation = emptyList()) }
+            _state.update { it.copy(translateLyrics = false, lyricsTranslation = emptyList(), lyricsTranslationBg = emptyList()) }
             prefs.edit { putBoolean("translate_lyrics", false) }
         } else {
             setTranslateLang(codes[next - 1])   // turns translation on + fetches
@@ -2292,7 +2294,7 @@ class PlayerViewModel @Inject constructor(
         _state.update { it.copy(translateLyrics = on) }
         prefs.edit { putBoolean("translate_lyrics", on) }
         val id = _state.value.currentSong?.id
-        if (on && id != null) fetchTranslation(id) else _state.update { it.copy(lyricsTranslation = emptyList()) }
+        if (on && id != null) fetchTranslation(id) else _state.update { it.copy(lyricsTranslation = emptyList(), lyricsTranslationBg = emptyList()) }
     }
 
     /** Toggle the Spicy Player Canvas lyrics renderer (··· menu). Persisted across songs/sessions. */
@@ -2319,8 +2321,17 @@ class PlayerViewModel @Inject constructor(
             }
             android.util.Log.i("AMtr", "translate lang=$translateLang in=${lines.size} out=${translated.size} tries=${attempt + 1} sample='${translated.firstOrNull()?.take(30)}'")
             webServer.addLog("TR", "translate lang=$translateLang in=${lines.size} out=${translated.size}")
+            // Background vocals (ln.background) aren't in `lines`; translate the non-blank ones too and
+            // map them back to their lead-line index, so a foreign bg vocal also gets a gloss.
+            val bgTexts = _state.value.lyrics.map { it.background?.text?.takeIf { t -> t.isNotBlank() } ?: "" }
+            val bgIdx = bgTexts.withIndex().filter { it.value.isNotBlank() }
+            val bgOut = MutableList(lines.size) { "" }
+            if (bgIdx.isNotEmpty() && _state.value.currentSong?.id == songId && _state.value.translateLyrics) {
+                val bgTranslated = runCatching { repo.translateLines(bgIdx.map { it.value }, translateLang) }.getOrDefault(emptyList())
+                bgIdx.forEachIndexed { k, iv -> bgOut[iv.index] = bgTranslated.getOrNull(k) ?: "" }
+            }
             if (translated.isNotEmpty() && _state.value.currentSong?.id == songId && _state.value.translateLyrics)
-                _state.update { it.copy(lyricsTranslation = translated) }
+                _state.update { it.copy(lyricsTranslation = translated, lyricsTranslationBg = bgOut) }
         }
     }
 
