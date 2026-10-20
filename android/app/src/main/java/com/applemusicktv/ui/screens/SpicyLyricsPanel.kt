@@ -49,6 +49,8 @@ fun SpicyLyricsPanel(
     /** Flips when the downloadable Japanese pronunciation pack finishes, so romanization re-runs and
      *  kanji readings appear without needing a song change. */
     romanizeReloadKey: Any = Unit,
+    /** Song length (ms); when >0 and the lyrics are unsynced, they auto-scroll in time with the song. */
+    durationMs: Long = 0L,
 ) {
     // Pronunciation: romanize the lyrics off the main thread (dictionary-backed Japanese etc. is heavy),
     // keyed on the lyrics + the toggle. Null until computed / when off. Applied per-word below so the
@@ -101,6 +103,11 @@ fun SpicyLyricsPanel(
             if (p <= 0L) -1000L else p + offsetMs
         },
         onSeekWord = onSeek,
+        staticAutoScroll = {
+            // Unsynced lyrics (Static) with a known duration → scroll fraction = elapsed fraction.
+            if (built.type == LyricsType.Static && durationMs > 0L)
+                ((progressState.value + offsetMs).toFloat() / durationMs).coerceIn(0f, 1f) else -1f
+        },
         modifier = modifier.fillMaxSize(),
         // The renderer's base size scales with the (wide) TV canvas, so it reads large — trim it.
         fontSizeScale = fontScale * V2_FONT_SCALE,

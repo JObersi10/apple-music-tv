@@ -693,6 +693,7 @@ fun NowPlayingScreen(
                                     translations = shownTranslation,
                                     translateNonLatinOnly = state.translateNonLatinOnly,
                                     romanizeReloadKey = state.jaPackDownloading,
+                                    durationMs = state.currentSong?.durationMs ?: 0L,
                                 )
                             } else {
                                 LyricsPanel(
@@ -883,6 +884,7 @@ private fun FullScreenLyrics(
                     romanize = romanize,
                     translations = translations,
                     translateNonLatinOnly = translateNonLatinOnly,
+                    durationMs = song?.durationMs ?: 0L,
                 )
             } else {
                 LyricsPanel(

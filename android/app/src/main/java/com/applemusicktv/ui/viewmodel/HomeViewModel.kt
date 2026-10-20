@@ -69,6 +69,41 @@ class HomeViewModel @Inject constructor(
             }
         }
         load()
+        startPeriodicRefresh()
+    }
+
+    /** A cheap signature of the shown feed, to skip re-pushing an identical one (which would reset the
+     *  scroll / re-raise the banner — the old oscillation). */
+    private fun List<HomeSection>.signature() = joinToString("|") { "${it.title}:${it.albums.size}" }
+
+    /**
+     * Keep Home fresh on its own: every 20s re-fetch and swap in a new feed when it actually changed —
+     * so it self-heals after a network/DNS blip and picks up personalization when /me/recommendations
+     * recovers, without the user ever pressing refresh. Commits only when the content differs AND is at
+     * least as good (personalized, or the current feed isn't personalized / is empty), so an identical
+     * or weaker feed never churns the screen.
+     */
+    private fun startPeriodicRefresh() {
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(20_000)
+                if (loadJob?.isActive == true) continue        // don't race a foreground load
+                val r = repo.getHome().getOrNull() ?: continue
+                val secs = r.sections.map { s ->
+                    HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style)
+                }
+                if (secs.isEmpty()) continue
+                val cur = _state.value.sections
+                val personalized = secs.isPersonalized()
+                val better = personalized || cur.isEmpty() || !cur.isPersonalized()
+                if (better && secs.signature() != cur.signature()) {
+                    _state.value = HomeUiState(isLoading = false, sections = secs, needsRefresh = fallbackBanner(secs))
+                    if (personalized) launch(kotlinx.coroutines.Dispatchers.Default) {
+                        runCatching { prefs.edit().putString("sections", adapter.toJson(secs)).apply() }
+                    }
+                }
+            }
+        }
     }
 
     private var loadJob: kotlinx.coroutines.Job? = null

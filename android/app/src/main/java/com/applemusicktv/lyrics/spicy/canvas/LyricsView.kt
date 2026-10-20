@@ -98,6 +98,9 @@ fun LyricsView(
     romanize: Boolean = false,
     /** Extra opacity multiplier for translation gloss lines (fades them in when they arrive). */
     translationAlpha: Float = 1f,
+    /** For UNSYNCED (Static) lyrics only: 0..1 of the song elapsed, used to glide the whole lyric from
+     *  top (0:00) to bottom (end) in a "synced" way. Return <0 to disable (plain user-scrolled). */
+    staticAutoScroll: () -> Float = { -1f },
     focusAnchorFraction: Float = 0.25f,
     // When set, the active line's top (not its centre) is kept this far below the view's top,
     // ("Top" scrolling); focusAnchorFraction is then unused.
@@ -522,6 +525,13 @@ fun LyricsView(
                             navIndex = adj
                             navTargetY = -(settledYScratch[adj] + half)
                             navSnap = false  // glide (fast fixed glide via scrollManager.dpadSelecting) — smooth + keeps up
+                        } else if (isStatic && staticAutoScroll() >= 0f && !scrollManager.isUserScrolling) {
+                            // Unsynced lyrics: glide the whole block from top (0:00) to bottom (end) in
+                            // step with the song, since there's no per-line timing to anchor to.
+                            val maxScroll = (totalContentHeight - canvasHeight).coerceAtLeast(0f)
+                            navIndex = 0
+                            navTargetY = -(staticAutoScroll().coerceIn(0f, 1f) * maxScroll)
+                            navSnap = false
                         } else {
                             navIndex = targetIndex
                             navTargetY = targetY
