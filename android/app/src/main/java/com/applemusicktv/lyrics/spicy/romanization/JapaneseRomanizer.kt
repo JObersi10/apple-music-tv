@@ -234,7 +234,7 @@ object JapaneseRomanizer : Romanizer {
     private val DICT_FILES = listOf(
         "characterDefinitions.bin", "connectionCosts.bin", "doubleArrayTrie.bin",
         "tokenInfoDictionary.bin", "tokenInfoFeaturesMap.bin",
-        "tokenInfoPartOfSpeechMap.bin", "tokenInfoTargetMap.bin",
+        "tokenInfoPartOfSpeechMap.bin", "tokenInfoTargetMap.bin", "unknownDictionary.bin",
     )
 
     /**

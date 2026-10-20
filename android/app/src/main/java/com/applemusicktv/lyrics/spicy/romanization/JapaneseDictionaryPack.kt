@@ -26,6 +26,7 @@ object JapaneseDictionaryPack {
         "tokenInfoFeaturesMap.bin",
         "tokenInfoPartOfSpeechMap.bin",
         "tokenInfoTargetMap.bin",
+        "unknownDictionary.bin",   // required by UnknownDictionary.newInstance — was missing → load failed
     )
     private const val JAR_URL =
         "https://repo1.maven.org/maven2/com/atilika/kuromoji/kuromoji-ipadic/0.9.0/kuromoji-ipadic-0.9.0.jar"

@@ -607,29 +607,21 @@ fun NowPlayingScreen(
                 // fade-in happen in the adopt effect once the new lyrics actually arrive.
                 LaunchedEffect(state.currentSong?.id) {
                     if (shownSongId == state.currentSong?.id) return@LaunchedEffect
-                    // If the next song's lyrics are ALREADY in hand (N+1 prefetch hit the lyrics cache,
-                    // so loadLyrics repopulated state.lyrics in the same frame), do a quick crossfade —
-                    // NOT the full 260ms-out + 450ms-in, which left the old lyrics hanging ~0.5s before
-                    // the new ones appeared. Only pay the long blank fade when the fetch is genuinely cold.
-                    val haveNew = state.lyrics.isNotEmpty() && state.lyricsLoaded
-                    if (haveNew) {
-                        // Swap the content SOONER (short fade-out) then a longer graceful fade-in, so the
-                        // new lyrics are up fast and the transition still reads smooth, not a blink.
-                        lyricFade.animateTo(0f, tween(70))
-                        shownSongId = state.currentSong?.id
+                    // Hide the PREVIOUS song's lyrics at once (snap to invisible + clear), so they never
+                    // hang on screen while the new ones load. The panel stays blank until the new lyrics
+                    // are in hand, then fades in — "invisible until loaded".
+                    lyricFade.snapTo(0f)
+                    shownSongId = state.currentSong?.id
+                    shownLyr = emptyList(); shownTranslation = emptyList(); shownTranslationBg = emptyList()
+                    shownCredits = emptyList(); shownOrigin = null; shownMaker = null; shownUploader = null
+                    // If the next song's lyrics are already prefetched (loadLyrics repopulated state.lyrics
+                    // in the same frame), fade them in now; otherwise the adopt effect fades them in when
+                    // the cold fetch lands.
+                    if (state.lyrics.isNotEmpty() && state.lyricsLoaded) {
                         shownLyr = state.lyrics; shownCredits = state.lyricsCredits
                         shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
                         shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation; shownTranslationBg = state.lyricsTranslationBg
-                        lyricFade.animateTo(1f, tween(340))
-                    } else {
-                        // Cold fetch: fade the old lines out, then CLEAR them so the previous song's lyrics
-                        // can't linger (just alpha-0 kept them mounted, and they reappeared / scrolled on
-                        // the new song's clock). The panel is blank until the new lyrics land; the adopt
-                        // effect then fades them in (lyricFade left at 0).
-                        lyricFade.animateTo(0f, tween(200))
-                        shownSongId = state.currentSong?.id
-                        shownLyr = emptyList(); shownTranslation = emptyList(); shownTranslationBg = emptyList()
-                        shownCredits = emptyList(); shownOrigin = null; shownMaker = null; shownUploader = null
+                        lyricFade.animateTo(1f, tween(320))
                     }
                 }
                 LaunchedEffect(state.lyrics, state.lyricsLoaded) {

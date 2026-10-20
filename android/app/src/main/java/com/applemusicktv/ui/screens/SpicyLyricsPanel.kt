@@ -158,11 +158,11 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
     // skips instrumentals / untranslatable lines / lines already in the target language). Built as a
     // BACKGROUND-role sibling so it inherits the layout/scroll machinery, flagged isTranslation.
     // nonLatinOnly: only gloss lines that actually contain a non-Latin script (JP/CN/KR/…).
-    fun transLine(i: Int, startMs: Long, endMs: Long, original: String): SLine? {
+    fun transLine(i: Int, startMs: Long, endMs: Long, original: String, rightAligned: Boolean): SLine? {
         if (nonLatinOnly && com.applemusicktv.lyrics.spicy.romanization.ScriptDetector.detect(original).isEmpty()) return null
         val t = translations.getOrNull(i)?.trim()?.takeIf { it.isNotBlank() && !it.equals(original.trim(), ignoreCase = true) } ?: return null
         return SLine(tokenize(t, startMs, endMs), startMs, endMs,
-            role = LineRole.BACKGROUND, groupId = i, oppositeAligned = false, isTranslation = true)
+            role = LineRole.BACKGROUND, groupId = i, oppositeAligned = rightAligned, isTranslation = true)
     }
     // Same, for a line's background-vocal translation (from the parallel translationsBg list).
     fun bgTransLine(i: Int, startMs: Long, endMs: Long, original: String): SLine? {
@@ -179,7 +179,7 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
                 lyrics.forEachIndexed { i, ln ->
                     add(SLine(tokenize(ln.text, 0L, 0L).mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) },
                         0L, 0L, role = LineRole.LEAD))
-                    transLine(i, 0L, 0L, ln.text)?.let { add(it) }
+                    transLine(i, 0L, 0L, ln.text, rightAligned = false)?.let { add(it) }
                 }
             },
             LyricsType.Static,
@@ -205,7 +205,7 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
             out.add(SLine(bgWords, bg.startMs, bgEnd, role = LineRole.BACKGROUND, groupId = i, oppositeAligned = true))
             bgTransLine(i, bg.startMs, bgEnd, bg.text)?.let { out.add(it) }
         }
-        transLine(i, ln.startMs, ln.endMs, ln.text)?.let { out.add(it) }
+        transLine(i, ln.startMs, ln.endMs, ln.text, rightAligned = ln.oppositeAligned)?.let { out.add(it) }
     }
     // Insert the 3-dot interlude placeholders for instrumental gaps (≥3s between lead lines). This was
     // never applied on V2, so pauses showed nothing. buildDisplayTimeline measures gaps on the LEAD
