@@ -68,11 +68,14 @@ fun DevMenuScreen(
 
     Box(modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 60.dp, vertical = 36.dp)
+            // Cap + centre the column so rows don't stretch edge-to-edge on a wide 1080p/4K TV —
+            // a settings list reads far better at a comfortable column width than full-bleed.
+            modifier = Modifier.fillMaxHeight().widthIn(max = 880.dp).align(Alignment.TopCenter)
+                .padding(horizontal = 24.dp, vertical = 40.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Settings", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White)
 
             // ── SOFTWARE ──────────────────────────────────────────────────
             SectionLabel("Software")
@@ -702,8 +705,15 @@ private fun Toggle(label: String, on: Boolean, sub: String, enabled: Boolean = t
 
 @Composable
 private fun SectionLabel(text: String) {
-    Text(text.uppercase(), fontSize = 10.sp, color = Color(0xFF666666),
-        fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp, modifier = Modifier.padding(top = 8.dp))
+    Row(
+        Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.width(3.dp).height(14.dp).background(Color(0xFFFA233B), RoundedCornerShape(50)))
+        Text(text.uppercase(), fontSize = 11.sp, color = Color(0xFF9A9A9A),
+            fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
+    }
 }
 
 @Composable
