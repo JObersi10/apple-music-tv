@@ -1794,7 +1794,12 @@ class PlayerViewModel @Inject constructor(
                 return null
             }
             val wb = appleClient.getWebPlayback(song.id, bearer, mut)
-            Log.i("AMSA", "standalone webPlayback ok song=${song.id} hlsUrl=${wb.hlsUrl.take(60)}")
+            Log.i("AMSA", "standalone webPlayback ok song=${song.id} hlsUrl=${wb.hlsUrl.take(60)} direct=${wb.direct}")
+            // Uploaded / iTunes-Match: the URL is the user's own unprotected file. Play it directly with a
+            // plain (no-DRM) progressive source — no Widevine, no playlist rewrite. On-device upload support.
+            if (wb.direct) {
+                return DefaultMediaSourceFactory(context).createMediaSource(buildMediaItem(song, wb.hlsUrl))
+            }
             // Serve a rewritten copy of the playlist from disk — see
             // rewritePlaylistForExo for why the EXT-X-KEY line has to go.
             val playlistUri = try {

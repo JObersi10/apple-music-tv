@@ -18,6 +18,8 @@ data class WebPlaybackResult(
     val keyUri:   String,
     /** Raw media playlist — needed so the EXT-X-KEY line can be rewritten. */
     val hlsText:  String = "",
+    /** Uploaded / iTunes-Match: [hlsUrl] is the user's own UNPROTECTED file (no CENC/HLS). Play directly. */
+    val direct:   Boolean = false,
 )
 
 const val MV_VIDEO_FILE = "mv_video.m3u8"
@@ -282,14 +284,24 @@ class AppleDirectClient @Inject constructor() {
             }
             val assetUrl = ctrp256.ifEmpty { ctrp64.ifEmpty { anyCtrp } }
             Log.i("AMWP", "chose asset flavor=${if (ctrp256.isNotEmpty()) "28:ctrp256" else if (ctrp64.isNotEmpty()) "32:ctrp64" else "other-ctrp"}")
-            if (assetUrl.isEmpty()) error("No CENC stream asset for $songId")
 
-            // Resolve to media playlist and extract keyUri
-            val (mediaUrl, hlsText) = resolveMediaPlaylist(assetUrl, bearer, mut)
-            val keyUri = Regex("""URI="(data:[^"]+)"""").find(hlsText)?.groupValues?.get(1)
-                ?: error("No key URI in HLS manifest")
-
-            WebPlaybackResult(adamId = adamId, hlsUrl = mediaUrl, keyUri = keyUri, hlsText = hlsText)
+            if (assetUrl.isEmpty()) {
+                // Uploaded / iTunes-Match (is-itunes-stream): no CENC asset — Apple returns the user's
+                // OWN unprotected file directly. Take the first asset that has a URL and play it as-is.
+                val directUrl = (0 until assets.length())
+                    .map { assets.getJSONObject(it).optString("URL") }
+                    .firstOrNull { it.isNotEmpty() }
+                if (directUrl != null) {
+                    Log.i("AMWP", "DIRECT upload asset (no CENC) for $songId")
+                    WebPlaybackResult(adamId = adamId, hlsUrl = directUrl, keyUri = "", direct = true)
+                } else error("No CENC stream asset for $songId")
+            } else {
+                // Resolve to media playlist and extract keyUri (normal Widevine path)
+                val (mediaUrl, hlsText) = resolveMediaPlaylist(assetUrl, bearer, mut)
+                val keyUri = Regex("""URI="(data:[^"]+)"""").find(hlsText)?.groupValues?.get(1)
+                    ?: error("No key URI in HLS manifest")
+                WebPlaybackResult(adamId = adamId, hlsUrl = mediaUrl, keyUri = keyUri, hlsText = hlsText)
+            }
         }
 
     /**
