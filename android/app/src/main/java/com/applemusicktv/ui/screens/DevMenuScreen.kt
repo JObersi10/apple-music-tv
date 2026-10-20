@@ -157,8 +157,11 @@ fun DevMenuScreen(
             )
             Toggle(
                 label = "Lyrics pronunciation", on = pstate.lyricsRomanize,
-                sub = if (pstate.lyricsRomanize) "Show romaji / pinyin under non-Latin lyrics (v2 renderer)"
-                      else "Off — original script only",
+                sub = when {
+                    pstate.jaPackDownloading -> "Downloading Japanese pronunciation pack (~13MB)…"
+                    pstate.lyricsRomanize -> "Show romaji / pinyin under non-Latin lyrics (v2 renderer)"
+                    else -> "Off — original script only (Japanese kanji downloads a pack on first use)"
+                },
                 onToggle = { playerVm.toggleLyricsRomanize() },
             )
             Toggle(

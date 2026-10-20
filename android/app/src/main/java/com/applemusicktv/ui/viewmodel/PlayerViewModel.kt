@@ -131,6 +131,8 @@ data class PlayerState(
     /** Scope: when true, only gloss non-Latin-script lines (JP/CN/KR/…), skipping Latin-script lines
      *  (Spanish/French/English/…). A line already in the target language is skipped either way. */
     val translateNonLatinOnly: Boolean    = false,
+    /** The downloadable Japanese (Kuromoji) pronunciation pack is currently downloading. */
+    val jaPackDownloading: Boolean        = false,
     /** Show the lyrics credits footer (Provided by / Written by / Made by / Uploaded by). */
     val showLyricsCredits: Boolean        = true,
     /** Show on-device pronunciation (romaji / pinyin / …) under non-Latin lyrics (v2 renderer). */
@@ -2225,11 +2227,22 @@ class PlayerViewModel @Inject constructor(
         ?: java.util.Locale.getDefault().language.ifBlank { "en" }
     private var translateJob: kotlinx.coroutines.Job? = null
 
-    /** Show/hide on-device pronunciation (romaji/pinyin) under the lyrics (Settings). */
+    /** Show/hide on-device pronunciation (romaji/pinyin) under the lyrics (Settings). Turning it on
+     *  fetches the downloadable Japanese (Kuromoji) dictionary pack if it isn't already present, so
+     *  kanji readings work; Chinese/Korean/etc. don't need a download. */
     fun toggleLyricsRomanize() {
         val on = !_state.value.lyricsRomanize
         _state.update { it.copy(lyricsRomanize = on) }
         prefs.edit { putBoolean("lyrics_romanize", on) }
+        if (on && !com.applemusicktv.lyrics.spicy.romanization.JapaneseDictionaryPack.isReady(context)) {
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                _state.update { it.copy(jaPackDownloading = true) }
+                val ok = runCatching { com.applemusicktv.lyrics.spicy.romanization.JapaneseDictionaryPack.download(context) }.getOrDefault(false)
+                android.util.Log.i("AMtr", "ja-pack download ok=$ok ready=${com.applemusicktv.lyrics.spicy.romanization.JapaneseDictionaryPack.isReady(context)}")
+                webServer.addLog("TR", "ja-pack download ok=$ok")
+                _state.update { it.copy(jaPackDownloading = false) }
+            }
+        }
     }
 
     /** Translate scope: all foreign lines vs only non-Latin-script lines (Settings). */

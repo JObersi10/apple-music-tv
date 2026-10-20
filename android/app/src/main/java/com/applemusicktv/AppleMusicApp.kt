@@ -65,6 +65,15 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
             webServer.addLog(tag, msg)
             android.util.Log.i("AMVOL", "$tag $msg")
         }
+        // Japanese pronunciation pack: point the romanizer at the on-device dictionary dir, and if the
+        // user already has pronunciation on, fetch the (downloadable, not-bundled) Kuromoji dictionary.
+        com.applemusicktv.lyrics.spicy.romanization.JapaneseRomanizer.dictDir =
+            com.applemusicktv.lyrics.spicy.romanization.JapaneseDictionaryPack.dir(this)
+        if (getSharedPreferences("player_state", MODE_PRIVATE).getBoolean("lyrics_romanize", false)) {
+            appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { com.applemusicktv.lyrics.spicy.romanization.JapaneseDictionaryPack.download(this@AppleMusicApp) }
+            }
+        }
         // Sync locally-stored MUT to proxy server on startup so ExoPlayer stream requests work
         val mut = mutPrefs.getMUT()
         if (mut.isNotEmpty()) {

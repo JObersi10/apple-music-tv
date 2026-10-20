@@ -692,6 +692,7 @@ fun NowPlayingScreen(
                                     romanize = state.lyricsRomanize,
                                     translations = shownTranslation,
                                     translateNonLatinOnly = state.translateNonLatinOnly,
+                                    romanizeReloadKey = state.jaPackDownloading,
                                 )
                             } else {
                                 LyricsPanel(

@@ -46,11 +46,14 @@ fun SpicyLyricsPanel(
     romanize: Boolean = false,
     translations: List<String> = emptyList(),
     translateNonLatinOnly: Boolean = false,
+    /** Flips when the downloadable Japanese pronunciation pack finishes, so romanization re-runs and
+     *  kanji readings appear without needing a song change. */
+    romanizeReloadKey: Any = Unit,
 ) {
     // Pronunciation: romanize the lyrics off the main thread (dictionary-backed Japanese etc. is heavy),
     // keyed on the lyrics + the toggle. Null until computed / when off. Applied per-word below so the
     // renderer can draw romaji/pinyin under the original text.
-    val romanizedData by androidx.compose.runtime.produceState<List<List<String?>>?>(null, lyrics, romanize) {
+    val romanizedData by androidx.compose.runtime.produceState<List<List<String?>>?>(null, lyrics, romanize, romanizeReloadKey) {
         value = if (!romanize || lyrics.isEmpty()) null
             else runCatching {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {

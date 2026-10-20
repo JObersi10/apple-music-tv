@@ -54,6 +54,23 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+
+    packaging {
+        resources {
+            // Kuromoji's IPADIC dictionary (~33MB of .bin) is NOT shipped in the APK — it's downloaded
+            // on demand (JapaneseDictionaryPack) when the user turns on Japanese pronunciation. We keep
+            // only the kuromoji classes; the dictionary binaries are excluded from packaging.
+            excludes += listOf(
+                "com/atilika/kuromoji/ipadic/*.bin",
+                "com/atilika/kuromoji/ipadic/compile/**",
+                "META-INF/*.md",
+                "META-INF/*.txt",
+                "META-INF/NOTICE*",
+                "META-INF/LICENSE*",
+                "META-INF/DEPENDENCIES",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -102,6 +119,11 @@ dependencies {
 
     // Images
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // Kuromoji (IPADIC) for Japanese kanji → reading romanization. The classes ship in the APK but the
+    // ~33MB dictionary .bin are excluded (see packaging{} above) and downloaded on demand from Maven
+    // Central by JapaneseDictionaryPack when the user enables Japanese pronunciation.
+    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
+
     // Gson — used by the ported Spicy renderer's AudioAnalysis (kawarp background beat data).
     implementation("com.google.code.gson:gson:2.11.0")
 

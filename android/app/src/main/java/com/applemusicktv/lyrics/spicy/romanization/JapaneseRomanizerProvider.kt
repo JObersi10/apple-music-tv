@@ -1,22 +1,11 @@
 package com.applemusicktv.lyrics.spicy.romanization
 
 /**
- * Chooses the Japanese romanizer implementation. Prefers the dictionary-backed
- * [JapaneseRomanizer] (Kuromoji) when its tokenizer initializes; otherwise falls back to
- * kana-only conversion (kanji left unchanged). The result is memoized.
+ * The Japanese romanizer. Always [JapaneseRomanizer]: it uses the downloaded Kuromoji dictionary when
+ * present and self-degrades to kana-only conversion (kanji unchanged) when it isn't — so once the
+ * pronunciation pack downloads, kanji readings light up with no restart. The old KanaOnly fallback
+ * selection is gone; JapaneseRomanizer owns that fallback internally.
  */
 object JapaneseRomanizerProvider {
-    @Volatile private var cached: Romanizer? = null
-
-    fun get(): Romanizer {
-        cached?.let { return it }
-        val chosen = try {
-            val kuromoji = JapaneseRomanizer
-            if (kuromoji.isAvailable()) kuromoji else KanaOnlyJapaneseRomanizer
-        } catch (t: Throwable) {
-            KanaOnlyJapaneseRomanizer
-        }
-        cached = chosen
-        return chosen
-    }
+    fun get(): Romanizer = JapaneseRomanizer
 }
