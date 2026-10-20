@@ -344,9 +344,26 @@ class MusicRepository @Inject constructor(
             val native = runCatching {
                 api.getLyricTranslation(songId, to).lines
             }.getOrDefault(emptyList())
-            if (native.isNotEmpty()) return native
+            // Use Apple's native translation only if it's actually present AND actually translated —
+            // Apple often returns the lines unchanged (no translation available for the pair), in which
+            // case fall through to Google. "Translated" = enough lines differ from the originals.
+            if (native.isNotEmpty() && isUsefulTranslation(native, lines)) return native
         }
         return translateLines(lines, to)
+    }
+
+    /** True when a translation looks real: a good share of non-blank lines differ from the source. */
+    private fun isUsefulTranslation(translated: List<String>, original: List<String>): Boolean {
+        if (translated.size != original.size) return translated.isNotEmpty()
+        var comparable = 0
+        var changed = 0
+        for (i in original.indices) {
+            val o = original[i].trim(); val t = translated.getOrNull(i)?.trim().orEmpty()
+            if (o.isBlank() || t.isBlank()) continue
+            comparable++
+            if (!t.equals(o, ignoreCase = true)) changed++
+        }
+        return comparable == 0 || changed.toFloat() / comparable >= 0.4f
     }
 
     suspend fun translateLines(lines: List<String>, to: String): List<String> {

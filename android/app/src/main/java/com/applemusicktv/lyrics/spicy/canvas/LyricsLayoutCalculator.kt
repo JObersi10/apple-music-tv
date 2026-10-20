@@ -134,8 +134,14 @@ internal object LyricsLayoutCalculator {
         for (line in lines) {
             val isInterlude = line.isInterlude
             val isBg = line.isBackground
-            val fontSize = if (isBg) bgFontSize else baseFontSize
+            // Translation gloss reads as a smaller secondary line (0.58× base), below even background vocals.
+            val fontSize = when {
+                line.isTranslation -> baseFontSize * 0.58f
+                isBg -> bgFontSize
+                else -> baseFontSize
+            }
             val fontWeight = when {
+                line.isTranslation -> FontWeight.Normal
                 lyricsType == LyricsType.Static -> FontWeight.Medium
                 isBg -> FontWeight.SemiBold
                 else -> FontWeight.Bold

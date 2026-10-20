@@ -40,9 +40,13 @@ object JapaneseRomanizer : Romanizer {
         synchronized(this) {
             tk?.let { return it }
             return try {
-                FileDictionaryBuilder(dir).build().also { tk = it }
+                FileDictionaryBuilder(dir).build().also {
+                    tk = it
+                    android.util.Log.i("AMtr", "kuromoji tokenizer loaded from $dir")
+                }
             } catch (t: Throwable) {
                 failed = true
+                android.util.Log.e("AMtr", "kuromoji tokenizer load FAILED: ${t.message}", t)
                 null
             }
         }

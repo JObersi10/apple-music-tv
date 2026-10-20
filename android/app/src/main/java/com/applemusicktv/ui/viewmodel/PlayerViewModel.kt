@@ -2270,12 +2270,20 @@ class PlayerViewModel @Inject constructor(
         if (id != null) fetchTranslation(id)
     }
 
-    /** Cycle the translate target language through [TRANSLATE_LANGS] (Settings stepper). */
+    /** Cycle the translate control through Off → each target language → … (single Settings stepper).
+     *  Index 0 is Off (translation disabled); 1..N are the languages. */
     fun stepTranslateLang(dir: Int) {
         val codes = TRANSLATE_LANGS.map { it.first }
-        val cur = codes.indexOf(_state.value.translateLang).coerceAtLeast(0)
-        val next = ((cur + dir) % codes.size + codes.size) % codes.size
-        setTranslateLang(codes[next])
+        val size = codes.size + 1   // +1 for the leading "Off"
+        val cur = if (!_state.value.translateLyrics) 0 else codes.indexOf(_state.value.translateLang).coerceAtLeast(0) + 1
+        val next = ((cur + dir) % size + size) % size
+        if (next == 0) {
+            // Off
+            _state.update { it.copy(translateLyrics = false, lyricsTranslation = emptyList()) }
+            prefs.edit { putBoolean("translate_lyrics", false) }
+        } else {
+            setTranslateLang(codes[next - 1])   // turns translation on + fetches
+        }
     }
 
     /** Toggle the Now Playing lyrics translation (··· menu). Persisted so it stays on across songs. */
@@ -2299,8 +2307,17 @@ class PlayerViewModel @Inject constructor(
         val lines = _state.value.lyrics.map { it.text }
         if (lines.isEmpty()) return
         translateJob = viewModelScope.launch {
-            val translated = repo.translateLinesForSong(songId, lines, translateLang)
-            android.util.Log.i("AMtr", "translate lang=$translateLang in=${lines.size} out=${translated.size} sample='${translated.firstOrNull()?.take(30)}'")
+            // Retry a few times with backoff — Fire TV DNS flakes (translate.googleapis.com / mzstatic
+            // fail to resolve) and a single attempt then shows no gloss until the next song change.
+            var translated: List<String> = emptyList()
+            var attempt = 0
+            while (attempt < 4 && _state.value.currentSong?.id == songId && _state.value.translateLyrics) {
+                translated = repo.translateLinesForSong(songId, lines, translateLang)
+                if (translated.isNotEmpty()) break
+                attempt++
+                kotlinx.coroutines.delay(1500L * attempt)
+            }
+            android.util.Log.i("AMtr", "translate lang=$translateLang in=${lines.size} out=${translated.size} tries=${attempt + 1} sample='${translated.firstOrNull()?.take(30)}'")
             webServer.addLog("TR", "translate lang=$translateLang in=${lines.size} out=${translated.size}")
             if (translated.isNotEmpty() && _state.value.currentSong?.id == songId && _state.value.translateLyrics)
                 _state.update { it.copy(lyricsTranslation = translated) }

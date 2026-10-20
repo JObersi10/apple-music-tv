@@ -171,16 +171,18 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleLyricsCredits() },
             )
             Stepper(
-                label = "Translate language",
-                value = com.applemusicktv.ui.viewmodel.TRANSLATE_LANGS
-                    .firstOrNull { it.first == pstate.translateLang }?.second ?: pstate.translateLang,
-                sub = "Target language for “Translate Lyrics” (in the Now Playing ··· menu)",
+                label = "Translate lyrics",
+                value = if (!pstate.translateLyrics) "Off"
+                    else com.applemusicktv.ui.viewmodel.TRANSLATE_LANGS
+                        .firstOrNull { it.first == pstate.translateLang }?.second ?: pstate.translateLang,
+                sub = if (!pstate.translateLyrics) "Off — no translation gloss under the lyrics"
+                      else "Showing a gloss translated into this language",
                 onDec = { playerVm.stepTranslateLang(-1) },
                 onInc = { playerVm.stepTranslateLang(1) },
             )
-            Toggle(
-                label = "Translate non-Latin only", on = pstate.translateNonLatinOnly,
-                sub = if (pstate.translateNonLatinOnly) "Only gloss Japanese / Chinese / Korean / … lines"
+            if (pstate.translateLyrics) Toggle(
+                label = "   ↳ Only non-Latin lines", on = pstate.translateNonLatinOnly,
+                sub = if (pstate.translateNonLatinOnly) "Gloss only Japanese / Chinese / Korean / … lines"
                       else "Gloss every foreign line (skips lines already in your language)",
                 onToggle = { playerVm.toggleTranslateNonLatin() },
             )

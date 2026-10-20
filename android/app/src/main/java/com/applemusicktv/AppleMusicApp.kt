@@ -38,6 +38,13 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
             .allowRgb565(true)
             .respectCacheHeaders(false)
             .crossfade(false)
+            // Retry artwork fetches through DNS/timeout blips (Fire TV DNS flakes in bursts), so a cover
+            // doesn't stay blank after one failed resolve.
+            .okHttpClient {
+                okhttp3.OkHttpClient.Builder()
+                    .addInterceptor(com.applemusicktv.data.RetryInterceptor(maxRetries = 3))
+                    .build()
+            }
             .build()
 
     @Inject lateinit var webServer: InAppWebServer
