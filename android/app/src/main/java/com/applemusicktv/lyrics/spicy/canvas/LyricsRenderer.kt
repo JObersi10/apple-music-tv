@@ -246,12 +246,26 @@ private fun DrawScope.drawInactiveText(
     suppressBlur: Boolean,
     cssPx: Float,
 ) {
-    drawText(
-        textLayoutResult = layoutResult,
-        color = Color.Transparent,
-        shadow = inactiveShadow(plan, suppressBlur, cssPx),
-        topLeft = Offset(xPos, yPos),
-    )
+    val blur = if (suppressBlur) 0f else plan.blurRadius * cssPx
+    if (blur <= 0.5f) {
+        // No distance blur (a line that JUST went inactive is at distance 0 → blur 0, or blur is off).
+        // Draw the text SOLID at its dim alpha. The blurred path below draws a TRANSPARENT glyph plus a
+        // shadow; with a ~0 blur radius that shadow renders nothing, so the line vanished for ~1 frame at
+        // the active→inactive handoff (the "one-frame flash"). Solid draw is visually identical where the
+        // 0-blur shadow did show, and fixes the frame where it didn't.
+        drawText(
+            textLayoutResult = layoutResult,
+            color = Color.White.copy(alpha = plan.alpha),
+            topLeft = Offset(xPos, yPos),
+        )
+    } else {
+        drawText(
+            textLayoutResult = layoutResult,
+            color = Color.Transparent,
+            shadow = Shadow(color = Color.White.copy(alpha = plan.alpha), blurRadius = blur),
+            topLeft = Offset(xPos, yPos),
+        )
+    }
 }
 
 internal fun DrawScope.drawInterludeGroup(
