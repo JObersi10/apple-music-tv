@@ -1059,10 +1059,15 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
         // Apple's motion-art master offers variants up to ~6 Mbps 1080p HEVC. That's absurd for a
         // small square loop and it choked this MediaTek Fire TV (sustained 4-6 Mbps HEVC → visibly
         // choppy). Cap the ladder to a small, low-bitrate rung — the cover is only ~300dp.
+        // 640p HEVC through a TextureView ran ~10fps on this MTK Fire TV (TextureView compositing is
+        // heavier than a SurfaceView overlay, and the breathe transform needs TextureView). The cover
+        // is only ~300dp, so decode the SMALLEST rung — ~360px quarters the pixel throughput vs 640 and
+        // restores smooth playback. setMaxVideoFrameRate caps any 60fps rung too.
         val selector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
             parameters = buildUponParameters()
-                .setMaxVideoSize(640, 640)
-                .setMaxVideoBitrate(1_500_000)
+                .setMaxVideoSize(384, 384)
+                .setMaxVideoBitrate(700_000)
+                .setMaxVideoFrameRate(30)
                 .build()
         }
         androidx.media3.exoplayer.ExoPlayer.Builder(context).setTrackSelector(selector).build().apply {

@@ -30,27 +30,35 @@ translateRoutes.post("/", async (c) => {
   });
 
   if (need.length > 0) {
-    // A rare unicode sentinel Google won't translate away, so we can split the batch back apart.
-    const SENT = "\n␞\n";
-    const joined = need.map((n) => n.text).join(SENT);
-    try {
-      const res = await axios.get("https://translate.googleapis.com/translate_a/single", {
-        params: { client: "gtx", sl: "auto", tl: target, dt: "t", q: joined },
-        timeout: 12000,
-        headers: { "User-Agent": "Mozilla/5.0" },
+    // Translate ONE LINE PER REQUEST (bounded parallelism). A previous version joined every line
+    // with a sentinel and split the single response back apart — but Google drops/merges the
+    // sentinel and re-segments on its own sentence boundaries, so the split misaligned and each
+    // line got a DIFFERENT line's translation ("translations wrong"). Per-line is unambiguous, and
+    // the cache keeps repeated lines (choruses, toggling on/off) cheap.
+    async function one(text: string): Promise<string> {
+      try {
+        const res = await axios.get("https://translate.googleapis.com/translate_a/single", {
+          params: { client: "gtx", sl: "auto", tl: target, dt: "t", q: text },
+          timeout: 12000,
+          headers: { "User-Agent": "Mozilla/5.0" },
+        });
+        // Response: [[[translatedChunk, originalChunk, ...], ...], ...]. One line may still come back
+        // as several chunks (long line) — concatenate them, which stays aligned to THIS line.
+        const t = (res.data?.[0] ?? []).map((seg: any[]) => seg?.[0] ?? "").join("").trim();
+        return t || text;
+      } catch (e: any) {
+        console.warn("[translate] failed:", e?.response?.status, e?.message);
+        return text; // never blank
+      }
+    }
+    const LIMIT = 8;
+    for (let start = 0; start < need.length; start += LIMIT) {
+      const batch = need.slice(start, start + LIMIT);
+      const results = await Promise.all(batch.map((n) => one(n.text)));
+      batch.forEach((n, k) => {
+        out[n.i] = results[k];
+        cache.set(`${target}\n${n.text}`, results[k]);
       });
-      // Response: [[[translatedChunk, originalChunk, ...], ...], ...]. Concatenate chunk[0] then split.
-      const chunks: string = (res.data?.[0] ?? []).map((seg: any[]) => seg?.[0] ?? "").join("");
-      const parts = chunks.split("␞").map((s) => s.trim());
-      need.forEach((n, k) => {
-        const t = (parts[k] ?? n.text).trim() || n.text;
-        out[n.i] = t;
-        cache.set(`${target}\n${n.text}`, t);
-      });
-    } catch (e: any) {
-      console.warn("[translate] failed:", e?.response?.status, e?.message);
-      // Fall back to originals for the uncached lines.
-      need.forEach((n) => { if (out[n.i] === undefined) out[n.i] = n.text; });
     }
   }
 

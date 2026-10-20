@@ -10,6 +10,7 @@ const stream = new Hono();
 
 const PYTHON = process.env.PYTHON_BIN || "python3";
 const DECRYPT_SCRIPT = path.join(import.meta.dir, "../../stream_decrypt.py");
+const MV_DECRYPT_SCRIPT = path.join(import.meta.dir, "../../mv_decrypt.py");
 
 const CACHE_DIR = path.join(os.tmpdir(), "am_stream_cache");
 fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -376,6 +377,84 @@ async function getStreamParams(songId: string, mut: string) {
 
   return { streamUrl: mediaUrl, adamId, keyUri };
 }
+
+// ── Music video (decrypt Widevine → plain MP4) ───────────────────────────────
+// On-device, MVs can only run through the SECURE Widevine video decoder, whose protected surface
+// plane bleeds across tabs on this Fire TV. Decrypting server-side and serving a plain progressive
+// MP4 lets the app use a NON-secure decoder, so the bleed is gone. mv_decrypt.py licenses + decrypts
+// the chosen video variant AND the audio rendition and ffmpeg-muxes them to one +faststart MP4.
+const mvInFlight = new Map<string, Promise<string>>();
+function mvCachePath(id: string, h: number) {
+  return path.join(CACHE_DIR, `mv_${id.replace(/[^a-zA-Z0-9._-]/g, "_")}_${h}.mp4`);
+}
+
+async function ensureMvDecrypted(mvId: string, mut: string, maxHeight: number): Promise<string> {
+  const out = mvCachePath(mvId, maxHeight);
+  if (fs.existsSync(out) && fs.statSync(out).size > 0) {
+    const now = new Date();
+    try { fs.utimesSync(out, now, now); } catch (_) {}
+    return out;
+  }
+  const key = `${mvId}_${maxHeight}`;
+  const existing = mvInFlight.get(key);
+  if (existing) return existing;
+
+  const p = (async () => {
+    await ensureBearer();
+    const tmpOut = out + ".tmp";
+    try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+    const args = JSON.stringify({ mvId, bearer: getBearerToken(), mut, outPath: tmpOut, maxHeight });
+    const t0 = Date.now();
+    console.log(`[mv] decrypt start ${mvId} ≤${maxHeight}p`);
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(PYTHON, [MV_DECRYPT_SCRIPT, args]);
+      let stderr = "";
+      child.stderr.on("data", (d) => { const s = d.toString(); stderr += s; process.stdout.write("[mv] " + s); });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code === 0) resolve();
+        else { try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {} reject(new Error(`mv decrypt exited ${code}: ${stderr.slice(-400)}`)); }
+      });
+    });
+    fs.renameSync(tmpOut, out);
+    console.log(`[mv] decrypt done ${mvId} ${(fs.statSync(out).size / 1_048_576).toFixed(1)}MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    evictCache();
+    return out;
+  })();
+  mvInFlight.set(key, p);
+  try { return await p; } finally { mvInFlight.delete(key); }
+}
+
+// GET /api/stream/mv/:id?h=1080 — decrypted music video as a seekable MP4 with Range support.
+stream.get("/mv/:id", async (c) => {
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  if (!mut) return c.json({ error: "Music-User-Token not set" }, 401);
+  const mvId = c.req.param("id");
+  const maxHeight = Math.min(2160, Math.max(240, parseInt(c.req.query("h") || "1080", 10) || 1080));
+  try {
+    const filePath = await ensureMvDecrypted(mvId, mut, maxHeight);
+    const size = fs.statSync(filePath).size;
+    const rangeHeader = c.req.header("range");
+    const common: Record<string, string> = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Cache-Control": "no-store" };
+    const file = Bun.file(filePath);
+    if (rangeHeader) {
+      const m = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+      let start = m && m[1] ? parseInt(m[1], 10) : 0;
+      let end = m && m[2] ? parseInt(m[2], 10) : size - 1;
+      if (isNaN(start) || start < 0) start = 0;
+      if (isNaN(end) || end >= size) end = size - 1;
+      if (start > end) return new Response(null, { status: 416, headers: { ...common, "Content-Range": `bytes */${size}` } });
+      return new Response(file.slice(start, end + 1), {
+        status: 206,
+        headers: { ...common, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": String(end - start + 1) },
+      });
+    }
+    return new Response(file, { status: 200, headers: { ...common, "Content-Length": String(size) } });
+  } catch (e: any) {
+    console.error(`[mv] ${mvId}:`, e.message);
+    return c.json({ error: e.message }, 500);
+  }
+});
 
 // GET /api/stream/cached/:songId — quick check: is this song already in the cache file?
 stream.get("/cached/:songId", (c) => {

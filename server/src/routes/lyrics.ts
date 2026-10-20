@@ -143,17 +143,27 @@ async function machineTranslate(lines: string[], to: string): Promise<string[]> 
   const out = [...lines];
   const need = lines.map((t, i) => ({ i, t })).filter((n) => n.t.trim());
   if (need.length === 0) return out;
-  const SENT = "\n␞\n";
-  try {
-    const res = await axios.get("https://translate.googleapis.com/translate_a/single", {
-      params: { client: "gtx", sl: "auto", tl: to, dt: "t", q: need.map((n) => n.t).join(SENT) },
-      timeout: 12000, headers: { "User-Agent": "Mozilla/5.0" },
-    });
-    const chunks: string = (res.data?.[0] ?? []).map((seg: any[]) => seg?.[0] ?? "").join("");
-    const parts = chunks.split("␞").map((s) => s.trim());
-    need.forEach((n, k) => { out[n.i] = (parts[k] ?? n.t).trim() || n.t; });
-  } catch (e: any) {
-    console.warn("[lyrics] machine translate failed:", e?.message);
+  // ONE LINE PER REQUEST (bounded parallel). The old sentinel-join + split misaligned because
+  // Google drops the sentinel and re-segments on its own boundaries, so every line got a different
+  // line's translation. Per-line is unambiguous.
+  async function one(text: string): Promise<string> {
+    try {
+      const res = await axios.get("https://translate.googleapis.com/translate_a/single", {
+        params: { client: "gtx", sl: "auto", tl: to, dt: "t", q: text },
+        timeout: 12000, headers: { "User-Agent": "Mozilla/5.0" },
+      });
+      const t = (res.data?.[0] ?? []).map((seg: any[]) => seg?.[0] ?? "").join("").trim();
+      return t || text;
+    } catch (e: any) {
+      console.warn("[lyrics] machine translate failed:", e?.message);
+      return text;
+    }
+  }
+  const LIMIT = 8;
+  for (let s = 0; s < need.length; s += LIMIT) {
+    const batch = need.slice(s, s + LIMIT);
+    const res = await Promise.all(batch.map((n) => one(n.t)));
+    batch.forEach((n, k) => { out[n.i] = res[k]; });
   }
   return out;
 }

@@ -83,7 +83,16 @@ class MusicVideoViewModel @Inject constructor(
     private val appleClient: AppleDirectClient,
     private val videoQueue: com.applemusicktv.media.VideoQueue,
     private val lyricsOffsetPrefs: com.applemusicktv.data.LyricsOffsetPreferences,
+    private val serverPrefs: com.applemusicktv.data.ServerPreferences,
+    private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
 ) : ViewModel() {
+
+    /** MV via proxy: the server decrypts the Widevine video+audio to a plain MP4, so the app plays it
+     *  with a NON-secure decoder — no protected surface plane, so the cross-tab library bleed is gone.
+     *  Only when the proxy is reachable and standalone is OFF; otherwise fall to the on-device secure
+     *  path. The proxy MP4 URL for the current video (null = on-device path). */
+    private var curProxyUrl: String? = null
+    private fun useProxyForMv(): Boolean = serverPrefs.serverReachable && !standalonePrefs.isEnabled()
 
     private val prefs = context.getSharedPreferences("mv_prefs", Context.MODE_PRIVATE)
 
@@ -249,6 +258,23 @@ class MusicVideoViewModel @Inject constructor(
                     _state.value = _state.value.copy(loading = false, error = "Sign-in required")
                     return@launch
                 }
+                // PROXY PATH: server decrypts to a plain MP4 → non-secure decoder → no bleed. Skip the
+                // on-device webPlayback/playlist/DRM work entirely; just point ExoPlayer at the proxy.
+                if (useProxyForMv()) {
+                    curMv = null; curBearer = bearer; curMut = mut; curAdamId = mvId
+                    val base = serverPrefs.effectiveBaseUrl().trimEnd('/')
+                    curProxyUrl = "$base/api/stream/mv/$mvId?h=${effHeight()}"
+                    _state.value = _state.value.copy(availableQualities = qualityTiers(MV_QUALITY_TIERS))
+                    buildAndPlayProxy(curProxyUrl!!, mut, seekMs = pendingSeekMs, playWhenReady = !userPaused)
+                    pendingSeekMs = 0
+                    launch {
+                        withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(mvId, bearer, mut) }?.let { d ->
+                            _state.value = _state.value.copy(info = d.info, artistId = d.artistId)
+                        }
+                    }
+                    return@launch
+                }
+                curProxyUrl = null
                 // Use the prefetched result if the queue warmed this id ahead of time.
                 val mv = prefetchCache.remove(mvId)
                     ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, effHeight()) }
@@ -364,6 +390,51 @@ class MusicVideoViewModel @Inject constructor(
                 exo.prepare()
                 exo.playWhenReady = playWhenReady
                 _state.value = _state.value.copy(paused = !playWhenReady)
+                attachListeners(exo)
+                player = exo
+                _playerFlow.value = exo
+                _state.value = _state.value.copy(loading = false)
+                startProgress()
+        }
+    }
+
+    /** Proxy MV path: a plain progressive MP4 from the server (already decrypted), no DRM, no secure
+     *  decoder. Renders into the TextureView like any video → no protected plane → no library bleed. */
+    @OptIn(UnstableApi::class)
+    private fun buildAndPlayProxy(url: String, mut: String, seekMs: Long, playWhenReady: Boolean) {
+        releasePlayer()
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(60_000).setReadTimeoutMs(60_000)
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(mapOf("X-Music-User-Token" to mut))
+        val dataFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
+        val source = androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(dataFactory)
+            .createMediaSource(MediaItem.fromUri(url))
+        val exo = ExoPlayer.Builder(context)
+            .setRenderersFactory(
+                com.applemusicktv.media.DelayVideoRenderersFactory(context) { avVideoDelayUs() })
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(15_000, 60_000, 1_500, 3_000)
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .setTargetBufferBytes(64 * 1024 * 1024)
+                    .build())
+            .build()
+        exo.setMediaSource(source)
+        if (seekMs > 0) exo.seekTo(seekMs)
+        exo.prepare()
+        exo.playWhenReady = playWhenReady
+        _state.value = _state.value.copy(paused = !playWhenReady)
+        attachListeners(exo)
+        player = exo
+        _playerFlow.value = exo
+        _state.value = _state.value.copy(loading = false)
+        startProgress()
+    }
+
+    /** Shared Player.Listener for both the on-device and proxy MV players. */
+    @OptIn(UnstableApi::class)
+    private fun attachListeners(exo: ExoPlayer) {
                 exo.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _state.value = _state.value.copy(playing = isPlaying)
@@ -459,11 +530,6 @@ class MusicVideoViewModel @Inject constructor(
                         )
                     }
                 })
-                player = exo
-                _playerFlow.value = exo
-                _state.value = _state.value.copy(loading = false)
-                startProgress()
-        }
     }
 
     private fun startProgress() {
@@ -631,6 +697,12 @@ class MusicVideoViewModel @Inject constructor(
     fun resumeVideo() {
         if (!hardStopped) return
         hardStopped = false
+        val proxy = curProxyUrl
+        if (proxy != null) {
+            Log.i("AMMV", "resumeVideo (proxy): rebuild at ${pendingSeekMs}ms")
+            buildAndPlayProxy(proxy, curMut, seekMs = pendingSeekMs, playWhenReady = !userPaused); pendingSeekMs = 0
+            return
+        }
         val mv = curMv; val b = curBearer; val m = curMut
         if (mv != null && b != null && m != null) {
             Log.i("AMMV", "resumeVideo: rebuild at ${pendingSeekMs}ms")
