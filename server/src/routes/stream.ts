@@ -162,7 +162,40 @@ async function ensureDecrypted(songId: string, mut: string, background = false):
     try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
     console.log(`[stream] decrypt start ${songId}`);
 
-    const { streamUrl, adamId, keyUri } = await getStreamParams(songId, mut);
+    const params = await getStreamParams(songId, mut);
+    const { streamUrl, adamId, keyUri } = params;
+    if ((params as any).direct) {
+      // Uploaded / iTunes-Match: the asset URL is the user's own unprotected file — download it straight
+      // to the cache (no decryption). ExoPlayer sniffs + Range-seeks it. Remux to a faststart MP4 (stream
+      // copy) so M4A with a trailing moov still seeks instantly; if copy can't container it (e.g. raw
+      // MP3), fall back to a plain download.
+      console.log(`[stream] direct download ${songId} ← ${streamUrl.substring(0, 60)}…`);
+      const ff = process.env.FFMPEG_BIN || "ffmpeg";
+      const remuxed = await new Promise<boolean>((resolve) => {
+        const child = spawn(ff, ["-y", "-i", streamUrl, "-map", "0:a:0", "-c:a", "copy",
+          "-movflags", "+faststart", "-f", "mp4", tmpOut]);
+        entry.child = child;
+        let stderr = "";
+        child.stderr.on("data", (d) => { stderr += d.toString(); });
+        child.on("error", () => resolve(false));
+        child.on("close", (code) => {
+          if (code === 0 && fs.existsSync(tmpOut) && fs.statSync(tmpOut).size > 0) resolve(true);
+          else { console.log(`[stream] direct remux copy failed (${code}), raw download`); resolve(false); }
+        });
+      });
+      if (!remuxed) {
+        try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+        const resp = await axios.get(streamUrl, { responseType: "stream", timeout: 60_000,
+          headers: { "User-Agent": "AppleMusicTV" } });
+        await new Promise<void>((resolve, reject) => {
+          const ws = fs.createWriteStream(tmpOut);
+          resp.data.pipe(ws);
+          ws.on("finish", () => resolve());
+          ws.on("error", reject);
+          resp.data.on("error", reject);
+        });
+      }
+    } else {
     const args = JSON.stringify({
       adamId, keyUri, streamUrl, bearer: getBearerToken(), mut, outPath: tmpOut,
     });
@@ -183,6 +216,7 @@ async function ensureDecrypted(songId: string, mut: string, background = false):
         }
       });
     });
+    }
     fs.renameSync(tmpOut, out);
     const sizeMb = (fs.statSync(out).size / 1_048_576).toFixed(1);
     console.log(`[stream] decrypt done ${songId} ${sizeMb} MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -314,6 +348,16 @@ async function getStreamParams(songId: string, mut: string) {
   }
 
   console.log(`[stream] asset flavor=${asset.flavor} url=${asset.URL.substring(0, 80)}…`);
+
+  // Uploaded / iTunes-Match songs (`is-itunes-stream`) hand back the user's OWN file directly — an
+  // unprotected audio blob (store-***.blobstore.apple.com), not an encrypted HLS stream. There's no
+  // flavor and no CENC key; the asset URL IS the playable file. Serve it directly (download + remux),
+  // skipping the whole decrypt pipeline. This is the fix for uploaded-song playback.
+  const isDirectUpload = Boolean(entry["is-itunes-stream"]) || asset.flavor == null;
+  if (isDirectUpload) {
+    console.log(`[stream] DIRECT upload (no CENC) ${songId} — serving the raw asset`);
+    return { streamUrl: asset.URL, adamId, keyUri: "", direct: true };
+  }
 
   const { url: mediaUrl, text: hlsText } = await resolveMediaPlaylist(asset.URL);
   console.log(`[stream] mediaUrl=${mediaUrl.substring(0, 80)}… hlsLen=${hlsText.length}`);
