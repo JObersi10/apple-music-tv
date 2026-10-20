@@ -197,6 +197,9 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
             .mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) }
         out.add(SLine(leadWords, ln.startMs, ln.endMs, role = LineRole.LEAD, groupId = i,
             oppositeAligned = ln.oppositeAligned)) // duet/alternate vocals → right-aligned
+        // The lead's translation goes DIRECTLY under the lead (not after the bg vocal), so the gloss
+        // always sits right beneath the line it translates. The bg vocal + its gloss drop below them.
+        transLine(i, ln.startMs, ln.endMs, ln.text, rightAligned = ln.oppositeAligned)?.let { out.add(it) }
 
         ln.background?.let { bg ->
             val bgEnd = if (bg.endMs > 0) bg.endMs else ln.endMs
@@ -205,7 +208,6 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
             out.add(SLine(bgWords, bg.startMs, bgEnd, role = LineRole.BACKGROUND, groupId = i, oppositeAligned = true))
             bgTransLine(i, bg.startMs, bgEnd, bg.text)?.let { out.add(it) }
         }
-        transLine(i, ln.startMs, ln.endMs, ln.text, rightAligned = ln.oppositeAligned)?.let { out.add(it) }
     }
     // Insert the 3-dot interlude placeholders for instrumental gaps (≥3s between lead lines). This was
     // never applied on V2, so pauses showed nothing. buildDisplayTimeline measures gaps on the LEAD

@@ -587,6 +587,10 @@ fun NowPlayingScreen(
                 // ~2×/sec while in sync; when the song changes this sampler cancels, holding the last
                 // value, so the old lyrics stay put as they fade out. New lyrics render live once adopted.
                 var frozenLyricMs by remember { mutableLongStateOf(0L) }
+                // After a skip the panel is held blank until this moment, so new lyrics never appear in
+                // the first ~0.5s while the track is still settling (the "hang"). Both the prefetched
+                // path and the cold adopt path wait for it.
+                var lyricsBlankUntil by remember { mutableLongStateOf(0L) }
                 // Stop sampling the moment a transition begins (song changed OR a crossfade started), so
                 // the frozen value is the pre-transition position.
                 val lyricsTransitioning = shownSongId != state.currentSong?.id || state.crossfadeActive
@@ -614,9 +618,16 @@ fun NowPlayingScreen(
                     shownSongId = state.currentSong?.id
                     shownLyr = emptyList(); shownTranslation = emptyList(); shownTranslationBg = emptyList()
                     shownCredits = emptyList(); shownOrigin = null; shownMaker = null; shownUploader = null
-                    // If the next song's lyrics are already prefetched (loadLyrics repopulated state.lyrics
-                    // in the same frame), fade them in now; otherwise the adopt effect fades them in when
-                    // the cold fetch lands.
+                    // Hold the panel BLANK for ~0.5s before bringing the new lyrics in. The new track is
+                    // still settling (position snapping to 0, first lines not yet "active") right after a
+                    // skip, so showing lyrics immediately looked like a hang. The deliberate blank beat
+                    // covers it and the entrance reads clean. The adopt effect (cold fetch) waits for the
+                    // same moment.
+                    lyricsBlankUntil = android.os.SystemClock.uptimeMillis() + 500L
+                    kotlinx.coroutines.delay(500)
+                    if (state.currentSong?.id != shownSongId) return@LaunchedEffect  // skipped again
+                    // If the next song's lyrics are already prefetched (loadLyrics repopulated state.lyrics),
+                    // fade them in now; otherwise the adopt effect fades them in when the cold fetch lands.
                     if (state.lyrics.isNotEmpty() && state.lyricsLoaded) {
                         shownLyr = state.lyrics; shownCredits = state.lyricsCredits
                         shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
@@ -629,6 +640,10 @@ fun NowPlayingScreen(
                     // if we were still faded out from the skip (the common case: new lyrics land after
                     // the fade-out finished).
                     if (state.currentSong?.id == shownSongId && state.lyrics.isNotEmpty()) {
+                        // Honor the post-skip blank window so a fast cold fetch doesn't pop in early.
+                        val wait = lyricsBlankUntil - android.os.SystemClock.uptimeMillis()
+                        if (wait > 0) kotlinx.coroutines.delay(wait)
+                        if (state.currentSong?.id != shownSongId) return@LaunchedEffect
                         shownLyr = state.lyrics; shownCredits = state.lyricsCredits
                         shownOrigin = state.lyricsOrigin; shownMaker = state.lyricsMaker
                         shownUploader = state.lyricsUploader; shownTranslation = state.lyricsTranslation; shownTranslationBg = state.lyricsTranslationBg
