@@ -7,6 +7,11 @@ back-and-forth of tuning something added in the same entry.
 ## feat/radio-artist-shazam-v2 — 2026-10-19
 
 ### Added
+- **Uploaded & iTunes-Match songs play now.** Tracks you added to your library
+  from your own files (that used to fail silently) stream correctly — the app
+  plays your actual uploaded file, both through the server and on-device.
+- **Japanese kanji now reads out in the pronunciation line** (not just kana),
+  via the downloadable pronunciation pack.
 - **Lyric translation on the main (Spicy) lyrics renderer.** A translated-meaning
   line now shows under each lyric, dim and small, in your chosen language — on the
   renderer the app actually uses (it was only on the old one before). It fades in
