@@ -388,17 +388,21 @@ class LyricsAnimator(
             val blur = if (!config.distanceBlurEnabled || suppressBlur || isActive) 0f
                 else blurAmounts.getOrElse(lineIdx) { 0f }
 
+            // A translation gloss rides the background-line layout but reads as a dim secondary line:
+            // knock its opacity down and never let it glow.
+            val transDim = if (line.isTranslation) 0.62f else 1f
             LineAnimState(
-                opacity = opacity,
+                opacity = opacity * transDim,
                 blur = blur,
                 scale = lineScale,
                 isActive = isActive,
                 wordStates = wordStates,
                 isBackground = line.isBackground,
                 isSongwriter = line.isSongwriter,
+                isTranslation = line.isTranslation,
                 lineGradientPercent = lineGradient,
                 lineGlow = lineGlow,
-                suppressShadows = !config.glowEnabled,
+                suppressShadows = !config.glowEnabled || line.isTranslation,
                 state = lineState,
             )
         }

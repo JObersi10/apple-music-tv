@@ -20,6 +20,9 @@ data class Line(
     val groupId: Int? = null,
     /** If true, the line should be aligned to the opposite side (e.g., right-aligned for harmonies). */
     val oppositeAligned: Boolean = false,
+    /** A translated-meaning gloss line, inserted under its lead line (rides the background-line layout
+     *  but styled as a dim gloss — see the renderer). Never an anchor for scroll/active-line math. */
+    val isTranslation: Boolean = false,
 ) {
     val isBackground: Boolean get() = role == LineRole.BACKGROUND
     val isInterlude: Boolean get() = role == LineRole.INTERLUDE

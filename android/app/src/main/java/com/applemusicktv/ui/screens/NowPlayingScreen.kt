@@ -645,6 +645,12 @@ fun NowPlayingScreen(
                         shownMaker = state.lyricsMaker; shownUploader = state.lyricsUploader
                     }
                 }
+                // Translation lands ~1s AFTER the lyrics (its own async update that doesn't touch
+                // state.lyrics), so the adopt effect never re-fires for it — shownTranslation stayed
+                // empty and the gloss never appeared. Sync it on its own key.
+                LaunchedEffect(state.lyricsTranslation) {
+                    if (state.currentSong?.id == shownSongId) shownTranslation = state.lyricsTranslation
+                }
                 // Crossfade: fade the outgoing song's lyrics out the instant the fade starts, so they
                 // don't keep scrolling through the first half before the midpoint display flip.
                 LaunchedEffect(state.crossfadeActive) {
@@ -683,6 +689,7 @@ fun NowPlayingScreen(
                                     dpadFocus = lyricsV2Focus,
                                     escapeFocus = playFocus,
                                     romanize = state.lyricsRomanize,
+                                    translations = shownTranslation,
                                 )
                             } else {
                                 LyricsPanel(
@@ -870,6 +877,7 @@ private fun FullScreenLyrics(
                     dpadFocus = lyricsV2Focus,
                     escapeFocus = playFocus,
                     romanize = romanize,
+                    translations = translations,
                 )
             } else {
                 LyricsPanel(

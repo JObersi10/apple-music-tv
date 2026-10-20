@@ -36,6 +36,8 @@ data class LineAnimState(
     val wordStates: List<WordAnimState>,
     val isBackground: Boolean,
     val isSongwriter: Boolean,
+    /** A translated-meaning gloss line — drawn dim, no glow, no karaoke wipe (steady). */
+    val isTranslation: Boolean = false,
     /** Line-mode only: the raw gradient position percent for the whole-line wipe (-20..100). */
     val lineGradientPercent: Float = -20f,
     /** Line-mode only: the whole-line glow spring value (shadow blur 4+8·glow, alpha glow·0.5). */

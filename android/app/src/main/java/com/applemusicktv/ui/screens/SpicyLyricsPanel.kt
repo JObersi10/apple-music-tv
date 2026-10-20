@@ -43,6 +43,7 @@ fun SpicyLyricsPanel(
     dpadFocus: androidx.compose.ui.focus.FocusRequester? = null,
     escapeFocus: androidx.compose.ui.focus.FocusRequester? = null,
     romanize: Boolean = false,
+    translations: List<String> = emptyList(),
 ) {
     // Pronunciation: romanize the lyrics off the main thread (dictionary-backed Japanese etc. is heavy),
     // keyed on the lyrics + the toggle. Null until computed / when off. Applied per-word below so the
@@ -55,7 +56,7 @@ fun SpicyLyricsPanel(
                 }
             }.getOrNull()
     }
-    val built = remember(lyrics, romanizedData) { buildSpicyDocument(lyrics, romanizedData) }
+    val built = remember(lyrics, romanizedData, translations) { buildSpicyDocument(lyrics, romanizedData, translations) }
     val romanizeActive = romanize && built.lines.any { l -> l.words.any { it.romanizedText != null } }
     // Footer under the lyrics: "Written by …", "Provided by: <origin>", the community note, and the
     // "Made by @…" / "Uploaded by @…" credits with avatars — exactly like Spicy Player.
@@ -128,16 +129,27 @@ private fun leadWordTexts(lyrics: List<LyricLine>): List<List<String>> {
 }
 
 /** Our LyricLine list → Spicy renderer lines. Lead + background become sibling lines sharing a groupId. */
-private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<String?>>? = null): SpicyDoc {
+private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<String?>>? = null, translations: List<String> = emptyList()): SpicyDoc {
     if (lyrics.isEmpty()) return SpicyDoc(emptyList(), LyricsType.Static)
     fun rom(line: Int, word: Int): String? = romanized?.getOrNull(line)?.getOrNull(word)
+    // A translation gloss for line i, only when it's real (non-blank, and not identical to the original —
+    // skips instrumentals / untranslatable lines / English→English no-ops). Built as a BACKGROUND-role
+    // sibling so it inherits the layout/scroll machinery, flagged isTranslation so the renderer dims it.
+    fun transLine(i: Int, startMs: Long, endMs: Long, original: String): SLine? {
+        val t = translations.getOrNull(i)?.trim()?.takeIf { it.isNotBlank() && !it.equals(original.trim(), ignoreCase = true) } ?: return null
+        return SLine(tokenize(t, startMs, endMs), startMs, endMs,
+            role = LineRole.BACKGROUND, groupId = i, oppositeAligned = false, isTranslation = true)
+    }
 
     // Unsynced (plain) — tokenize so the Static render path can wrap each line.
     if (lyrics.all { it.startMs < 0 }) {
         return SpicyDoc(
-            lyrics.mapIndexed { i, ln ->
-                SLine(tokenize(ln.text, 0L, 0L).mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) },
-                    0L, 0L, role = LineRole.LEAD)
+            buildList {
+                lyrics.forEachIndexed { i, ln ->
+                    add(SLine(tokenize(ln.text, 0L, 0L).mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) },
+                        0L, 0L, role = LineRole.LEAD))
+                    transLine(i, 0L, 0L, ln.text)?.let { add(it) }
+                }
             },
             LyricsType.Static,
         )
@@ -161,6 +173,7 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
                 else tokenize(bg.text, bg.startMs, bgEnd)
             out.add(SLine(bgWords, bg.startMs, bgEnd, role = LineRole.BACKGROUND, groupId = i, oppositeAligned = true))
         }
+        transLine(i, ln.startMs, ln.endMs, ln.text)?.let { out.add(it) }
     }
     return SpicyDoc(out, if (anyWords) LyricsType.Syllable else LyricsType.Line)
 }
