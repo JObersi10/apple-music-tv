@@ -7,6 +7,24 @@ back-and-forth of tuning something added in the same entry.
 ## feat/radio-artist-shazam-v2 — 2026-10-19
 
 ### Added
+- **Lyric translation on the main (Spicy) lyrics renderer.** A translated-meaning
+  line now shows under each lyric, dim and small, in your chosen language — on the
+  renderer the app actually uses (it was only on the old one before). It fades in
+  when it loads. Settings → **Translate lyrics** is now one simple Off → language
+  picker, with an optional **"Only non-Latin lines"** so you can gloss just
+  Japanese/Chinese/Korean/… and skip languages you already read. Translation also
+  falls back to Google when Apple's own translation is missing or left untranslated.
+- **Japanese pronunciation now reads kanji, via a downloadable pack.** Turning on
+  Lyrics pronunciation downloads a Japanese dictionary (~13MB, once) so kanji get
+  proper romaji — not just kana. The dictionary isn't shipped inside the app, so
+  the app stays small; it's fetched on first use.
+- **Unsynced lyrics scroll in time with the song.** Lyrics that have no per-line
+  timing now glide from top to bottom as the song plays, instead of sitting still.
+- **Home refreshes itself** every 20 seconds, so it recovers on its own after a
+  network blip without you pressing refresh.
+- **App installs on phones/tablets** too (for testing), not just TV.
+- **Community translations.** The app's own text can now be translated by adding a
+  language file — see docs/CONTRIBUTING-i18n.md (Dutch example included).
 - **Volume Leveling, rewritten (Settings).** Now a single, constant per-track
   gain (ReplayGain-style: measure a track once, then play every later listen at
   the right level from the first second). No more ramping or drifting mid-song.
@@ -24,6 +42,13 @@ back-and-forth of tuning something added in the same entry.
 - **"No Lyrics Found" auto-hides** after 10 seconds instead of sitting there.
 
 ### Fixed
+- **One-frame lyric flash** when a line finished — it no longer blinks out for a
+  frame as it hands off to the faded state.
+- **Prev song's lyrics no longer hang** ~half a second on skip — when the next
+  song's lyrics are already prefetched they swap in almost instantly.
+- **Artwork and translations recover through network blips** — they now retry
+  instead of staying blank after a failed connection.
+- **"Provided by" credit** no longer shows when Lyrics credits are turned off.
 - **Motion-cover drift.** The animated album art is now a TextureView, so it
   grows and drifts *with* the cover during the idle "breathe" instead of sliding
   off on its own.
