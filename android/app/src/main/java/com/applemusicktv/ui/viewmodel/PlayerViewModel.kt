@@ -1723,8 +1723,15 @@ class PlayerViewModel @Inject constructor(
                 is androidx.media3.extractor.metadata.id3.UrlLinkFrame ->
                     if (e.id == "WXXX") { if (art == null || e.url.contains("1400")) art = e.url }
                 is androidx.media3.extractor.metadata.id3.PrivFrame ->
-                    if (e.owner == "com.apple.radio.adamid")
-                        adamId = String(e.privateData, Charsets.US_ASCII).filter { it.isDigit() }.ifEmpty { null }
+                    if (e.owner == "com.apple.radio.adamid") {
+                        // The PRIV blob is NOT a single clean id — filtering ALL digits concatenated every
+                        // id in the frame into one 600-char mega-number, which became currentSong.id and
+                        // made Apple 500 on add-to-playlist ("Unable to update tracks"). Take only the FIRST
+                        // run of digits, and accept it only at a plausible catalog-id length (≤12); anything
+                        // longer is a multi-id blob we can't split, so leave the id untouched.
+                        val firstRun = Regex("\\d+").find(String(e.privateData, Charsets.US_ASCII))?.value
+                        adamId = firstRun?.takeIf { it.length in 6..12 }
+                    }
             }
         }
         if (title == null && artist == null) return   // a jingle/ping has no track frames
