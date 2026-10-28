@@ -337,6 +337,11 @@ internal object LyricsLayoutCalculator {
             var currentRowY = 0f
             var maxRowWidth = 0f
             val explicitRowHeight = metrics.lineHeightPx(fontSize.value)
+            // A wrapped line's continuation rows used to stack at exactly the line height, so a
+            // held/slow word that swells (scale + lift) on the upper row clipped into the row below.
+            // Give each wrapped row a slice of the inter-line gap so a continuation reads as its own
+            // separate line with room for the swell — not for interludes/translation glosses.
+            val wrappedRowGap = if (isInterlude || line.isTranslation) 0f else metrics.lineGapPx * 0.35f
 
             for (b in 0 until lineBreaks.size - 1) {
                 val startIdx = lineBreaks[b]
@@ -367,7 +372,7 @@ internal object LyricsLayoutCalculator {
                 allRows.add(rowX to rowPieces)
                 maxRowWidth = maxOf(maxRowWidth, rowX)
                 if (b < lineBreaks.size - 2) {
-                    currentRowY += explicitRowHeight
+                    currentRowY += explicitRowHeight + wrappedRowGap
                 }
             }
             
