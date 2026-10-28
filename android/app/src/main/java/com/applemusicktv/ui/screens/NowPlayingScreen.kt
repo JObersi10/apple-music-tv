@@ -1065,17 +1065,15 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
     var ready by remember(url) { mutableStateOf(false) }
 
     val exo = remember(url) {
-        // Apple's motion-art master offers variants up to ~6 Mbps 1080p HEVC. That's absurd for a
-        // small square loop and it choked this MediaTek Fire TV (sustained 4-6 Mbps HEVC → visibly
-        // choppy). Cap the ladder to a small, low-bitrate rung — the cover is only ~300dp.
-        // 640p HEVC through a TextureView ran ~10fps on this MTK Fire TV (TextureView compositing is
-        // heavier than a SurfaceView overlay, and the breathe transform needs TextureView). The cover
-        // is only ~300dp, so decode the SMALLEST rung — ~360px quarters the pixel throughput vs 640 and
-        // restores smooth playback. setMaxVideoFrameRate caps any 60fps rung too.
+        // Now rendered to a SurfaceView (hardware overlay plane — nearly free on the GPU), so we can
+        // afford a proper rung again. TextureView had to GPU-composite every frame and ran ~7fps here,
+        // and the 384p cap that tried to rescue it looked bad. 720p/≤2.5Mbps on a SurfaceView decodes
+        // and composites smoothly. (The trade-off — the video no longer follows the idle "breathe" — is
+        // handled by fading it out as idle rises; the static cover does the breathing. Proven path.)
         val selector = androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context).apply {
             parameters = buildUponParameters()
-                .setMaxVideoSize(384, 384)
-                .setMaxVideoBitrate(700_000)
+                .setMaxVideoSize(720, 720)
+                .setMaxVideoBitrate(2_500_000)
                 .setMaxVideoFrameRate(30)
                 .build()
         }
@@ -1117,33 +1115,31 @@ internal fun MotionCover(url: String, idle: Float = 0f, modifier: Modifier = Mod
         }
     }
 
-    val alpha by animateFloatAsState(
+    // Ready-fade (first-frame reveal) × (1 - idle): the video fades OUT as the cover breathes into idle,
+    // leaving the static cover (which breathes with the Column) on screen. This decouples the video from
+    // the breathe transform — a SurfaceView can't follow a Compose graphicsLayer, but it doesn't need to,
+    // because it's hidden exactly while the breathe is happening. Production-proven on weak hardware.
+    val readyFade by animateFloatAsState(
         if (ready) 1f else 0f,
         tween(550, easing = androidx.compose.animation.core.FastOutSlowInEasing),
         label = "motionFade",
     )
+    val effAlpha = (readyFade * (1f - idle)).coerceIn(0f, 1f)
 
-    // PlayerView → TEXTURE_VIEW: a TextureView draws INSIDE the Compose/view hierarchy, so it is
-    // transformed by a graphicsLayer on any ancestor — unlike a SurfaceView, which owns a separate
-    // hardware overlay plane that ignores Compose transforms. That overlay plane was the whole reason
-    // the motion video couldn't follow the idle breathe (grow + drift) and had to be faded out while
-    // the static cover did the breathing. With a TextureView the video scales/translates exactly with
-    // the cover, so there is nothing to drift and no fade-out hack. The art is capped to 640px/1.5Mbps
-    // (above), so compositing it through the GPU is cheap enough here; the black shutter + the ready
-    // alpha still hide the first-frame handoff.
-    // Raw TextureView + exo.setVideoTextureView: PlayerView only honours surface_type from XML, so a
-    // bare TextureView is the clean programmatic way to force texture (hierarchy-drawn) rendering.
-    // Both the cover box and Apple's motion art are square, so filling the box = no distortion.
+    // SurfaceView renders on its own hardware overlay plane — nearly free on the GPU (TextureView had to
+    // composite every frame → ~7fps here). setZOrderMediaOverlay keeps it above the window background but
+    // below other views, and setAlpha fades the plane itself. The static cover Image sits UNDER it and
+    // breathes; as effAlpha → 0 on idle the video reveals that breathing cover.
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
-            android.view.TextureView(ctx).apply { exo.setVideoTextureView(this) }
+            android.view.SurfaceView(ctx).apply {
+                setZOrderMediaOverlay(true)
+                exo.setVideoSurfaceView(this)
+                alpha = effAlpha
+            }
         },
-        update = { view -> exo.setVideoTextureView(view) },
-        // alpha = the ready-fade. scale 1.02 = a tiny overscan so the video bleeds a hair past the box
-        // edges — kills the 1px black hairline left/right from subpixel rounding of the stretched frame.
-        // The parent cover Box clips the overflow. The breathe (scale + drift) comes from the Column's
-        // graphicsLayer above, which — unlike with a SurfaceView — now actually reaches this TextureView.
-        modifier = modifier.graphicsLayer { this.alpha = alpha; scaleX = 1.02f; scaleY = 1.02f },
+        update = { view -> exo.setVideoSurfaceView(view); view.alpha = effAlpha },
+        modifier = modifier,
     )
 }
 
