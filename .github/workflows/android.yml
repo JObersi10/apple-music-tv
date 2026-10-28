@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'feat/**', 'feature/**' ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
@@ -53,19 +53,26 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+      # Build timestamp shown in the dev-release body, so you can tell at a glance when
+      # the rolling build was last refreshed.
+      - name: Compute build metadata
+        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/')
+        run: echo "BUILD_DATE=$(date -u '+%Y-%m-%d %H:%M UTC')" >> "$GITHUB_ENV"
+
       # Delete the previous dev release + tag first, so the re-created one gets a fresh
       # creation date and sorts to the TOP of the Releases list (GitHub orders by created_at;
       # an updated-in-place release keeps its old date and sinks below newer tags).
       - name: Remove old dev release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/')
         run: gh release delete dev --yes --cleanup-tag || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Publish a rolling "dev" release on every push to main.
+      # Publish a rolling "dev" release on every branch push (and manual run) — not on PRs
+      # and not on version tags (those get the stable release below).
       # Anyone with the repo URL can download the APK — no login required.
       - name: Publish dev release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: dev
@@ -74,7 +81,9 @@ jobs:
           # (UpdateChecker.parseRelease) to tell this rolling build apart from the
           # installed one. Without it, Beta never offers CI builds.
           body: |
-            Auto-built from `main`. Sideload: `adb install -r app-debug.apk`
+            Auto-built from `${{ github.ref_name }}` · ${{ env.BUILD_DATE }}
+
+            Sideload: `adb install -r app-debug.apk`
 
             commit ${{ github.sha }}
           prerelease: true
