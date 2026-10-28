@@ -149,12 +149,6 @@ fun DevMenuScreen(
           }
 
           if (cat == "Lyrics") {
-            Toggle(
-                label = "Lyrics Renderer v2", on = pstate.lyricsRendererV2,
-                sub = if (pstate.lyricsRendererV2) "Spicy Player engine — spring motion, gradient wipe, credits"
-                      else "Built-in renderer",
-                onToggle = { playerVm.toggleLyricsRendererV2() },
-            )
             Stepper(
                 label = "Lyrics size",
                 value = lyricsScaleLabel(pstate.lyricsScale),

@@ -139,8 +139,6 @@ data class PlayerState(
     val showLyricsCredits: Boolean        = true,
     /** Show on-device pronunciation (romaji / pinyin / …) under non-Latin lyrics (v2 renderer). */
     val lyricsRomanize:   Boolean         = false,
-    /** Use the ported Spicy Player Canvas lyrics renderer instead of the built-in Compose one. */
-    val lyricsRendererV2: Boolean         = true,   // V2 (Spicy canvas) is the renderer now; V1 retired
     val isFullStream:     Boolean         = false,
     val motionUrl:        String?         = null,
     /** A/V-sync EXTRA the user dials on top of everything. 0 normally; the only value shown in the UI. */
@@ -1133,7 +1131,7 @@ class PlayerViewModel @Inject constructor(
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), lyricsRendererV2 = prefs.getBoolean("lyrics_renderer_v2", true), progressMs = posMs) }
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {
@@ -2422,13 +2420,6 @@ class PlayerViewModel @Inject constructor(
         prefs.edit { putBoolean("translate_lyrics", on) }
         val id = _state.value.currentSong?.id
         if (on && id != null) fetchTranslation(id) else _state.update { it.copy(lyricsTranslation = emptyList(), lyricsTranslationBg = emptyList()) }
-    }
-
-    /** Toggle the Spicy Player Canvas lyrics renderer (··· menu). Persisted across songs/sessions. */
-    fun toggleLyricsRendererV2() {
-        val on = !_state.value.lyricsRendererV2
-        _state.update { it.copy(lyricsRendererV2 = on) }
-        prefs.edit { putBoolean("lyrics_renderer_v2", on) }
     }
 
     private fun fetchTranslation(songId: String) {

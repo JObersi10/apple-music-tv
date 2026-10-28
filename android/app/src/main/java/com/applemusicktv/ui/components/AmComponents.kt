@@ -216,7 +216,6 @@ fun <T> SongGridRow(
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SongCell(title: String, subtitle: String, artUrl: String?, onClick: () -> Unit, onLongClick: () -> Unit = {}) {

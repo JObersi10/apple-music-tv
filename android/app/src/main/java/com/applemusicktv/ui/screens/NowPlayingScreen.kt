@@ -201,9 +201,9 @@ fun NowPlayingScreen(
         }
 
         val playFocus = remember { FocusRequester() }
-        // Lyrics Renderer v2 (Canvas) is one focusable surface, not a focusable-per-line list — this
-        // requester lets the v2 panel receive D-pad focus so up/down can select a line and OK can seek.
-        val lyricsV2Focus = remember { FocusRequester() }
+        // The lyrics panel (Canvas) is one focusable surface, not a focusable-per-line list — this
+        // requester lets it receive D-pad focus so up/down can select a line and OK can seek.
+        val lyricsFocus = remember { FocusRequester() }
         // When the chrome hides for idle, park focus back on the play/pause button (after the fade), so
         // the moment you wake it the centre control is the highlighted one — not wherever you'd left it.
         LaunchedEffect(chromeVisible) {
@@ -258,7 +258,6 @@ fun NowPlayingScreen(
                 lyricsScale = state.lyricsScale,
                 richMotion = !state.lowPowerMode && !state.reduceMotion,
                 credits = if (state.showLyricsCredits) state.lyricsCredits else emptyList(),
-                rendererV2 = state.lyricsRendererV2,
                 origin = if (state.showLyricsCredits) state.lyricsOrigin else null,
                 maker = if (state.showLyricsCredits) state.lyricsMaker else null,
                 uploader = if (state.showLyricsCredits) state.lyricsUploader else null,
@@ -690,41 +689,27 @@ fun NowPlayingScreen(
                     } else if (shownLyr.isNotEmpty()) {
                         Box(Modifier.fillMaxSize().graphicsLayer { alpha = lyricFade.value }) {
             val creditsOn = state.showLyricsCredits
-                            if (state.lyricsRendererV2) {
-                                SpicyLyricsPanel(
-                                    lyrics = shownLyr,
-                                    credits = if (creditsOn) shownCredits else emptyList(),
-                                    progressState = lyricProgress,
-                                    offsetMs = state.avLyricsMs,
-                                    onSeek = { ms -> playerVm.seekToMs(ms) },
-                                    fontScale = state.lyricsScale,
-                                    isPlaying = state.isPlaying,
-                                    richMotion = !state.lowPowerMode && !state.reduceMotion,
-                                    origin = if (creditsOn) shownOrigin else null,
-                                    maker = if (creditsOn) shownMaker else null,
-                                    uploader = if (creditsOn) shownUploader else null,
-                                    dpadFocus = lyricsV2Focus,
-                                    escapeFocus = playFocus,
-                                    romanize = state.lyricsRomanize,
-                                    translations = shownTranslation,
-                                    translationsBg = shownTranslationBg,
-                                    translateNonLatinOnly = state.translateNonLatinOnly,
-                                    romanizeReloadKey = state.jaPackDownloading,
-                                    durationMs = state.currentSong?.durationMs ?: 0L,
-                                )
-                            } else {
-                                LyricsPanel(
-                                    lyrics = shownLyr,
-                                    progressState = lyricProgress,
-                                    offsetMs = state.avLyricsMs,
-                                    onSeek = { ms -> playerVm.seekToMs(ms) },
-                                    playFocus = playFocus,
-                                    fontScale = state.lyricsScale,
-                                    translations = shownTranslation,
-                                    richMotion = !state.lowPowerMode && !state.reduceMotion,
-                                    credits = if (creditsOn) shownCredits else emptyList(),
-                                )
-                            }
+                            SpicyLyricsPanel(
+                                lyrics = shownLyr,
+                                credits = if (creditsOn) shownCredits else emptyList(),
+                                progressState = lyricProgress,
+                                offsetMs = state.avLyricsMs,
+                                onSeek = { ms -> playerVm.seekToMs(ms) },
+                                fontScale = state.lyricsScale,
+                                isPlaying = state.isPlaying,
+                                richMotion = !state.lowPowerMode && !state.reduceMotion,
+                                origin = if (creditsOn) shownOrigin else null,
+                                maker = if (creditsOn) shownMaker else null,
+                                uploader = if (creditsOn) shownUploader else null,
+                                dpadFocus = lyricsFocus,
+                                escapeFocus = playFocus,
+                                romanize = state.lyricsRomanize,
+                                translations = shownTranslation,
+                                translationsBg = shownTranslationBg,
+                                translateNonLatinOnly = state.translateNonLatinOnly,
+                                romanizeReloadKey = state.jaPackDownloading,
+                                durationMs = state.currentSong?.durationMs ?: 0L,
+                            )
                         }
                     } else if (state.lyricsLoaded) {
                         // Lyrics view, fetch finished, and this song genuinely has none — say so in the
@@ -857,7 +842,6 @@ private fun FullScreenLyrics(
     lyricsScale: Float = 1f,
     richMotion: Boolean = true,
     credits: List<String> = emptyList(),
-    rendererV2: Boolean = false,
     origin: String? = null,
     maker: com.applemusicktv.data.network.LyricsCreditDto? = null,
     uploader: com.applemusicktv.data.network.LyricsCreditDto? = null,
@@ -868,7 +852,7 @@ private fun FullScreenLyrics(
     // as playFocus also makes RIGHT jump here and the 7s idle auto-return work, so the
     // lyrics don't get stranded scrolled-away after you fiddle with the D-pad.
     val playFocus = remember { FocusRequester() }
-    val lyricsV2Focus = remember { FocusRequester() }
+    val lyricsFocus = remember { FocusRequester() }
     // Retry a few frames: a single requestFocus() on first composition fires before the play button
     // is attached, so it silently failed and focus fell through to the nav bar.
     LaunchedEffect(Unit) {
@@ -890,41 +874,26 @@ private fun FullScreenLyrics(
         },
     ) {
         Column(Modifier.fillMaxSize().padding(start = 72.dp, end = 128.dp, top = 36.dp, bottom = 120.dp)) {
-            if (rendererV2) {
-                SpicyLyricsPanel(
-                    lyrics = lyrics,
-                    credits = credits,
-                    progressState = progressState,
-                    offsetMs = offsetMs,
-                    onSeek = onSeek,
-                    fontScale = 0.85f * lyricsScale,
-                    isPlaying = isPlaying,
-                    richMotion = richMotion,
-                    origin = origin,
-                    maker = maker,
-                    uploader = uploader,
-                    dpadFocus = lyricsV2Focus,
-                    escapeFocus = playFocus,
-                    romanize = romanize,
-                    translations = translations,
-                    translationsBg = translationsBg,
-                    translateNonLatinOnly = translateNonLatinOnly,
-                    durationMs = song?.durationMs ?: 0L,
-                )
-            } else {
-                LyricsPanel(
-                    lyrics = lyrics,
-                    progressState = progressState,
-                    offsetMs = offsetMs,
-                    onSeek = onSeek,
-                    playFocus = playFocus,
-                    fontScale = 0.85f * lyricsScale,
-                    autoReturnMs = 5_000L,
-                    translations = translations,
-                    richMotion = richMotion,
-                    credits = credits,
-                )
-            }
+            SpicyLyricsPanel(
+                lyrics = lyrics,
+                credits = credits,
+                progressState = progressState,
+                offsetMs = offsetMs,
+                onSeek = onSeek,
+                fontScale = 0.85f * lyricsScale,
+                isPlaying = isPlaying,
+                richMotion = richMotion,
+                origin = origin,
+                maker = maker,
+                uploader = uploader,
+                dpadFocus = lyricsFocus,
+                escapeFocus = playFocus,
+                romanize = romanize,
+                translations = translations,
+                translationsBg = translationsBg,
+                translateNonLatinOnly = translateNonLatinOnly,
+                durationMs = song?.durationMs ?: 0L,
+            )
         }
         // Now-playing chip, bottom-left — same placement as the screensaver.
         Row(
