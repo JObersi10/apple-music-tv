@@ -55,6 +55,26 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
+    // A committed, stable debug keystore so EVERY build — local and CI — is signed with the
+    // same key. Without it, Gradle auto-generates a throwaway ~/.android/debug.keystore per
+    // machine/CI-run, so each APK is signed differently and Android refuses to update in place
+    // ("App not installed" / the in-app updater fails). This is a DEBUG keystore: it uses
+    // Android's universal public password ("android") and cannot publish to Play — safe to commit.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     packaging {
         resources {
             // Kuromoji's IPADIC dictionary (~33MB of .bin) is NOT shipped in the APK — it's downloaded
