@@ -173,7 +173,11 @@ private fun ShelfV2(
 
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(section.title, modifier = Modifier.padding(start = 24.dp, end = 24.dp))
+        // Snap each card to the start edge when flung by touch (no effect on D-pad focus scrolling).
+        val rowState = androidx.compose.foundation.lazy.rememberLazyListState()
         LazyRow(
+            state = rowState,
+            flingBehavior = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(rowState),
             contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 0.dp, bottom = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(AmTokens.Space.md),
         ) {

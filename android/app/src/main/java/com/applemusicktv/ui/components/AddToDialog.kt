@@ -67,11 +67,11 @@ fun AddToDialog(playerVm: PlayerViewModel, song: Song, onDismiss: () -> Unit) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun AddRow(icon: Glyph, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2E2E30),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),

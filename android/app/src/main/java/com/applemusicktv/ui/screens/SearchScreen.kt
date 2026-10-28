@@ -112,11 +112,11 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     }
                 )
                 if (state.query.isNotEmpty()) {
-                    Surface(
+                    com.applemusicktv.ui.components.AmClickBox(
                         onClick = { vm.onQueryChange(""); runCatching { focusRequester.requestFocus() } },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF3A3A3C)),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                        shape = RoundedCornerShape(50),
+                        containerColor = Color.Transparent, focusedColor = Color(0xFF3A3A3C),
+                        focusedScale = 1.1f,
                     ) {
                         Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
                             com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.CLOSE, size = 13.dp, color = Color(0xFFAAAAAA))
@@ -130,12 +130,10 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Surface(
+                com.applemusicktv.ui.components.AmClickBox(
                     onClick = { editing = true },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF2A2A2C),
-                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    containerColor = Color(0xFF1C1C1E), focusedColor = Color(0xFF2A2A2C),
                     modifier = Modifier.weight(1f).height(40.dp),
                 ) {
                     Box(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
@@ -147,11 +145,11 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                     }
                 }
                 if (state.query.isNotEmpty()) {
-                    Surface(
+                    com.applemusicktv.ui.components.AmClickBox(
                         onClick = { vm.onQueryChange("") },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF3A3A3C)),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                        shape = RoundedCornerShape(50),
+                        containerColor = Color(0xFF1C1C1E), focusedColor = Color(0xFF3A3A3C),
+                        focusedScale = 1.1f,
                         modifier = Modifier.size(40.dp),
                     ) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -215,11 +213,11 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                             results.artists.firstOrNull()?.let { artist ->
                                 item(key = "top-ar-${artist.id}") {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(150.dp)) {
-                                        Surface(
+                                        com.applemusicktv.ui.components.AmClickBox(
                                             onClick = { onArtistClick(artist.id) },
-                                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                                            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
-                                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                                            shape = RoundedCornerShape(50),
+                                            containerColor = Color(0xFF2A2A2A), focusedColor = Color(0xFF3A3A3A),
+                                            focusedScale = 1.06f,
                                             modifier = Modifier.size(120.dp),
                                         ) {
                                             Box(Modifier.fillMaxSize()) {
@@ -272,11 +270,11 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier.width(96.dp),
                                     ) {
-                                        Surface(
+                                        com.applemusicktv.ui.components.AmClickBox(
                                             onClick = { onArtistClick(artist.id) },
-                                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                                            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2A), focusedContainerColor = Color(0xFF3A3A3A)),
-                                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+                                            shape = RoundedCornerShape(50),
+                                            containerColor = Color(0xFF2A2A2A), focusedColor = Color(0xFF3A3A3A),
+                                            focusedScale = 1.08f,
                                             modifier = Modifier.size(80.dp),
                                         ) {
                                             Box(Modifier.fillMaxSize()) {
@@ -310,15 +308,12 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                             ) {
                                 row.forEachIndexed { colIdx, song ->
                                     val flatIdx = rowIdx * 2 + colIdx
-                                    Surface(
+                                    com.applemusicktv.ui.components.AmClickBox(
                                         onClick = { playerVm.playAlbum(results.songs, flatIdx) },
                                         onLongClick = { menuSong = song; clickBlocked = true },
-                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-                                        colors = ClickableSurfaceDefaults.colors(
-                                            containerColor = Color.Transparent,
-                                            focusedContainerColor = Color(0xFF2A2A2A),
-                                        ),
-                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.01f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        containerColor = Color.Transparent,
+                                        focusedColor = Color(0xFF2A2A2A),
                                         modifier = Modifier.weight(1f),
                                     ) {
                                         Row(
@@ -381,14 +376,12 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Recent", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                                     Spacer(Modifier.width(12.dp))
-                                    Surface(
+                                    com.applemusicktv.ui.components.AmClickBox(
                                         onClick = { vm.clearRecents() },
-                                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
-                                        colors = ClickableSurfaceDefaults.colors(
-                                            containerColor = Color(0xFF1E1E1E),
-                                            focusedContainerColor = Color(0xFF3A3A3A),
-                                        ),
-                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                                        shape = RoundedCornerShape(14.dp),
+                                        containerColor = Color(0xFF1E1E1E),
+                                        focusedColor = Color(0xFF3A3A3A),
+                                        focusedScale = 1.05f,
                                     ) {
                                         Text("Clear", fontSize = 12.sp, color = Color(0xFFBBBBBB),
                                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp))
@@ -397,15 +390,13 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
                                 Spacer(Modifier.height(10.dp))
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 12.dp)) {
                                     items(recents, key = { it }) { term ->
-                                        Surface(
+                                        com.applemusicktv.ui.components.AmClickBox(
                                             onClick = { vm.runRecent(term) },
                                             onLongClick = { vm.removeRecent(term) },
-                                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
-                                            colors = ClickableSurfaceDefaults.colors(
-                                                containerColor = Color(0xFF2A2A2A),
-                                                focusedContainerColor = Color(0xFF3A3A3A),
-                                            ),
-                                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                                            shape = RoundedCornerShape(20.dp),
+                                            containerColor = Color(0xFF2A2A2A),
+                                            focusedColor = Color(0xFF3A3A3A),
+                                            focusedScale = 1.05f,
                                         ) {
                                             Text(term, fontSize = 13.sp, color = Color.White,
                                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
@@ -463,15 +454,12 @@ fun SearchScreen(playerVm: PlayerViewModel, onAlbumClick: (String) -> Unit = {},
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun ExploreLink(label: String, onClick: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF2E2E32)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.015f),
-        border = ClickableSurfaceDefaults.border(focusedBorder = Border(
-            BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)), shape = RoundedCornerShape(12.dp))),
+        shape = RoundedCornerShape(12.dp),
+        containerColor = Color(0xFF1C1C1E), focusedColor = Color(0xFF2E2E32),
+        focusedScale = 1.015f,
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -486,11 +474,11 @@ private fun ExploreLink(label: String, onClick: () -> Unit) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SearchContextItem(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2E2E30),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
@@ -507,11 +495,11 @@ private fun SearchContextItem(icon: String, label: String, onClick: () -> Unit, 
 @Composable
 private fun CuratorCard(cur: Curator, size: Int = 130, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(size.dp)) {
-        Surface(
+        com.applemusicktv.ui.components.AmClickBox(
             onClick = onClick,
-            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-            colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1E1E20), focusedContainerColor = Color(0xFF2E2E30)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+            shape = RoundedCornerShape(12.dp),
+            containerColor = Color(0xFF1E1E20), focusedColor = Color(0xFF2E2E30),
+            focusedScale = 1.06f,
             modifier = Modifier.size(size.dp),
         ) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -531,14 +519,11 @@ private fun CuratorCard(cur: Curator, size: Int = 130, onClick: () -> Unit) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun CategoryTile(name: String, artworkUrl: String?, onClick: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1C1C1E), focusedContainerColor = Color(0xFF1C1C1E)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        border = ClickableSurfaceDefaults.border(
-            focusedBorder = Border(BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(12.dp)),
-        ),
+        shape = RoundedCornerShape(12.dp),
+        containerColor = Color(0xFF1C1C1E), focusedColor = Color(0xFF1C1C1E),
+        focusedScale = 1.06f,
         modifier = Modifier.width(180.dp).height(110.dp),
     ) {
         Box(Modifier.fillMaxSize()) {

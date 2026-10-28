@@ -164,11 +164,11 @@ private fun AppleShelf(
                 items(section.videos.size) { idx ->
                     val v = section.videos[idx]
                     val art = (v.artworkUrl ?: "").replace("{w}", "480").replace("{h}", "270").replace("{f}", "jpg")
-                    Surface(
+                    com.applemusicktv.ui.components.AmClickBox(
                         onClick = { playerVm.playVideos(section.videos, idx) },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+                        shape = RoundedCornerShape(10.dp),
+                        focusedScale = 1.06f,
+                        containerColor = Color.Transparent, focusedColor = Color.Transparent,
                     ) {
                         Column(Modifier.width(230.dp)) {
                             Box(Modifier.width(230.dp).height(129.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1A1A1A))) {
@@ -217,12 +217,11 @@ private fun AppleShelf(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun StationRow(st: RadioStation, onClick: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF141416), focusedContainerColor = Color(0xFF232325)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.005f),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color(0xFF141416), focusedColor = Color(0xFF232325),
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Box(Modifier.size(38.dp).background(Color(0xFF2A2A2C), RoundedCornerShape(6.dp)), Alignment.Center) {
@@ -246,11 +245,11 @@ private fun StationRow(st: RadioStation, onClick: () -> Unit) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun Chip(label: String, onClick: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2C), focusedContainerColor = Color(0xFFFA233B)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        shape = RoundedCornerShape(50),
+        containerColor = Color(0xFF2A2A2C), focusedColor = Color(0xFFFA233B),
+        focusedScale = 1.06f,
     ) {
         Text(label, fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp))
     }
@@ -259,14 +258,12 @@ private fun Chip(label: String, onClick: () -> Unit) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SelChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) Color(0xFFFA233B) else Color(0xFF2A2A2C),
-            focusedContainerColor = if (selected) Color(0xFFE01F33) else Color(0xFF3A3A3C),
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        shape = RoundedCornerShape(50),
+        containerColor = if (selected) Color(0xFFFA233B) else Color(0xFF2A2A2C),
+        focusedColor = if (selected) Color(0xFFE01F33) else Color(0xFF3A3A3C),
+        focusedScale = 1.06f,
     ) {
         Text(label, fontSize = 12.sp, color = Color.White, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp))

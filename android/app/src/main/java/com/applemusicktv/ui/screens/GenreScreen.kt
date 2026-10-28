@@ -141,10 +141,10 @@ private fun VideoRow(section: GenreSection, playerVm: PlayerViewModel) {
         LazyRow(contentPadding = PaddingValues(start = 24.dp, end = 0.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(section.videos.size) { idx ->
                 val v = section.videos[idx]
-                Surface(
+                com.applemusicktv.ui.components.AmClickBox(
                     onClick = { playerVm.playAlbum(section.videos, idx) },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+                    shape = RoundedCornerShape(10.dp),
+                    containerColor = Color.Transparent, focusedColor = Color.Transparent,
                 ) {
                     Column(Modifier.width(240.dp)) {
                         Box(Modifier.width(240.dp).height(135.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF2A2A2A))) {

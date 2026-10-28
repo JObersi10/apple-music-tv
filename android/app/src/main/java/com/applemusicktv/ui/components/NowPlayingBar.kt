@@ -77,16 +77,13 @@ fun NowPlayingBar(playerVm: PlayerViewModel, modifier: Modifier = Modifier) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun TransportBtn(icon: String, onClick: () -> Unit, isPrimary: Boolean = false) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
         modifier = Modifier.size(if (isPrimary) 40.dp else 34.dp),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = if (isPrimary) Color(0xFFFA233B) else Color.Transparent,
-            focusedContainerColor = if (isPrimary) Color(0xFFE01F33) else Color(0xFF2A2A2A),
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
-        glow  = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color(0xFFFA233B).copy(alpha = 0.4f), 10.dp)),
+        shape    = RoundedCornerShape(50),
+        containerColor = if (isPrimary) Color(0xFFFA233B) else Color.Transparent,
+        focusedColor = if (isPrimary) Color(0xFFE01F33) else Color(0xFF2A2A2A),
+        focusedScale = 1.15f,
     ) {
         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
             Text(icon, fontSize = if (isPrimary) 14.sp else 12.sp, color = Color.White)

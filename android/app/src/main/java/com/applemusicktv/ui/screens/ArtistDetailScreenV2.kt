@@ -170,11 +170,11 @@ fun ArtistDetailScreenV2(
                 LazyRow(contentPadding = PaddingValues(start = 24.dp, top = 10.dp, end = 24.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     items(state.musicVideos.size) { i ->
                         val v = state.musicVideos[i]
-                        Surface(
+                        com.applemusicktv.ui.components.AmClickBox(
                             onClick = { playerVm.playAlbum(state.musicVideos, i) },
-                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                            colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                            shape = RoundedCornerShape(10.dp),
+                            containerColor = Color.Transparent, focusedColor = Color.Transparent,
+                            focusedScale = 1.06f,
                         ) {
                             Column(Modifier.width(250.dp).padding(bottom = 8.dp)) {
                                 Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(AmTokens.Color.Surface)) {
@@ -233,13 +233,12 @@ fun ArtistDetailScreenV2(
                 Row(Modifier.padding(start = 24.dp, end = 24.dp, top = 2.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     if (aboutBio != null) {
                         // Tap to open the full bio in a scrollable overlay (it's truncated to 8 lines here).
-                        Surface(
+                        com.applemusicktv.ui.components.AmClickBox(
                             onClick = { showAbout = true },
                             modifier = Modifier.weight(1f).heightIn(min = 130.dp),
-                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(AmTokens.Radius.Card)),
-                            colors = ClickableSurfaceDefaults.colors(
-                                containerColor = AmTokens.Color.SurfaceGlass, focusedContainerColor = AmTokens.Color.SurfaceGlassHi),
-                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.01f),
+                            shape = RoundedCornerShape(AmTokens.Radius.Card),
+                            containerColor = AmTokens.Color.SurfaceGlass, focusedColor = AmTokens.Color.SurfaceGlassHi,
+                            focusedScale = 1.01f,
                         ) {
                             Column(Modifier.padding(18.dp)) {
                                 Text(aboutBio, fontSize = 13.sp, color = AmTokens.Color.TextSecondary, lineHeight = 20.sp, maxLines = 8,
@@ -268,14 +267,11 @@ fun ArtistDetailScreenV2(
                         // Circle-only focus (scale the image + white ring, no boxy dark halo). Name sits
                         // below the circle in a wide column, 2 lines, centred — so it never clips mid-word.
                         Column(Modifier.width(120.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Surface(
+                            com.applemusicktv.ui.components.AmClickBox(
                                 onClick = { onArtistClick(a.id) },
-                                shape = ClickableSurfaceDefaults.shape(CircleShape),
-                                colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-                                border = ClickableSurfaceDefaults.border(
-                                    focusedBorder = androidx.tv.material3.Border(
-                                        androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.7f)), shape = CircleShape)),
+                                shape = CircleShape,
+                                containerColor = Color.Transparent, focusedColor = Color.Transparent,
+                                focusedScale = 1.08f,
                             ) {
                                 Box(Modifier.size(100.dp).clip(CircleShape).background(AmTokens.Color.Surface)) {
                                     if (a.artworkUrl != null) AsyncImage(
@@ -361,12 +357,11 @@ fun ArtistDetailScreenV2(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun ArtistMenuItem(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2C2C2E),
     ) {
         Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
     }
@@ -398,11 +393,11 @@ private fun AboutFact(label: String, value: String) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun HeroPill(glyph: com.applemusicktv.ui.components.Glyph, label: String, bg: Color, onClick: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = if (bg == AmTokens.Color.Accent) Color(0xFFFF3B54) else Color(0x55FFFFFF)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        shape = RoundedCornerShape(50),
+        containerColor = bg, focusedColor = if (bg == AmTokens.Color.Accent) Color(0xFFFF3B54) else Color(0x55FFFFFF),
+        focusedScale = 1.06f,
     ) {
         Row(Modifier.padding(horizontal = 18.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             com.applemusicktv.ui.components.Icon(glyph, size = 14.dp, color = Color.White)
@@ -415,12 +410,12 @@ private fun HeroPill(glyph: com.applemusicktv.ui.components.Glyph, label: String
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun HeroCircle(glyph: com.applemusicktv.ui.components.Glyph, size: Int, bg: Color, iconSize: Int = 18, focusRequester: FocusRequester? = null, onClick: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(CircleShape),
-        colors = ClickableSurfaceDefaults.colors(containerColor = bg,
-            focusedContainerColor = if (bg == AmTokens.Color.Accent) Color(0xFFFF3B54) else Color(0x66FFFFFF)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.12f),
+        shape = CircleShape,
+        containerColor = bg,
+        focusedColor = if (bg == AmTokens.Color.Accent) Color(0xFFFF3B54) else Color(0x66FFFFFF),
+        focusedScale = 1.12f,
         modifier = (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).size(size.dp),
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -445,13 +440,12 @@ private fun AlbumRowV2(albums: List<Album>, onAlbumClick: (String) -> Unit) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SongRowV2(n: Int, song: Song, onPlay: () -> Unit, onQueue: () -> Unit) {
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = onPlay,
         onLongClick = onQueue,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = AmTokens.Color.Surface),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = AmTokens.Color.Surface,
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("$n", fontSize = 13.sp, color = AmTokens.Color.TextSecondary, modifier = Modifier.width(26.dp))

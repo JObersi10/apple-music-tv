@@ -118,7 +118,7 @@ fun CategoryScreen(
                                 items(section.videos.size) { idx ->
                                     val v = section.videos[idx]
                                     val art = (v.artworkUrl ?: "").replace("{w}", "480").replace("{h}", "270").replace("{f}", "jpg")
-                                    Surface(
+                                    com.applemusicktv.ui.components.AmClickBox(
                                         onClick = { playerVm.playVideos(section.videos, idx) },
                                         onLongClick = {
                                             menuItem = Album(id = v.id, title = v.title, artistName = v.artistName,
@@ -126,9 +126,9 @@ fun CategoryScreen(
                                         },
                                         // RectangleShape so the surface never clips the title/artist
                                         // text below the thumbnail (a rounded surface rounded them off).
-                                        shape = ClickableSurfaceDefaults.shape(androidx.compose.ui.graphics.RectangleShape),
-                                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-                                        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+                                        shape = androidx.compose.ui.graphics.RectangleShape,
+                                        focusedScale = 1.06f,
+                                        containerColor = Color.Transparent, focusedColor = Color.Transparent,
                                     ) {
                                         Column(Modifier.width(230.dp).padding(bottom = 8.dp)) {
                                             Box(Modifier.width(230.dp).height(129.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1A1A1A))) {

@@ -62,7 +62,7 @@ fun BrowseScreenV2(
                 Text("Could not connect to server", color = Color(0xFFFF453A), fontSize = 16.sp)
                 Text(state.error ?: "", color = Color(0xFF555555), fontSize = 12.sp)
                 Spacer(Modifier.height(16.dp))
-                Surface(onClick = vm::load, colors = ClickableSurfaceDefaults.colors(containerColor = AmTokens.Color.Accent)) {
+                com.applemusicktv.ui.components.AmClickBox(onClick = vm::load, containerColor = AmTokens.Color.Accent, focusedColor = AmTokens.Color.Accent) {
                     Text("Retry", color = Color.White, modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp))
                 }
             }
@@ -135,7 +135,10 @@ private fun ShelfRowV2(
     }
     Column(Modifier.fillMaxWidth()) {
         SectionHeader(shelf.title, modifier = Modifier.padding(start = 24.dp, end = 24.dp), onSeeAll = shelf.roomId?.let { { onSeeAll(it) } })
+        val rowState = androidx.compose.foundation.lazy.rememberLazyListState()
         LazyRow(
+            state = rowState,
+            flingBehavior = androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior(rowState),
             contentPadding = PaddingValues(start = 24.dp, top = 6.dp, end = 0.dp, bottom = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(AmTokens.Space.md),
         ) {
@@ -200,12 +203,12 @@ private fun VideoRowV2(title: String, videos: List<Song>, playerVm: PlayerViewMo
         ) {
             items(videos.size) { idx ->
                 val v = videos[idx]
-                Surface(
+                com.applemusicktv.ui.components.AmClickBox(
                     onClick = { playerVm.playAlbum(videos, idx) },
                     onLongClick = { onLong(Album(id = v.id, title = v.title, artistName = v.artistName, artistId = v.artistId, artworkUrl = v.artworkUrl, type = "music-videos")) },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+                    shape = RoundedCornerShape(10.dp),
+                    focusedScale = 1.06f,
+                    containerColor = Color.Transparent, focusedColor = Color.Transparent,
                 ) {
                     Column(Modifier.width(230.dp)) {
                         Box(Modifier.width(230.dp).height(129.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF1A1A1A))) {
