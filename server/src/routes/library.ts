@@ -265,12 +265,16 @@ library.post("/playlists/:id/tracks/add", async (c) => {
   const { id, type } = await c.req.json().catch(() => ({} as any));
   if (!mut) return c.json({ error: "no MUT" }, 401);
   if (!id) return c.json({ error: "song id required" }, 400);
-  console.log(`[library/playlist-add] pl=${playlistId} id=${id} type=${type ?? "songs"}`);
+  // Apple's playlist-add needs the item's type to match the id namespace: a LIBRARY song id
+  // (`i.…`) must be added as `library-songs`, a catalog id (numeric) as `songs`. Sending a plain
+  // `songs` for an `i.` id 500s — which is why adding a regular (already-in-library) song failed.
+  const resolvedType = id.startsWith("i.") ? "library-songs" : (type ?? "songs");
+  console.log(`[library/playlist-add] pl=${playlistId} id=${id} type=${resolvedType}`);
   try {
     await ensureBearer();
     const res = await axios.post(
       `https://amp-api-edge.music.apple.com/v1/me/library/playlists/${playlistId}/tracks`,
-      { data: [{ id, type: type ?? "songs" }] },
+      { data: [{ id, type: resolvedType }] },
       { headers: { ...appleHeaders(mut), "Content-Type": "application/json" } },
     );
     return c.json({ ok: true, status: res.status });

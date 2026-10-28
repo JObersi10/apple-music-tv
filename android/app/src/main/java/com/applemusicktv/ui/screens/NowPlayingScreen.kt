@@ -2519,7 +2519,9 @@ private fun MarqueeText(
             text = text,
             style = TextStyle(fontSize = fontSize, fontWeight = fontWeight, color = color,
                 letterSpacing = letterSpacing,
-                shadow = Shadow(color = Color.Black.copy(alpha = 0.85f), offset = androidx.compose.ui.geometry.Offset(0f, 2f), blurRadius = 10f)),
+                // Softer drop shadow: a hard dark offset read jagged on this panel. Lower alpha, no
+                // y-offset, wider blur → a smooth halo for legibility instead of a crisp edge.
+                shadow = Shadow(color = Color.Black.copy(alpha = 0.55f), offset = androidx.compose.ui.geometry.Offset(0f, 0f), blurRadius = 20f)),
             maxLines = 1, softWrap = false,
             textAlign = if (overflows) androidx.compose.ui.text.style.TextAlign.Start else androidx.compose.ui.text.style.TextAlign.Center,
             overflow = if (overflows) androidx.compose.ui.text.style.TextOverflow.Visible else androidx.compose.ui.text.style.TextOverflow.Ellipsis,

@@ -87,14 +87,20 @@ fun SpicyLyricsPanel(
     // Translation lands ~1s after the lyrics; fade the gloss in instead of popping it in. Reset on song
     // change (docId), then ease up once the translation lines actually exist in the document.
     val hasTrans = built.lines.any { it.isTranslation }
-    // Eases 0↔1 as the translation lines appear/disappear. animateFloatAsState initialises to the
-    // target on first composition (no frame-1 pop) and animates on later flips (the fade when a gloss
-    // lands ~1s after the lyrics). Simpler + more reliable than a manually-driven Animatable.
-    val transReveal by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (hasTrans) 1f else 0f,
-        animationSpec = androidx.compose.animation.core.tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-        label = "transReveal",
-    )
+    // Fade the gloss in. animateFloatAsState snapped to the target on first composition, so when the
+    // translation arrived WITH the lyrics (now usually prefetched) there was no flip to animate and the
+    // gloss popped in. Drive it manually instead: reset to 0 on every song (docId) and ease to 1 once
+    // the translation lines exist — a guaranteed fade whether the gloss lands with the lyrics or ~1s later.
+    val transRevealAnim = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(docId, hasTrans) {
+        if (hasTrans) {
+            transRevealAnim.snapTo(0f)
+            transRevealAnim.animateTo(1f, androidx.compose.animation.core.tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        } else {
+            transRevealAnim.snapTo(0f)
+        }
+    }
+    val transReveal = transRevealAnim.value
     LyricsView(
         translationAlpha = transReveal,
         lines = built.lines,
