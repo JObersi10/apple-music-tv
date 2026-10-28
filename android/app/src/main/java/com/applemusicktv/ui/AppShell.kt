@@ -154,6 +154,40 @@ fun AppShell(modifier: Modifier = Modifier) {
             else -> {}
         }
     }
+    // Game controller R1/L1 → move to the next/prev top-nav tab. The VM carries a cumulative counter;
+    // the sign of each delta is the direction. Dev (⚙) is left out of the bumper cycle.
+    val cycleTabVal by navVm.cycleTab.collectAsState()
+    var prevCycle by remember { mutableStateOf(cycleTabVal) }
+    LaunchedEffect(cycleTabVal) {
+        val delta = cycleTabVal - prevCycle
+        prevCycle = cycleTabVal
+        if (delta == 0) return@LaunchedEffect
+        val order = listOf(
+            TopNavTab.ListenNow, TopNavTab.Browse, TopNavTab.Videos,
+            TopNavTab.Radio, TopNavTab.Library, TopNavTab.Search, TopNavTab.NowPlaying,
+        )
+        val step = if (delta > 0) 1 else -1
+        val next = order[(order.indexOf(selectedTab).coerceAtLeast(0) + step + order.size) % order.size]
+        selectedTab = next
+        val route = when (next) {
+            TopNavTab.ListenNow  -> Screen.Home.route
+            TopNavTab.Browse     -> Screen.Browse.route
+            TopNavTab.Videos     -> Screen.Category.route("grouping-34")
+            TopNavTab.Radio      -> Screen.Radio.route
+            TopNavTab.Library    -> Screen.Library.route
+            TopNavTab.Search     -> Screen.Search.route
+            TopNavTab.NowPlaying -> Screen.NowPlaying.route
+            TopNavTab.Dev        -> Screen.DevMenu.route
+        }
+        val onThisTab = currentRoute == route ||
+            (route == Screen.Library.route && currentRoute?.startsWith("library") == true)
+        if (!onThisTab) {
+            val startId = navController.graph.findStartDestination().id
+            navController.navigate(route) {
+                popUpTo(startId) { saveState = true }; launchSingleTop = true; restoreState = true
+            }
+        }
+    }
     LaunchedEffect(isOnNowPlaying) { navVm.isOnNowPlaying = isOnNowPlaying }
     // Leaving Now Playing keeps the video's AUDIO playing (like a song) but disables the video
     // track — that frees the secure decoder and its SurfaceFlinger overlay so nothing bleeds onto

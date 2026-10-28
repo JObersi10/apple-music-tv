@@ -23,6 +23,12 @@ class NavigationViewModel @Inject constructor() : ViewModel() {
     // jump to Now Playing.
     var isOnMusicVideo: Boolean = false
 
+    // Game-controller tab cycling: R1/L1 ask AppShell to move to the next/prev top nav tab. A tick
+    // counter carries the direction in its sign-of-delta; AppShell collects it and selects the tab.
+    private val _cycleTab = MutableStateFlow(0)
+    val cycleTab: StateFlow<Int> = _cycleTab
+    fun cycleTab(dir: Int) { _cycleTab.value += dir }   // +1 = next tab, -1 = prev
+
     fun navigateToNowPlaying() { _goToNowPlaying.value = true }
     fun consumeNowPlayingNavigation() { _goToNowPlaying.value = false }
     fun toggleQueuePanel() { _toggleQueue.value++ }

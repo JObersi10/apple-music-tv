@@ -14,6 +14,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -66,24 +68,55 @@ fun DevMenuScreen(
         while (showDev) { netLogs = vm.networkLogs(); kotlinx.coroutines.delay(1000) }
     }
 
+    // tvOS-style split view: a persistent category sidebar on the left, the selected category's
+    // settings in a scrolling pane on the right. Categories are focus-to-select (moving the remote
+    // onto one shows its pane), like Apple TV Settings.
+    val categories = buildList {
+        add("Playback"); add("Now Playing"); add("Storage"); add("Remote"); add("A/V Sync"); add("Software")
+        if (showDev) add("Developer")
+    }
+    var selectedCat by rememberSaveable { mutableStateOf(0) }
+    if (selectedCat > categories.lastIndex) selectedCat = categories.lastIndex
+
     Box(modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+      Row(Modifier.fillMaxSize()) {
+        // ── Sidebar ────────────────────────────────────────────────────────
         Column(
-            // Cap + centre the column so rows don't stretch edge-to-edge on a wide 1080p/4K TV —
-            // a settings list reads far better at a comfortable column width than full-bleed.
-            modifier = Modifier.fillMaxHeight().widthIn(max = 880.dp).align(Alignment.TopCenter)
-                .padding(horizontal = 24.dp, vertical = 40.dp)
+            Modifier.width(300.dp).fillMaxHeight().background(Color(0xFF0E0E10))
+                .padding(horizontal = 18.dp, vertical = 40.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Settings", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.padding(start = 10.dp, bottom = 18.dp))
+            categories.forEachIndexed { i, label ->
+                SidebarItem(label, selected = selectedCat == i) { selectedCat = i }
+            }
+            Spacer(Modifier.height(18.dp))
+            // Reveal / hide the Developer category.
+            SidebarItem(if (showDev) "Hide Developer" else "Developer…", selected = false, muted = true) {
+                showDev = !showDev
+                if (showDev) selectedCat = categories.size   // jump to the newly-added Developer pane
+            }
+        }
+
+        // ── Content pane ────────────────────────────────────────────────────
+        Column(
+            modifier = Modifier.weight(1f).fillMaxHeight()
+                .padding(horizontal = 40.dp, vertical = 40.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White)
+          val cat = categories.getOrElse(selectedCat) { "Playback" }
+          Text(cat, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White,
+              modifier = Modifier.padding(bottom = 6.dp))
 
-            // ── SOFTWARE ──────────────────────────────────────────────────
-            SectionLabel("Software")
+          if (cat == "Software") {
             UpdatesSection(initialUpdate)
             PhoneServerRow(state.webServerUrl, playerVm)
+          }
 
-            // ── PLAYBACK ──────────────────────────────────────────────────
-            SectionLabel("Playback")
+          if (cat == "Playback") {
             Stepper(
                 label = "Crossfade", value = "%.1fs".format(state.crossfadeMs / 1000f),
                 sub = "Overlap the end of one song into the next",
@@ -112,9 +145,9 @@ fun DevMenuScreen(
                 sub = if (pstate.quitOnExit) "End the app on exit to free memory (cold start next time)" else "Keep the app resident when you leave",
                 onToggle = { playerVm.toggleQuitOnExit() },
             )
+          }
 
-            // ── NOW PLAYING ───────────────────────────────────────────────
-            SectionLabel("Now Playing")
+          if (cat == "Now Playing") {
             Stepper(
                 label = "Background",
                 value = pstate.nowPlayingBackground.label,
@@ -220,8 +253,9 @@ fun DevMenuScreen(
                 sub = if (pstate.screensaverKeepBackground) "Keep the moving background while dimmed" else "Fade to plain black while dimmed",
                 onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
+          }
 
-            SectionLabel("Storage")
+          if (cat == "Storage") {
             val cacheCap by playerVm.cacheCapBytes.collectAsState()
             Stepper(
                 label = "Media cache",
@@ -230,8 +264,9 @@ fun DevMenuScreen(
                 onDec = { playerVm.stepCacheCap(-1) },
                 onInc = { playerVm.stepCacheCap(1) },
             )
+          }
 
-            SectionLabel("Remote")
+          if (cat == "Remote") {
             var remote by remember { mutableStateOf(playerVm.remoteOverride()) }
             val remoteOrder = listOf(
                 com.applemusicktv.data.OnboardingPreferences.REMOTE_AUTO,
@@ -254,12 +289,12 @@ fun DevMenuScreen(
                 onDec = { stepRemote(-1) },
                 onInc = { stepRemote(1) },
             )
+          }
 
-            // ── A/V SYNC ──────────────────────────────────────────────────
+          if (cat == "A/V Sync") {
             // One delay drives both the beat visuals and the lyric clock. A ~200 ms display baseline is
             // built in (so this normally reads 0); Automatic adds a Bluetooth estimate on top when a BT
             // output is live. "Extra" is your own nudge on top of all that.
-            SectionLabel("A/V Sync")
             Text(
                 "Output: ${pstate.avOutputLabel}",
                 fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium,
@@ -282,12 +317,9 @@ fun DevMenuScreen(
                 onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 50) },
                 onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 50) },
             )
+          }
 
-            Spacer(Modifier.height(6.dp))
-            // ── Reveal dev menu ───────────────────────────────────────────
-            ActionBtn(if (showDev) "▾ Hide Dev Menu" else "▸ Open Dev Menu", Color(0xFF1C1C1E)) { showDev = !showDev }
-
-            if (showDev) {
+          if (cat == "Developer") {
                 SectionLabel("Account")
                 StatusChip("Bearer token", state.hasBearer, if (!state.hasBearer) "Refresh to scrape" else "Active")
                 StatusChip("Music-User-Token", state.hasMUT, state.mutSetAt?.let { "Set $it" } ?: if (!state.hasMUT) "Set via phone web server" else "Active")
@@ -408,8 +440,9 @@ fun DevMenuScreen(
                 ActionBtn("Reset App", Color(0xFF4A1414)) { confirmReset = true }
                 Text("Wipes token, pins & settings, then restarts.", fontSize = 10.sp, color = Color(0xFF775555))
                 Spacer(Modifier.height(20.dp))
-            }
+          }
         }
+      }
     }
 
     if (confirmReset) {
@@ -700,6 +733,27 @@ private fun Toggle(label: String, on: Boolean, sub: String, enabled: Boolean = t
                 Box(Modifier.padding(3.dp).size(24.dp).background(Color.White, RoundedCornerShape(50)))
             }
         }
+    }
+}
+
+/** tvOS-style sidebar category row. Focus-to-select: moving the remote onto it selects it. Selected =
+ *  bright white floating card (black text); focused-but-not-selected lifts to a translucent card. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SidebarItem(label: String, selected: Boolean, muted: Boolean = false, onSelect: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    LaunchedEffect(focused) { if (focused && !selected) onSelect() }
+    val bg = when { selected -> Color.White; focused -> Color(0xFF2A2A2E); else -> Color.Transparent }
+    val fg = when { selected -> Color.Black; muted -> Color(0xFF888888); else -> Color(0xFFDDDDDD) }
+    Surface(
+        onClick = onSelect,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = if (selected) Color.White else Color(0xFF2A2A2E)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
+        modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+    ) {
+        Text(label, fontSize = 15.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            color = fg, modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp))
     }
 }
 
