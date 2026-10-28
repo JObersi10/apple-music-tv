@@ -1,7 +1,14 @@
 package com.applemusicktv.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -46,7 +53,7 @@ import com.applemusicktv.ui.theme.AmTokens
  * aspect ratio (never letterboxed), then title + grey subtitle below. Focus = scale up + white title
  * + soft halo, exactly like the existing [AlbumCard] so old and new shelves match during transition.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun AmCard(
     title: String,
@@ -59,6 +66,10 @@ fun AmCard(
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {},
 ) {
+    // Foundation combinedClickable (not a tv Card) so a TOUCH TAP / long-press works as well as a
+    // D-pad press. Still focusable → remote nav + the focus scale/border are preserved.
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) AmTokens.Focus.Scale else 1f, label = "amCardScale")
     Column(modifier = modifier.width(width.dp)) {
         if (label != null) {
             Text(
@@ -72,40 +83,30 @@ fun AmCard(
                 modifier = Modifier.padding(bottom = AmTokens.Space.xs, start = 2.dp),
             )
         }
-        Card(
-            onClick = onClick,
-            onLongClick = onLongClick,
-            scale = CardDefaults.scale(focusedScale = AmTokens.Focus.Scale, pressedScale = 0.96f),
-            glow = CardDefaults.glow(focusedGlow = Glow(Color.White.copy(alpha = 0.22f), 18.dp)),
-            colors = CardDefaults.colors(
-                containerColor = Color.Transparent,
-                focusedContainerColor = Color.Transparent,
-            ),
-            shape = CardDefaults.shape(RoundedCornerShape(AmTokens.Radius.Card)),
-            // Match the focus border's corners to the art's radius — the default border shape didn't,
-            // so the highlight looked more/less rounded than the card (the roundness mismatch).
-            border = CardDefaults.border(
-                focusedBorder = Border(
-                    border = BorderStroke(2.dp, Color.White.copy(alpha = 0.55f)),
-                    shape = RoundedCornerShape(AmTokens.Radius.Card),
-                ),
-            ),
+        Box(
+            modifier = Modifier
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .onFocusChanged { focused = it.isFocused }
+                .fillMaxWidth().aspectRatio(aspectRatio)
+                .clip(RoundedCornerShape(AmTokens.Radius.Card))
+                .then(
+                    if (focused) Modifier.border(
+                        BorderStroke(2.dp, Color.White.copy(alpha = 0.55f)),
+                        RoundedCornerShape(AmTokens.Radius.Card),
+                    ) else Modifier,
+                )
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier.fillMaxWidth().aspectRatio(aspectRatio)
-                    .clip(RoundedCornerShape(AmTokens.Radius.Card)),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (artworkUrl != null) {
-                    AsyncImage(
-                        model = artworkUrl,
-                        contentDescription = title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Box(Modifier.fillMaxSize().background(AmTokens.Color.Surface))
-                }
+            if (artworkUrl != null) {
+                AsyncImage(
+                    model = artworkUrl,
+                    contentDescription = title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(Modifier.fillMaxSize().background(AmTokens.Color.Surface))
             }
         }
         Text(
@@ -216,15 +217,17 @@ fun <T> SongGridRow(
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SongCell(title: String, subtitle: String, artUrl: String?, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
-    Surface(
-        onClick = onClick,
-        onLongClick = onLongClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(AmTokens.Radius.Tile)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = AmTokens.Color.SurfaceGlass),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        modifier = Modifier.fillMaxWidth(),
+    // Foundation combinedClickable → tap + long-press work on touch, D-pad still works.
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        Modifier.fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(AmTokens.Radius.Tile))
+            .background(if (focused) AmTokens.Color.SurfaceGlass else Color.Transparent)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)).background(AmTokens.Color.Surface)) {
@@ -239,15 +242,17 @@ private fun SongCell(title: String, subtitle: String, artUrl: String?, onClick: 
 }
 
 /** One row in a card context menu. */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun AmMenuItem(label: String, modifier: Modifier = Modifier, destructive: Boolean = false, glyph: Glyph? = null, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+    // Foundation clickable so the menu row responds to a touch tap (the hold-menu was unusable on a
+    // phone otherwise); keeps `modifier` (carries the first-item focusRequester) + D-pad.
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        modifier.fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) Color(0xFF2C2C2E) else Color.Transparent)
+            .clickable { onClick() },
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {

@@ -67,7 +67,14 @@ fun HomeScreenV2(
         return
     }
 
+    // Start every fresh load scrolled to the TOP. Without pinning it, focus/bringIntoView could
+    // land on the last shelf ("find your mood") and the list opened scrolled to the bottom.
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(state.sections.firstOrNull()?.title) {
+        if (state.sections.isNotEmpty()) listState.scrollToItem(0)
+    }
     LazyColumn(
+        state = listState,
         modifier = modifier.fillMaxSize().background(AmTokens.Color.Background),
         contentPadding = PaddingValues(top = 28.dp, bottom = 102.dp),
         verticalArrangement = Arrangement.spacedBy(AmTokens.Space.shelfGap),

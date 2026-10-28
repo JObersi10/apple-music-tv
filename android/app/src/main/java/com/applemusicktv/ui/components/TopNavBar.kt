@@ -3,6 +3,7 @@ package com.applemusicktv.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -113,14 +114,16 @@ fun TopNavBar(
                     val textColor by animateColorAsState(
                         if (isSelected) Color.Black else Color(0xFF9A9A9A), tween(180))
 
-                    Surface(
-                        onClick = { onSelect(tab) },
-                        modifier = if (tab == TopNavTab.NowPlaying) Modifier.focusRequester(npTabFocus) else Modifier,
-                        shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors  = ClickableSurfaceDefaults.colors(
-                            containerColor        = bgColor,
-                            focusedContainerColor = if (isSelected) Color.White else Color(0xFF2C2C2E),
-                        ),
+                    // Foundation clickable (not a tv Surface) so a TOUCH TAP selects the tab as well
+                    // as a D-pad press; it stays focusable, so remote nav + npTabFocus still work.
+                    var tabFocused by remember { mutableStateOf(false) }
+                    val tabBg = if (tabFocused) (if (isSelected) Color.White else Color(0xFF2C2C2E)) else bgColor
+                    Box(
+                        modifier = (if (tab == TopNavTab.NowPlaying) Modifier.focusRequester(npTabFocus) else Modifier)
+                            .onFocusChanged { tabFocused = it.isFocused }
+                            .clip(RoundedCornerShape(50))
+                            .background(tabBg)
+                            .clickable { onSelect(tab) },
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
