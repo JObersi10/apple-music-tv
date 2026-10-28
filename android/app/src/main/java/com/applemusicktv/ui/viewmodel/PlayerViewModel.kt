@@ -1739,6 +1739,7 @@ class PlayerViewModel @Inject constructor(
                     }
             }
         }
+        Log.i("AMRadio", "metadata title=$title artist=$artist radioActive=$radioActive cur=${_state.value.currentSong?.title}")
         if (title == null && artist == null) return   // a jingle/ping has no track frames
         val cur = _state.value.currentSong
         if (cur != null && cur.title == title && cur.artistName == artist) return  // unchanged

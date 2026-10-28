@@ -304,8 +304,11 @@ fun NowPlayingScreen(
             // swap to the new song at the bottom, fade IN. Cleaner than a cross-dissolve of two covers.
             val npContentFade = remember { androidx.compose.animation.core.Animatable(1f) }
             var shownNpSong by remember { mutableStateOf(song) }
-            LaunchedEffect(song.id) {
-                if (shownNpSong.id == song.id) return@LaunchedEffect
+            // Key on title/artist too, not just id: live radio keeps ONE station/adam id while the
+            // now-playing track (title/artist/art) changes every few minutes, so an id-only effect
+            // never fired and the display only refreshed when you navigated away and back.
+            LaunchedEffect(song.id, song.title, song.artistName) {
+                if (shownNpSong.id == song.id && shownNpSong.title == song.title && shownNpSong.artistName == song.artistName) return@LaunchedEffect
                 npContentFade.animateTo(0f, tween(220))
                 shownNpSong = song
                 npContentFade.animateTo(1f, tween(450))
