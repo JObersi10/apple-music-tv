@@ -149,7 +149,7 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
             )
             Spacer(Modifier.height(18.dp))
             Text(
-                "Easiest: install the AM MUT Extractor phone app, sign into Apple Music there, and paste the token onto this :8080 page. On-TV sign-in isn't available yet.",
+                "Easiest: install the AM MUT Extractor phone app, sign into Apple Music there, and paste the token onto this :8080 page. Or sign in on this TV below (best with a touchscreen / cursor).",
                 fontSize = 14.sp, color = Color(0xFF888888), lineHeight = 19.sp,
             )
             Spacer(Modifier.height(6.dp))
@@ -165,12 +165,42 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
             Spacer(Modifier.height(18.dp))
             Text("Without a token you get 30-second previews only.", fontSize = 12.sp, color = Color(0xFF555555))
             Spacer(Modifier.height(16.dp))
-            // On-TV WebView sign-in is disabled for now (Amazon WebView keyboard mangles password
-            // fields); use the AM MUT Extractor phone app instead.
-            androidx.tv.material3.Button(onClick = {
-                android.widget.Toast.makeText(ctx, "Coming soon!", android.widget.Toast.LENGTH_SHORT).show()
-            }) {
-                Text("Connect to Apple Music on this TV")
+            // On-TV WebView sign-in: works best with a touchscreen or a cursor remote. On a plain
+            // D-pad remote the Apple Music login fields are hard/impossible to fill — the phone token
+            // method above is the reliable path. We warn first, then open the in-app WebView.
+            var showSignInWarn by remember { mutableStateOf(false) }
+            var showSignIn by remember { mutableStateOf(false) }
+            androidx.tv.material3.Button(onClick = { showSignInWarn = true }) {
+                Text("Sign in on this TV")
+            }
+            if (showSignInWarn) {
+                androidx.compose.ui.window.Dialog(onDismissRequest = { showSignInWarn = false }) {
+                    Column(
+                        Modifier.width(420.dp).background(Color(0xFF1C1C1E), RoundedCornerShape(14.dp)).padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Text("Sign in on this device?", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text("This opens the Apple Music login in the app. It works best with a touchscreen " +
+                            "or a cursor — on a plain D-pad remote the password field may not fill. If it won't " +
+                            "work, use the phone token method instead.",
+                            fontSize = 13.sp, color = Color(0xFF999999), lineHeight = 18.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OnbButton("Cancel", onClick = { showSignInWarn = false })
+                            OnbButton("Continue", onClick = { showSignInWarn = false; showSignIn = true })
+                        }
+                    }
+                }
+            }
+            if (showSignIn) {
+                androidx.compose.ui.window.Dialog(
+                    onDismissRequest = { showSignIn = false },
+                    properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+                ) {
+                    AppleSignInScreen(
+                        onToken = { token -> vm.signInWithToken(token); showSignIn = false },
+                        onClose = { showSignIn = false },
+                    )
+                }
             }
         }
 

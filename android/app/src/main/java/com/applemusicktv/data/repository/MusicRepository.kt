@@ -323,6 +323,15 @@ class MusicRepository @Inject constructor(
 
     /** Append a song to one of the user's editable library playlists. */
     suspend fun addToPlaylist(playlistId: String, song: Song): Result<Unit> {
+        // LIVE radio: currentSong.id is the STATION id (`ra.…`), not the track — adding it 500s
+        // ("Unable to update tracks"). Resolve the actual now-playing track to a catalog song id by
+        // searching the catalog for its title + artist, then add THAT.
+        var song = song
+        if (song.id.startsWith("ra.")) {
+            val catId = directClient.searchCatalogSongId(song.title, song.artistName, mutPrefs.getMUT())
+                ?: return Result.failure(IllegalStateException("Couldn't find \"${song.title}\" in the catalog to add"))
+            song = song.copy(id = catId)
+        }
         // Apple's add-to-library-playlist body needs the RIGHT resource type for the id. A library id
         // (`i.`/`l.`) is a library-songs / library-music-videos row; a catalog (numeric) id is
         // songs / music-videos. Sending "songs" for an `i.` id 404s → "Couldn't add to playlist".
