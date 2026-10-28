@@ -521,10 +521,6 @@ fun NowPlayingScreen(
                                 NpMenuItem(repeatLabel, icon = if (state.repeatMode == RepeatMode.One) Glyph.REPEAT_ONE else Glyph.REPEAT, checked = state.repeatMode != RepeatMode.Off) { playerVm.toggleRepeat() }
                                 if (state.lyrics.isNotEmpty()) NpMenuItem("Full-Screen Lyrics", icon = Glyph.LYRICS) { fullScreenLyrics = true; showOptionsMenu = false }
                                 if (state.lyrics.isNotEmpty()) NpMenuItem("Translate Lyrics", icon = Glyph.LYRICS, checked = state.translateLyrics) { playerVm.toggleTranslateLyrics() }
-                                run {
-                                    val srcLabel = when (state.lyricsSource) { "spicy" -> "Lyrics Source: Spicy"; "apple" -> "Lyrics Source: Apple"; "lrclib" -> "Lyrics Source: lrclib"; else -> "Lyrics Source: Auto" }
-                                    NpMenuItem(srcLabel, icon = Glyph.LYRICS, checked = state.lyricsSource.isNotEmpty()) { playerVm.cycleLyricsSource() }
-                                }
                                 NpMenuItem("Add to…", icon = Glyph.ADD_TO) { showAddTo = true; showOptionsMenu = false }
                                 NpMenuItem("Start Screensaver", icon = Glyph.STAR) { lastInteractionMs = System.currentTimeMillis(); screensaverOn = true; showOptionsMenu = false }
                                 if (song.artistId != null) NpMenuItem("Go to Artist", icon = Glyph.ARTIST) { onArtistClick(song.artistId); showOptionsMenu = false }

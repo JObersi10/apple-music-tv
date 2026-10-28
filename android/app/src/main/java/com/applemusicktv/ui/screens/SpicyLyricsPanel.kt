@@ -89,8 +89,13 @@ fun SpicyLyricsPanel(
     val hasTrans = built.lines.any { it.isTranslation }
     val transReveal = remember { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(docId, hasTrans) {
-        if (!hasTrans) transReveal.snapTo(0f)
-        else transReveal.animateTo(1f, androidx.compose.animation.core.tween(450))
+        // Always ease the gloss in from 0 — the Animatable persists across songs, so without the
+        // explicit snapTo it stayed at 1f from the previous track and the translation just popped in.
+        transReveal.snapTo(0f)
+        if (hasTrans) transReveal.animateTo(
+            1f,
+            androidx.compose.animation.core.tween(650, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        )
     }
     LyricsView(
         translationAlpha = transReveal.value,
