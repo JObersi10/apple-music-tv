@@ -315,6 +315,11 @@ fun DevMenuScreen(
                       else "Manual — only your extra below is added to the baseline",
                 onToggle = { playerVm.setAvSyncAuto(!pstate.avSyncAuto) },
             )
+            Toggle(
+                label = "Controller rumble", on = pstate.rumbleEnabled,
+                sub = if (pstate.rumbleEnabled) "Game controller vibrates to the bass (R3 toggles too)" else "Off — no haptics",
+                onToggle = { playerVm.toggleRumble() },
+            )
             Stepper(
                 label = "Extra offset", value = "${state.lyricsOffsetMs}ms",
                 sub = "Applies to lyrics, beat AND music-video lip-sync. Negative = earlier, positive = later",

@@ -147,6 +147,7 @@ class MainActivity : ComponentActivity() {
                 }
                 KeyEvent.KEYCODE_BUTTON_SELECT -> { if (navVm.isOnMusicVideo) mvVm.prev() else playerVm.prev(); return true }
                 KeyEvent.KEYCODE_BUTTON_START -> { if (navVm.isOnMusicVideo) mvVm.next() else playerVm.next(); return true }
+                KeyEvent.KEYCODE_BUTTON_THUMBR -> { playerVm.toggleRumble(); return true }
             }
         }
         // While a video is active, media keys drive the VIDEO — never the (paused) audio

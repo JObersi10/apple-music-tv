@@ -180,6 +180,7 @@ data class PlayerState(
     /** Animated album art. A whole second video decoder — default OFF: it's the biggest per-session
      *  footprint on this Fire TV and the source of the surface errors. Opt in if the device can take it. */
     val motionArtworkEnabled: Boolean = false,
+    val rumbleEnabled: Boolean = false,
     /** Projector orb drift speed: 0.6 slow · 1.0 normal · 1.6 fast. */
     val orbSpeed: Float = 1.0f,
     /** Lyrics font scale: 0.85 small · 1.0 normal · 1.2 large. */
@@ -244,6 +245,28 @@ class PlayerViewModel @Inject constructor(
 
     // mDNS auto-discovery of the PC proxy when the server goes unreachable (built from context).
     private val serverDiscovery = com.applemusicktv.data.ServerDiscovery(context)
+
+    // Controller rumble to the bass. Collects the beat-energy bus and taps a connected gamepad's
+    // motor on each onset; a TV remote has no motor so it's a silent no-op (auto-detect).
+    private val rumble = com.applemusicktv.media.RumbleController(context)
+    init {
+        viewModelScope.launch {
+            beatAnalyzer.energy.collect { e ->
+                if (_state.value.rumbleEnabled && _state.value.isPlaying) rumble.onEnergy(e)
+            }
+        }
+    }
+
+    /** Settings toggle AND controller R3 both land here. */
+    fun toggleRumble() {
+        val next = !_state.value.rumbleEnabled
+        prefs.edit { putBoolean("rumble_bass", next) }
+        _state.update { it.copy(rumbleEnabled = next) }
+        if (!next) rumble.stop()
+        toast(if (next) {
+            if (rumble.hasGamepadRumble()) "Controller rumble on" else "Rumble on (no controller detected)"
+        } else "Controller rumble off")
+    }
 
     private fun hasMUT() = mutPrefs.hasMUT()
     private fun isStandalone() = !serverPrefs.hasPcServer()
@@ -892,6 +915,7 @@ class PlayerViewModel @Inject constructor(
             screensaverKeepBackground = prefs.getBoolean("screensaver_keep_bg", false),
             showNowPlayingInfo = prefs.getBoolean("np_info", true),
             motionArtworkEnabled = prefs.getBoolean("motion_art", false),
+            rumbleEnabled = prefs.getBoolean("rumble_bass", false),
             beatIntensity = prefs.getFloat(intensityKey(initBg), 1.0f),
             orbSpeed = prefs.getFloat("orb_speed", 1.0f),
             lyricsScale = prefs.getFloat("lyrics_scale", 1.0f),
