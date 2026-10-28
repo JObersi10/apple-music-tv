@@ -3,6 +3,8 @@ package com.applemusicktv.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -79,13 +81,21 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
     }
     DisposableEffect(Unit) { onDispose { vm.stopMutPolling() } }
 
-    Box(
+    BoxWithConstraints(
         modifier
             .fillMaxSize()
-            .background(Color(0xFF050505))
-            .padding(horizontal = 96.dp, vertical = 56.dp),
+            .background(Color(0xFF050505)),
     ) {
-        Column(Modifier.fillMaxSize()) {
+        // Phones (and landscape/wide aspect ratios) have far less room than a TV. Shrink the
+        // margins and let the step body SCROLL so the bottom buttons are always reachable —
+        // on a short wide screen the fixed TV padding + a weight(1f) spacer pushed them off-screen,
+        // which is why onboarding was unusable on a phone.
+        val compact = maxWidth < 600.dp || maxHeight < 440.dp
+        val hPad = if (compact) 20.dp else 96.dp
+        val vPad = if (compact) 20.dp else 56.dp
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = hPad, vertical = vPad),
+        ) {
             ProgressDots(current = s.step, total = vm.totalSteps)
             Spacer(Modifier.height(14.dp))
 
@@ -94,6 +104,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
             val forward = s.step >= prevStep
             LaunchedEffect(s.step) { prevStep = s.step }
             androidx.compose.animation.AnimatedContent(
+                modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
                 targetState = s.step,
                 transitionSpec = {
                     val dir = if (forward) 1 else -1
@@ -109,7 +120,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
             ) { step ->
                 Column {
                     when (step) {
-                        1 -> StepAccount(vm, s)
+                        1 -> StepAccount(vm, s, compact)
                         2 -> StepRemote(vm, s, TvDevice.isFireTv(context))
                         3 -> StepPreferences(vm, s)
                         else -> StepTips(TvDevice.needsOnScreenMenuToggle(context, s.remoteChoice), tipsNextFocus) { tipsSeenAll = true }
@@ -117,7 +128,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(16.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (s.step > 1) OnbButton("Back", onClick = vm::back)
@@ -133,13 +144,15 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
 
 @Composable
 @OptIn(ExperimentalTvMaterial3Api::class)
-private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmodel.OnboardingState) {
+private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmodel.OnboardingState, compact: Boolean = false) {
     StepHeader("Sign in", "Your Apple Music token is pasted from your phone — it's too long to type with a remote.")
 
     val ctx = androidx.compose.ui.platform.LocalContext.current
 
-    Row(Modifier.padding(top = 22.dp), verticalAlignment = Alignment.Top) {
-        Column(Modifier.weight(1f)) {
+    // On a phone the text column + a 250dp QR don't fit side by side — stack them in a Column
+    // instead of a Row (a Row clipped the text off the right edge on a narrow screen).
+    val textContent: @Composable () -> Unit = {
+        Column {
             Text("On your phone, scan this or open:", fontSize = 14.sp, color = Color(0xFF999999))
             Spacer(Modifier.height(8.dp))
             Text(
@@ -203,15 +216,17 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
                 }
             }
         }
+    }
 
-        // QR of the same URL. Drawn on a white card with a quiet zone — a code that
-        // bleeds into a dark background won't scan.
+    // QR of the same URL. Drawn on a white card with a quiet zone — a code that
+    // bleeds into a dark background won't scan.
+    val qrContent: @Composable () -> Unit = {
         val matrix = remember(s.phoneUrl) { s.phoneUrl.takeIf { it.isNotEmpty() }?.let { QrCode.encode(it) } }
         if (matrix != null) {
             Box(
                 // A full 4-module quiet zone, as the spec requires — the first version
                 // left only ~2 and that is the usual reason a phone won't lock on.
-                Modifier.padding(start = 40.dp).size(250.dp)
+                Modifier.size(if (compact) 200.dp else 250.dp)
                     .background(Color.White, RoundedCornerShape(10.dp))
                     .padding(30.dp),
             ) {
@@ -230,6 +245,20 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
                     }
                 }
             }
+        }
+    }
+
+    if (compact) {
+        Column(Modifier.padding(top = 22.dp)) {
+            textContent()
+            Spacer(Modifier.height(20.dp))
+            qrContent()
+        }
+    } else {
+        Row(Modifier.padding(top = 22.dp), verticalAlignment = Alignment.Top) {
+            Box(Modifier.weight(1f)) { textContent() }
+            Spacer(Modifier.width(40.dp))
+            qrContent()
         }
     }
 }
