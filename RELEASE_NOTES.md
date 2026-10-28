@@ -1,5 +1,34 @@
 # Release Notes
 
+## Unreleased — Radio, Artist V2, Spicy Lyrics & more (PR #5)
+
+The big feature branch since 1.3. Highlights:
+
+### New
+- **Radio & stations** — Apple Music radio and stations are playable, with a dedicated Radio tab.
+- **Artist page V2** — wide editorial hero, bio, top songs, latest release, albums, similar artists.
+- **Spicy Lyrics (word-synced) as the primary source**, with a new **Lyrics Renderer v2** (Canvas
+  engine: gradient wipe, spring motion, glow, "lavalamp" background). Now the default renderer.
+- **Lyric translation** in your language, drawn under each line — on the renderer the app uses.
+- **Pronunciation line** — romaji / pinyin, with a **downloadable Japanese kanji pack** for full readings.
+- **Uploaded & iTunes-Match songs play** (server and on-device) — tracks from your own files.
+- **Music videos stream through the PC server** when reachable — kills the cross-tab picture "bleed".
+- **Game controller support** with **rumble to the bass** (toggle / R3), tab + transport + menu mapping.
+- **Settings redesigned** as a tvOS split-view (categorised sidebar + content pane).
+- **Automatic PC-server rediscovery** (mDNS) when its address changes.
+- **Now Playing fullscreen** — hides the Android status bar + nav buttons.
+- **Picture-in-Picture**, low-power **quit-on-exit**, Shazam-based radio ID, i18n infrastructure.
+
+### Fixed (since 1.3)
+- Matched / iTunes-Match songs no longer skip; faster song start through the server (~8×).
+- Radio song → playlist add; radio restore on reopen; live radio metadata on Now Playing.
+- Motion album art smooth + full quality; a failed track resumes where it was, not 0:00.
+- Lyric translation fade, held-word clipping, one-frame flash, unsynced auto-scroll.
+
+Per-commit detail is in [CHANGELOG.md](CHANGELOG.md).
+
+---
+
 ## Unreleased (post-1.3, Spicy Lyrics + Renderer v2)
 - **Spicy Lyrics is the new primary lyrics source** — word-synced lyrics aggregated from Apple Music,
   Spotify and a community pool, resolved via an anonymous Spotify search (no login). Apple + lrclib

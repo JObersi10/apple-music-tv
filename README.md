@@ -24,11 +24,13 @@
 ## Features
 
 - **Listen Now, Browse, Library, Search** — Apple's real editorial shelves, laid out for a remote.
-- **Now Playing** with a live album-colour background and **word-by-word synced lyrics**.
+- **Now Playing** with a live album-colour background and **word-by-word synced lyrics** — plus **translation** and **pronunciation** (romaji / pinyin, downloadable kanji pack) in your language.
 - **Artist pages, playlists, albums** — full catalog navigation.
 - **Music videos** and **radio / stations** — all playable.
-- **Background playback** and an ambient **screensaver**.
-- **Runs standalone on the TV** — a pure-Kotlin Widevine pipeline decrypts each song on-device, no computer required. An optional PC proxy server is also supported.
+- **Uploaded & iTunes-Match songs** from your own library play too.
+- **Game controller support** — map tabs, transport and the menu to a gamepad, with optional **rumble to the bass**.
+- **Background playback**, Picture-in-Picture, and an ambient **screensaver**.
+- **Runs standalone on the TV** — a pure-Kotlin Widevine pipeline decrypts each song on-device, no computer required. An optional PC proxy server is also supported, with **automatic rediscovery** (mDNS) when its address changes.
 
 ---
 

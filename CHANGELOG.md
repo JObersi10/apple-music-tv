@@ -4,6 +4,27 @@ User-facing changes, newest first. Each entry covers one PR/branch. Only net
 features and fixes to previously-shipped behavior are listed — not the internal
 back-and-forth of tuning something added in the same entry.
 
+## feat/radio-artist-shazam-v2 — 2026-10-28
+
+### Added
+- **Controller rumble to the bass** — a new Settings toggle (Audio & Sync), also toggled
+  with **R3**. Auto-detects a gamepad motor and stays silent on a plain TV remote.
+- **Automatic server rediscovery** — when the PC proxy becomes unreachable (it moved to a
+  new IP, DHCP reassigned it, etc.), the app finds it again automatically over the network
+  and switches to the new address. Fixes a controller/Switch getting stuck in standalone.
+- **Now Playing goes fullscreen** — the Android status bar and on-screen nav buttons hide
+  while you're on Now Playing, and come back everywhere else.
+
+### Changed
+- **Controller mapping**: **X** = the Menu button (Now Playing / toggle lyrics↔queue),
+  **−** = previous song, **+** = next song (in addition to R1/L1 tab switching).
+- **Softer Now Playing title/artist shadow** — smoother, no hard edge.
+
+### Fixed
+- **Lyric translation fades in every song**, not only when it arrives late.
+- **Adding a regular (library) song to a playlist** works — `i.` library ids are now sent
+  as the right type instead of failing with HTTP 500.
+
 ## feat/radio-artist-shazam-v2 — 2026-10-27
 
 ### Added
