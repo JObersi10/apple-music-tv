@@ -344,10 +344,19 @@ internal object LyricsLayoutCalculator {
                 
                 val rowPieces = mutableListOf<WordLayout>()
                 var rowX = 0f
+                // A held/slow word is split into letters that SWELL (peak 1.035, about each letter's
+                // own centre) while sung. The global gap was tightened to 0.18ch, so a swelling word
+                // grew into its neighbour ("hits the edge of the other words"). Give only the gap
+                // beside a letter-group word extra room (~0.30ch, the old feel) — the grow stays, the
+                // clip goes, and ordinary words keep the tight gap.
+                val swellHeadroom = zero.size.width.toFloat() * 0.12f
                 for (idx in startIdx until endIdx) {
                     val piece = pieces[idx]
                     val pieceWidth = piece.layout.size.width.toFloat()
-                    val actualGap = if (rowX > 0f && !piece.isPartOfWord) wordGap else 0f
+                    val prevPiece = if (idx > startIdx) pieces[idx - 1] else null
+                    val heldAdjacent = piece.word.isLetterGroup || prevPiece?.word?.isLetterGroup == true
+                    val gap = if (heldAdjacent) wordGap + swellHeadroom else wordGap
+                    val actualGap = if (rowX > 0f && !piece.isPartOfWord) gap else 0f
                     
                     val baseline = piece.layout.firstBaseline
                     val yShift = if (!baseline.isNaN() && !rowBaseline.isNaN()) rowBaseline - baseline else 0f
