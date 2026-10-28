@@ -118,6 +118,9 @@ fun AppShell(modifier: Modifier = Modifier) {
     val immersiveView = LocalView.current
     LaunchedEffect(isOnNowPlaying) {
         (immersiveView.context as? Activity)?.window?.let { win ->
+            // Edge-to-edge is required for the status/nav bars to actually hide on a phone — without it
+            // the system keeps the status bar even after hide(). Toggle it with the route.
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(win, !isOnNowPlaying)
             val controller = androidx.core.view.WindowCompat.getInsetsController(win, immersiveView)
             controller.systemBarsBehavior =
                 androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE

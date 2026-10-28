@@ -89,6 +89,8 @@ import com.applemusicktv.ui.viewmodel.NavigationViewModel
 import com.applemusicktv.ui.viewmodel.NowPlayingBackground
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import com.applemusicktv.ui.components.Glyph
+import com.applemusicktv.ui.components.AmClickBox
+import androidx.compose.foundation.clickable
 import com.applemusicktv.ui.viewmodel.RepeatMode
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -418,10 +420,10 @@ fun NowPlayingScreen(
                     )
                     // The ⋯ options button is chrome: it fades out with the controls on idle so the
                     // steady-state view is just artwork + text.
-                    if (chromeAlpha > 0.02f) Surface(
+                    if (chromeAlpha > 0.02f) AmClickBox(
                         onClick = { showOptionsMenu = true; showSleepSubmenu = false },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), focusedContainerColor = Color(0x33FFFFFF)),
+                        shape = RoundedCornerShape(50),
+                        containerColor = Color(0x1AFFFFFF), focusedColor = Color(0x33FFFFFF),
                         modifier = Modifier.align(Alignment.CenterEnd).size(32.dp).graphicsLayer { alpha = chromeAlpha },
                     ) { Box(Modifier.fillMaxSize(), Alignment.Center) {
                         androidx.compose.foundation.Canvas(Modifier.size(18.dp)) {
@@ -437,11 +439,10 @@ fun NowPlayingScreen(
                 // collapse against the idle chrome fade. Artist sits directly under the title.
                 val npArtistId = shownNpSong.artistId
                 if (npArtistId != null) {
-                    Surface(
+                    AmClickBox(
                         onClick = { onArtistClick(npArtistId) },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0x1AFFFFFF)),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                        shape = RoundedCornerShape(4.dp),
+                        containerColor = Color.Transparent, focusedColor = Color(0x1AFFFFFF),
                         modifier = Modifier.focusRequester(artistFocusHolder).fillMaxWidth().padding(horizontal = 4.dp)
                             .graphicsLayer { alpha = npContentFade.value },
                     ) {
@@ -797,7 +798,9 @@ private fun AmbientScreensaver(song: com.applemusicktv.data.model.Song, onWake: 
         Modifier.fillMaxSize()
             .focusRequester(fr)
             .focusable()
-            .onKeyEvent { onWake(); true },
+            .onKeyEvent { onWake(); true }
+            // A single touch tap also wakes it back to the player.
+            .clickable { onWake() },
     ) {
         // Heavy dim over the drifting background — colours + motion still faintly show.
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.68f)))
@@ -2336,17 +2339,12 @@ private fun TransportButton(
     // old edge-to-edge Canvas glyphs at the same size — bump to compensate and read as Apple-sized.
     // forward.fill/backward.fill pad even more than play.fill, so the non-large size is generous.
     val canvasSize = if (large) 34.dp else 31.dp
-    val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
-    Surface(
+    AmClickBox(
         onClick = onClick,
-        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor        = Color.Transparent,
-            focusedContainerColor = Color(0x22FFFFFF),
-        ),
-        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.10f),
-        glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.White.copy(alpha = 0.3f), 10.dp)),
-        border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
+        shape  = RoundedCornerShape(12.dp),
+        containerColor = Color.Transparent,
+        focusedColor = Color(0x22FFFFFF),
+        focusedScale = 1.10f,
         modifier = modifier.size(btnSize),
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -2407,11 +2405,11 @@ private fun NpMenuItem(
     checked: Boolean = false,
     onClick: () -> Unit,
 ) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2E2E30),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),

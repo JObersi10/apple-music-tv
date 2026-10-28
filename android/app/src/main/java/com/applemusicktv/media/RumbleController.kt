@@ -32,6 +32,13 @@ class RumbleController(context: Context) {
     /** True when at least one attached controller can rumble (used to auto-detect gamepad vs remote). */
     fun hasGamepadRumble(): Boolean = gamepadVibrators().isNotEmpty()
 
+    /** The phone/tablet's own vibrator, used when no game controller is attached (a plain TV box has
+     *  none, so it stays a silent no-op there — exactly the gamepad-vs-remote auto-detect). */
+    private val deviceVibrator: Vibrator? by lazy {
+        @Suppress("DEPRECATION")
+        (appCtx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)?.takeIf { it.hasVibrator() }
+    }
+
     private var lastEnergy = 0f
 
     /** Feed the latest beat energy (0..~1). Fires a tap on a rising bass onset. */
@@ -40,7 +47,9 @@ class RumbleController(context: Context) {
         lastEnergy = energy
         if (!rising) return
         val amp = (60 + (energy.coerceIn(0f, 1f) * 195f)).toInt().coerceIn(1, 255)
-        val vibs = gamepadVibrators()
+        // Prefer a game controller's motor; fall back to the phone's own vibrator so it works held in
+        // the hand too. On a TV box both are absent → silent no-op.
+        val vibs = gamepadVibrators().ifEmpty { listOfNotNull(deviceVibrator) }
         if (vibs.isEmpty()) return
         val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             VibrationEffect.createOneShot(40L, amp) else null
@@ -52,5 +61,6 @@ class RumbleController(context: Context) {
     fun stop() {
         lastEnergy = 0f
         gamepadVibrators().forEach { runCatching { it.cancel() } }
+        runCatching { deviceVibrator?.cancel() }
     }
 }
