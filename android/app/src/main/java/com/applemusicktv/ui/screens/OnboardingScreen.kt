@@ -3,8 +3,11 @@ package com.applemusicktv.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -90,9 +93,14 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
         // margins and let the step body SCROLL so the bottom buttons are always reachable —
         // on a short wide screen the fixed TV padding + a weight(1f) spacer pushed them off-screen,
         // which is why onboarding was unusable on a phone.
-        val compact = maxWidth < 600.dp || maxHeight < 440.dp
-        val hPad = if (compact) 20.dp else 96.dp
-        val vPad = if (compact) 20.dp else 56.dp
+        // Two independent axes: NARROW (portrait phone) decides whether the sign-in step stacks
+        // vertically; a short-but-wide landscape phone is NOT narrow, so it keeps the roomy
+        // side-by-side layout instead of a cramped single column with the QR pushed off-screen.
+        // Tight margins kick in whenever either dimension is small.
+        val narrow = maxWidth < 600.dp
+        val tight = narrow || maxHeight < 440.dp
+        val hPad = if (tight) 24.dp else 96.dp
+        val vPad = if (tight) 20.dp else 56.dp
         Column(
             Modifier.fillMaxSize().padding(horizontal = hPad, vertical = vPad),
         ) {
@@ -120,7 +128,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
             ) { step ->
                 Column {
                     when (step) {
-                        1 -> StepAccount(vm, s, compact)
+                        1 -> StepAccount(vm, s, narrow)
                         2 -> StepRemote(vm, s, TvDevice.isFireTv(context))
                         3 -> StepPreferences(vm, s)
                         else -> StepTips(TvDevice.needsOnScreenMenuToggle(context, s.remoteChoice), tipsNextFocus) { tipsSeenAll = true }
@@ -144,7 +152,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, onDone: () -> Unit, modifier: Modi
 
 @Composable
 @OptIn(ExperimentalTvMaterial3Api::class)
-private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmodel.OnboardingState, compact: Boolean = false) {
+private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmodel.OnboardingState, narrow: Boolean = false) {
     StepHeader("Sign in", "Your Apple Music token is pasted from your phone — it's too long to type with a remote.")
 
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -183,9 +191,7 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
             // method above is the reliable path. We warn first, then open the in-app WebView.
             var showSignInWarn by remember { mutableStateOf(false) }
             var showSignIn by remember { mutableStateOf(false) }
-            androidx.tv.material3.Button(onClick = { showSignInWarn = true }) {
-                Text("Sign in on this TV")
-            }
+            OnbButton("Sign in on this TV", onClick = { showSignInWarn = true })
             if (showSignInWarn) {
                 androidx.compose.ui.window.Dialog(onDismissRequest = { showSignInWarn = false }) {
                     Column(
@@ -226,7 +232,7 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
             Box(
                 // A full 4-module quiet zone, as the spec requires — the first version
                 // left only ~2 and that is the usual reason a phone won't lock on.
-                Modifier.size(if (compact) 200.dp else 250.dp)
+                Modifier.size(if (narrow) 200.dp else 250.dp)
                     .background(Color.White, RoundedCornerShape(10.dp))
                     .padding(30.dp),
             ) {
@@ -248,7 +254,7 @@ private fun StepAccount(vm: OnboardingViewModel, s: com.applemusicktv.ui.viewmod
         }
     }
 
-    if (compact) {
+    if (narrow) {
         Column(Modifier.padding(top = 22.dp)) {
             textContent()
             Spacer(Modifier.height(20.dp))
@@ -439,26 +445,20 @@ private fun StepTips(onScreenToggle: Boolean, nextFocus: FocusRequester, onSeenA
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun TipNavButton(label: String, enabled: Boolean, focusRequester: FocusRequester? = null, onClick: () -> Unit) {
-    val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (enabled) Color(0xFF1C1C1E) else Color(0xFF141414),
-            focusedContainerColor = Color(0xFFFA233B),
-            disabledContainerColor = Color(0xFF141414),
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-        border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
+    var focused by remember { mutableStateOf(false) }
+    val bg = when { !enabled -> Color(0xFF141414); focused -> Color(0xFFFA233B); else -> Color(0xFF1C1C1E) }
+    Box(
+        (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 18.dp, vertical = 6.dp),
     ) {
         Text(
             label,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
             fontSize = 22.sp, fontWeight = FontWeight.Bold,
             color = if (enabled) Color.White else Color(0xFF444444),
         )
@@ -726,20 +726,16 @@ private fun StepHeader(title: String, subtitle: String) {
     Text(subtitle, fontSize = 15.sp, color = Color(0xFF999999))
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun RemoteOption(title: String, body: String, selected: Boolean, onClick: () -> Unit) {
-    val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
-    Surface(
-        onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) Color(0xFF1F1F1F) else Color(0xFF0E0E0E),
-            focusedContainerColor = Color(0xFF2E2E2E),
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
-        modifier = Modifier.fillMaxWidth(0.6f),
+    var focused by remember { mutableStateOf(false) }
+    val bg = when { focused -> Color(0xFF2E2E2E); selected -> Color(0xFF1F1F1F); else -> Color(0xFF0E0E0E) }
+    Box(
+        Modifier.fillMaxWidth(0.6f)
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(10.dp))
+            .background(bg)
+            .clickable { onClick() },
     ) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -755,7 +751,10 @@ private fun RemoteOption(title: String, body: String, selected: Boolean, onClick
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+// Foundation clickable (not a tv-material Surface) so it fires on a TOUCH TAP as well as a
+// D-pad centre press — tv Surfaces are focus-only and ignored taps on a phone. clickable is
+// itself focusable, so D-pad nav + the focusRequester still work; onFocusChanged drives the
+// focus colour.
 @Composable
 private fun OnbButton(
     label: String,
@@ -764,23 +763,24 @@ private fun OnbButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (primary) Color(0xFFFA233B) else Color(0xFF1C1C1E),
-            focusedContainerColor = if (primary) Color(0xFFFF3B50) else Color(0xFF2E2E2E),
-            disabledContainerColor = Color(0xFF161616),
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-        border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
+    var focused by remember { mutableStateOf(false) }
+    val bg = when {
+        !enabled -> Color(0xFF161616)
+        primary && focused -> Color(0xFFFF3B50)
+        primary -> Color(0xFFFA233B)
+        focused -> Color(0xFF2E2E2E)
+        else -> Color(0xFF1C1C1E)
+    }
+    Box(
+        modifier
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 22.dp, vertical = 11.dp),
     ) {
         Text(
             label,
-            modifier = Modifier.padding(horizontal = 22.dp, vertical = 11.dp),
             fontSize = 15.sp, color = if (enabled) Color.White else Color(0xFF666666), fontWeight = FontWeight.Medium,
         )
     }
