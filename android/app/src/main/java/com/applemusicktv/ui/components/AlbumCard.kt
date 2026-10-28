@@ -13,9 +13,14 @@ import androidx.compose.runtime.remember
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -25,7 +30,7 @@ import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import com.applemusicktv.data.model.Album
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: () -> Unit = {}, motionEnabled: Boolean = true, modifier: Modifier = Modifier) {
     // Motion artwork (Playlists Made for You) plays while the card is focused — see MotionArtwork
@@ -36,27 +41,21 @@ fun AlbumCard(album: Album, size: Int = 130, onClick: () -> Unit, onLongClick: (
     // continuously as you browsed — it saturated this Fire TV and made the whole app janky. One
     // focused decoder on the one animated shelf is what the app shipped smooth with.
     val motionUrl = if (motionEnabled) album.motionUrl else null
-    Card(
-        onClick  = onClick,
-        onLongClick = onLongClick,
+    // Foundation combinedClickable (not a tv Card) so a TOUCH TAP / long-press works; stays focusable
+    // so D-pad nav + the focus scale/halo are preserved.
+    val scale by animateFloatAsState(if (focused) 1.08f else 1f, label = "albumCardScale")
+    Column(
         modifier = modifier.width(size.dp)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus },
-        // Apple-style: soft scale + a gentle white halo on focus — no hard red border.
-        scale = CardDefaults.scale(focusedScale = 1.08f, pressedScale = 0.96f),
-        glow  = CardDefaults.glow(
-            focusedGlow = Glow(Color.White.copy(alpha = 0.22f), 18.dp)
-        ),
-        border = CardDefaults.border(
-            focusedBorder = Border(
-                border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)),
-                shape  = RoundedCornerShape(12.dp),
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(12.dp))
+            .then(
+                if (focused) Modifier.border(
+                    BorderStroke(1.5.dp, Color.White.copy(alpha = 0.55f)),
+                    RoundedCornerShape(12.dp),
+                ) else Modifier,
             )
-        ),
-        colors = CardDefaults.colors(
-            containerColor        = Color.Transparent,
-            focusedContainerColor = Color.Transparent,
-        ),
-        shape = CardDefaults.shape(RoundedCornerShape(12.dp)),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         Column {
             Box(

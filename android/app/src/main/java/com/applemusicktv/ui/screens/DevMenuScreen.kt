@@ -1,7 +1,10 @@
 package com.applemusicktv.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.*
+import com.applemusicktv.ui.components.AmClickBox
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -393,10 +396,10 @@ fun DevMenuScreen(
                             ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme(); vm.recheckServer(playerVm, onDone = onDataRefresh) }
                         } else {
                             // Idle: a plain button. Focus can land here with no IME. OK opens the editor.
-                            Surface(
+                            AmClickBox(
                                 onClick = { pcIpEditing = true },
-                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF0D0D0D), focusedContainerColor = Color(0xFF1E1E1E)),
+                                shape = RoundedCornerShape(6.dp),
+                                containerColor = Color(0xFF0D0D0D), focusedColor = Color(0xFF1E1E1E),
                                 modifier = Modifier.weight(1f),
                             ) {
                                 Text(
@@ -481,13 +484,11 @@ private fun PhoneServerRow(webServerUrl: String, playerVm: PlayerViewModel) {
                 Text(if (enabled) "On — reachable on your network" else "Off", fontSize = 10.sp, color = Color(0xFF777777))
             }
             // Toggle to turn the :8080 page on/off (it's on by default).
-            Surface(
+            AmClickBox(
                 onClick = { enabled = !enabled; playerVm.setWebServerEnabled(enabled) },
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = if (enabled) Color(0xFF34C759) else Color(0xFF3A3A3C),
-                    focusedContainerColor = if (enabled) Color(0xFF4AD866) else Color(0xFF5A5A5C),
-                ),
+                shape = RoundedCornerShape(50),
+                containerColor = if (enabled) Color(0xFF34C759) else Color(0xFF3A3A3C),
+                focusedColor = if (enabled) Color(0xFF4AD866) else Color(0xFF5A5A5C),
             ) {
                 Text(if (enabled) "On" else "Off", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
@@ -696,14 +697,14 @@ private fun Stepper(label: String, value: String, sub: String, onDec: () -> Unit
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun StepBtn(sym: String, onClick: () -> Unit) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2C), focusedContainerColor = Color(0xFFFA233B)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.12f),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color(0xFF2A2A2C),
+        focusedColor = Color(0xFFFA233B),
+        focusedScale = 1.12f,
         modifier = Modifier.size(38.dp),
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -716,11 +717,12 @@ private fun StepBtn(sym: String, onClick: () -> Unit) {
 @Composable
 private fun Toggle(label: String, on: Boolean, sub: String, enabled: Boolean = true, onToggle: () -> Unit) {
     val dim = if (enabled) 1f else 0.4f
-    Surface(
+    AmClickBox(
         onClick = { if (enabled) onToggle() },
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF161618), focusedContainerColor = Color(0xFF232325)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+        shape = RoundedCornerShape(10.dp),
+        containerColor = Color(0xFF161618),
+        focusedColor = Color(0xFF232325),
+        focusedScale = 1.02f,
         modifier = Modifier.fillMaxWidth().alpha(dim),
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -750,12 +752,13 @@ private fun SidebarItem(label: String, selected: Boolean, muted: Boolean = false
     LaunchedEffect(focused) { if (focused && !selected && selectOnFocus) onSelect() }
     val bg = when { selected -> Color.White; focused -> Color(0xFF2A2A2E); else -> Color.Transparent }
     val fg = when { selected -> Color.Black; muted -> Color(0xFF888888); else -> Color(0xFFDDDDDD) }
-    Surface(
-        onClick = onSelect,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = if (selected) Color.White else Color(0xFF2A2A2E)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
-        modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+    // Foundation clickable → touch tap selects; stays focusable so D-pad focus (and select-on-focus) work.
+    Box(
+        Modifier.fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .clickable { onSelect() },
     ) {
         Text(label, fontSize = 15.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             color = fg, modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp))
@@ -786,13 +789,14 @@ private fun StatusChip(label: String, ok: Boolean, sub: String? = null) {
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun ActionBtn(label: String, color: Color, small: Boolean = false, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = color, focusedContainerColor = color.copy(alpha = 0.7f)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-        modifier = Modifier.height(if (small) 32.dp else 40.dp)) {
+    AmClickBox(
+        onClick = onClick, shape = RoundedCornerShape(6.dp),
+        containerColor = color, focusedColor = color.copy(alpha = 0.7f),
+        focusedScale = 1.05f,
+        modifier = Modifier.height(if (small) 32.dp else 40.dp),
+    ) {
         Box(Modifier.padding(horizontal = if (small) 12.dp else 18.dp), Alignment.Center) {
             Text(label, fontSize = if (small) 11.sp else 13.sp, color = Color.White, fontWeight = FontWeight.Medium)
         }

@@ -31,6 +31,8 @@ import com.applemusicktv.data.model.Artist
 import com.applemusicktv.data.model.Song
 import com.applemusicktv.data.network.PlaylistDto
 import com.applemusicktv.ui.components.AlbumCard
+import com.applemusicktv.ui.components.AmClickBox
+import androidx.compose.foundation.clickable
 import com.applemusicktv.ui.viewmodel.LibraryViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 import com.applemusicktv.ui.viewmodel.SortField
@@ -121,14 +123,12 @@ private fun SectionSidebar(selected: LibrarySection, onSelect: (LibrarySection) 
         )
         LibrarySection.entries.forEach { s ->
             val isSel = s == selected
-            Surface(
+            AmClickBox(
                 onClick = { onSelect(s) },
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = if (isSel) Color(0x33FA233B) else Color.Transparent,
-                    focusedContainerColor = if (isSel) Color(0x4DFA233B) else Color(0xFF232325),
-                ),
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
+                shape = RoundedCornerShape(12.dp),
+                containerColor = if (isSel) Color(0x33FA233B) else Color.Transparent,
+                focusedColor = if (isSel) Color(0x4DFA233B) else Color(0xFF232325),
+                focusedScale = 1.03f,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(
@@ -177,13 +177,11 @@ private fun SortBar(
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Surface(
+        AmClickBox(
             onClick = { showDialog = true },
-            shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = Color(0xFF2A2A2C), focusedContainerColor = Color.White,
-            ),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+            shape  = RoundedCornerShape(50),
+            containerColor = Color(0xFF2A2A2C), focusedColor = Color.White,
+            focusedScale = 1.08f,
         ) {
             Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
                 Text("⇅", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
@@ -250,12 +248,10 @@ private fun SortRow(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E),
-        ),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2C2C2E),
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
     ) {
         Row(
@@ -311,12 +307,12 @@ private fun PlaylistCard(
     onPlay: () -> Unit,
     onTogglePin: () -> Unit,
 ) {
-    Surface(
+    AmClickBox(
         onClick      = onOpen,
         onLongClick  = onTogglePin,
-        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1A1A1A), focusedContainerColor = Color(0xFF252525)),
-        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        shape  = RoundedCornerShape(10.dp),
+        containerColor = Color(0xFF1A1A1A), focusedColor = Color(0xFF252525),
+        focusedScale  = 1.05f,
     ) {
         Column(modifier = Modifier.padding(bottom = 8.dp)) {
             Box(
@@ -358,14 +354,12 @@ private fun PlaylistCard(
                     if (playlist.curatorName.isNotEmpty())
                         Text(playlist.curatorName, fontSize = 10.sp, color = Color(0xFF666666), maxLines = 1)
                 }
-                Surface(
+                AmClickBox(
                     onClick = onPlay,
-                    shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor        = Color(0xFF2A2A2A),
-                        focusedContainerColor = Color(0xFFFA233B),
-                    ),
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                    shape  = RoundedCornerShape(50),
+                    containerColor = Color(0xFF2A2A2A),
+                    focusedColor = Color(0xFFFA233B),
+                    focusedScale = 1.1f,
                     modifier = Modifier.size(28.dp),
                 ) {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -406,9 +400,9 @@ private fun VideoGrid(videos: List<Song>, onClick: (Song) -> Unit) {
         modifier = Modifier.fillMaxSize(),
     ) {
         items(videos, key = { it.id }) { v ->
-            Surface(onClick = { onClick(v) }, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f)) {
+            AmClickBox(onClick = { onClick(v) }, shape = RoundedCornerShape(10.dp),
+                containerColor = Color.Transparent, focusedColor = Color.Transparent,
+                focusedScale = 1.04f) {
                 Column {
                     Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF2A2A2A))) {
                         if (v.artworkUrl != null) AsyncImage(model = v.artworkUrl(600), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -427,8 +421,8 @@ private fun ArtistList(artists: List<Artist>, onArtistClick: (String) -> Unit) {
     if (artists.isEmpty()) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("No artists", color = Color(0xFF555555)) }; return }
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 32.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         items(artists, key = { it.id }) { artist ->
-            Surface(onClick = { onArtistClick(artist.id) }, modifier = Modifier.fillMaxWidth(), shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF1C1C1E)), scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f)) {
+            AmClickBox(onClick = { onArtistClick(artist.id) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp),
+                containerColor = Color.Transparent, focusedColor = Color(0xFF1C1C1E)) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Box(Modifier.size(44.dp).clip(RoundedCornerShape(50)).background(Color(0xFF2A2A2A))) {
                         if (artist.artworkUrl != null) AsyncImage(model = artist.artworkUrl(88), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -453,12 +447,12 @@ private fun SongList(
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 32.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         items(songs.size) { idx ->
             val song = songs[idx]
-            Surface(
+            AmClickBox(
                 onClick = { playerVm.playAlbum(songs, idx) },
                 onLongClick = { menuSong = song },
                 modifier = Modifier.fillMaxWidth(),
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF1C1C1E)), scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f)) {
+                shape = RoundedCornerShape(8.dp),
+                containerColor = Color.Transparent, focusedColor = Color(0xFF1C1C1E)) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Box(Modifier.size(40.dp).clip(RoundedCornerShape(5.dp)).background(Color(0xFF2A2A2A))) {
                         if (song.artworkUrl != null) AsyncImage(model = song.artworkUrl(80), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -523,11 +517,11 @@ private fun SongContextMenu(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun ContextMenuItem(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2E2E30),
     ) {
         Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp))
     }
@@ -549,9 +543,9 @@ private fun SidebarItem(label: String, isSelected: Boolean, onClick: () -> Unit)
     val bg     by animateColorAsState(if (isSelected) Color(0xFF1A1A1A) else Color.Transparent, tween(150))
     val accent by animateColorAsState(if (isSelected) Color(0xFFFA233B) else Color.Transparent, tween(150))
     val text   by animateColorAsState(if (isSelected) Color.White else Color(0xFF999999), tween(150))
-    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth().padding(end = 12.dp),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = Color(0xFF252525))) {
+    AmClickBox(onClick = onClick, modifier = Modifier.fillMaxWidth().padding(end = 12.dp),
+        shape = RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp),
+        containerColor = bg, focusedColor = Color(0xFF252525)) {
         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.width(2.dp).height(20.dp).background(accent, RoundedCornerShape(topEnd = 2.dp, bottomEnd = 2.dp)))
             Text(label, fontSize = 13.sp, color = text, fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal, modifier = Modifier.padding(start = 14.dp))

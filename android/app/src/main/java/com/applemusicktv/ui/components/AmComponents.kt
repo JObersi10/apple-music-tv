@@ -132,6 +132,36 @@ fun AmCard(
     }
 }
 
+/**
+ * Drop-in replacement for a clickable tv-material `Surface` that ALSO responds to a touch tap /
+ * long-press (tv-material 1.0.0 clickables are focus-only and ignore pointer taps). Stays focusable,
+ * so D-pad nav + focusRequesters keep working; `focusedColor`/`focusedScale` reproduce the focus look.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun AmClickBox(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(8.dp),
+    containerColor: Color = Color.Transparent,
+    focusedColor: Color = Color(0xFF2E2E30),
+    focusedScale: Float = 1f,
+    onLongClick: (() -> Unit)? = null,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused && focusedScale != 1f) focusedScale else 1f, label = "amClickScale")
+    Box(
+        modifier
+            .onFocusChanged { focused = it.isFocused }
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(shape)
+            .background(if (focused) focusedColor else containerColor)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        content = content,
+    )
+}
+
 /** A shelf header: bold title with an optional "See All". */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -293,6 +323,10 @@ fun AmContextMenu(
     // DOWN and UP here, so it passes through. Any directional/Back press also arms (user has moved on).
     var armed by remember(title) { mutableStateOf(false) }
     LaunchedEffect(title) { runCatching { firstFocus.requestFocus() } }
+    // Touch has no opening OK key-release to swallow (the menu opened on a pointer long-press), so the
+    // key-up path below never arms it — a tap would silently do nothing. Arm after a short delay as a
+    // fallback: it outlasts the D-pad long-press release yet is far shorter than the time to read + tap.
+    LaunchedEffect(title) { kotlinx.coroutines.delay(350); armed = true }
     fun isOk(k: Key) = k == Key.DirectionCenter || k == Key.Enter || k == Key.NumPadEnter
     // Resolve Apple's {w}x{h}bb.{f} template so the header art shows on every path (library rows
     // carry the raw template; catalog cards arrive pre-resolved — the replace is a no-op there).

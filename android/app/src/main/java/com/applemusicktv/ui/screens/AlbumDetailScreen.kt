@@ -31,6 +31,7 @@ import coil.compose.AsyncImage
 import com.applemusicktv.data.model.Song
 import com.applemusicktv.ui.components.Glyph
 import com.applemusicktv.ui.components.Icon
+import com.applemusicktv.ui.components.AmClickBox
 import com.applemusicktv.ui.viewmodel.AlbumDetailViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 
@@ -97,11 +98,10 @@ fun AlbumDetailScreen(
                 color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
             val albumArtistId = album.artistId ?: state.tracks.firstOrNull()?.artistId
             if (albumArtistId != null) {
-                Surface(
+                AmClickBox(
                     onClick = { onArtistClick(albumArtistId) },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0x1AFA233B)),
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                    shape = RoundedCornerShape(4.dp),
+                    containerColor = Color.Transparent, focusedColor = Color(0x1AFA233B),
                     modifier = Modifier.padding(top = 4.dp),
                 ) {
                     Text(album.artistName, fontSize = 15.sp, color = Color(0xFFFA233B),
@@ -160,11 +160,11 @@ fun AlbumDetailScreen(
                         contentPadding = PaddingValues(end = 24.dp, top = 4.dp, bottom = 10.dp),
                     ) {
                         itemsIndexed(state.musicVideos) { i, v ->
-                            androidx.tv.material3.Surface(
+                            AmClickBox(
                                 onClick = { playerVm.playAlbum(state.musicVideos, i) },
-                                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                                scale = androidx.tv.material3.ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-                                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent, focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent),
+                                shape = RoundedCornerShape(10.dp),
+                                focusedScale = 1.06f,
+                                containerColor = androidx.compose.ui.graphics.Color.Transparent, focusedColor = androidx.compose.ui.graphics.Color.Transparent,
                             ) {
                                 Column(Modifier.width(220.dp).padding(bottom = 6.dp)) {
                                     Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(androidx.compose.ui.graphics.Color(0xFF1A1A1A))) {
@@ -224,11 +224,11 @@ fun AlbumDetailScreen(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun AlbumContextItem(icon: Glyph, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2E2E30),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
@@ -246,16 +246,13 @@ private fun AlbumContextItem(icon: Glyph, label: String, onClick: () -> Unit, mo
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun TrackRow(track: Song, index: Int, isPopular: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit = {}, focusRequester: FocusRequester? = null) {
-    Surface(
+    AmClickBox(
         onClick     = onClick,
         onLongClick = onLongClick,
         modifier = (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).fillMaxWidth(),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = Color.Transparent,
-            focusedContainerColor = Color(0xFF1C1C1E),
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        shape    = RoundedCornerShape(6.dp),
+        containerColor = Color.Transparent,
+        focusedColor = Color(0xFF1C1C1E),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),

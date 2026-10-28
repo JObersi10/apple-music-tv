@@ -31,6 +31,7 @@ import coil.compose.AsyncImage
 import com.applemusicktv.data.model.Song
 import com.applemusicktv.ui.components.Glyph
 import com.applemusicktv.ui.components.Icon
+import com.applemusicktv.ui.components.AmClickBox
 import com.applemusicktv.ui.viewmodel.PlaylistDetailViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 
@@ -225,13 +226,11 @@ private enum class PlaylistSort(val label: String) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @androidx.compose.runtime.Composable
 private fun SortCircleButton(onClick: () -> Unit) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color(0xFF2A2A2C), focusedContainerColor = Color.White,
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        shape = RoundedCornerShape(50),
+        containerColor = Color(0xFF2A2A2C), focusedColor = Color.White,
+        focusedScale = 1.08f,
     ) {
         Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
             Text("⇅", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
@@ -277,12 +276,10 @@ private fun PlaylistSortDialog(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @androidx.compose.runtime.Composable
 private fun PlaylistSortRow(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2C2C2E),
-        ),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2C2C2E),
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
     ) {
         Row(
@@ -301,8 +298,7 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
     items(tracks.size) { idx ->
         val song = tracks[idx]
         val fr = focusFor(song.id)
-        @OptIn(ExperimentalTvMaterial3Api::class)
-        Surface(
+        AmClickBox(
             onClick     = {
                 // Mixed queue: tap plays the whole list from here; playQueueItem routes each
                 // item to the audio engine or the video player.
@@ -311,12 +307,9 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
             onLongClick = { onLongPress(song) },
             modifier = (if (fr != null) Modifier.focusRequester(fr) else Modifier)
                 .fillMaxWidth().padding(horizontal = 16.dp, vertical = 1.dp),
-            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = Color.Transparent,
-                focusedContainerColor = Color(0xFF1C1C1E),
-            ),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+            shape = RoundedCornerShape(8.dp),
+            containerColor = Color.Transparent,
+            focusedColor = Color(0xFF1C1C1E),
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
@@ -351,11 +344,11 @@ private fun LazyListScope.trackItems(tracks: List<Song>, playerVm: PlayerViewMod
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun PlaylistContextItem(icon: Glyph, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2E2E30),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
@@ -374,11 +367,11 @@ private fun PlaylistContextItem(icon: Glyph, label: String, onClick: () -> Unit,
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 internal fun PillButton(glyph: Glyph, label: String, base: Color, focusColor: Color, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
-        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(24.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = base, focusedContainerColor = focusColor),
-        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        shape  = RoundedCornerShape(24.dp),
+        containerColor = base, focusedColor = focusColor,
+        focusedScale  = 1.05f,
         modifier = modifier,
     ) {
         Row(
