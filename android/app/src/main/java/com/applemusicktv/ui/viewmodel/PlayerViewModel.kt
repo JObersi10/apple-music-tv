@@ -1163,6 +1163,14 @@ class PlayerViewModel @Inject constructor(
         val r = pendingRestore ?: return
         pendingRestore = null
         hasPlayedSomething = true
+        // A restored LIVE radio station: its id is `ra.…`, which is NOT a decryptable track — the normal
+        // path hit webPlayback(ra.…) → "no longer available" and playback had nowhere to go. Relaunch the
+        // live stream instead (this is the right "resume" for a live station).
+        if (r.song.id.startsWith("ra.")) {
+            webServer.addLog("PLR", "restore LIVE RADIO ${r.song.id} — relaunch station")
+            playLiveStation(r.song.id, r.song.artworkUrl)
+            return
+        }
         val standalone = r.full && useStandalone()
         usingStandalone = standalone
         viewModelScope.launch {

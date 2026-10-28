@@ -72,7 +72,7 @@ fun DevMenuScreen(
     // settings in a scrolling pane on the right. Categories are focus-to-select (moving the remote
     // onto one shows its pane), like Apple TV Settings.
     val categories = buildList {
-        add("Playback"); add("Now Playing"); add("Storage"); add("Remote"); add("A/V Sync"); add("Software")
+        add("Playback"); add("Lyrics"); add("Now Playing"); add("Audio & Sync"); add("System")
         if (showDev) add("Developer")
     }
     var selectedCat by rememberSaveable { mutableStateOf(0) }
@@ -93,8 +93,9 @@ fun DevMenuScreen(
                 SidebarItem(label, selected = selectedCat == i) { selectedCat = i }
             }
             Spacer(Modifier.height(18.dp))
-            // Reveal / hide the Developer category.
-            SidebarItem(if (showDev) "Hide Developer" else "Developer…", selected = false, muted = true) {
+            // Reveal / hide the Developer category. selectOnFocus=false — merely highlighting it must
+            // NOT toggle it (that was the "focusing opens it" finnicky bug); only an OK press does.
+            SidebarItem(if (showDev) "Hide Developer" else "Developer…", selected = false, muted = true, selectOnFocus = false) {
                 showDev = !showDev
                 if (showDev) selectedCat = categories.size   // jump to the newly-added Developer pane
             }
@@ -111,7 +112,7 @@ fun DevMenuScreen(
           Text(cat, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White,
               modifier = Modifier.padding(bottom = 6.dp))
 
-          if (cat == "Software") {
+          if (cat == "System") {
             UpdatesSection(initialUpdate)
             PhoneServerRow(state.webServerUrl, playerVm)
           }
@@ -147,34 +148,12 @@ fun DevMenuScreen(
             )
           }
 
-          if (cat == "Now Playing") {
-            Stepper(
-                label = "Background",
-                value = pstate.nowPlayingBackground.label,
-                sub = "Colour orbs, projector glow, or solid black",
-                onDec = { playerVm.stepNowPlayingBackground(-1) },
-                onInc = { playerVm.stepNowPlayingBackground(1) },
-            )
+          if (cat == "Lyrics") {
             Toggle(
-                label = "Show info", on = pstate.showNowPlayingInfo,
-                sub = if (pstate.showNowPlayingInfo) "Display the clock and panel hints" else "Hide them for an art-only view",
-                onToggle = { playerVm.toggleNowPlayingInfo() },
-            )
-            // Intensity is the orb SIZE/reactivity; hidden on Black (no orbs). Remembered per mode.
-            if (pstate.nowPlayingBackground.label != "Black") Stepper(
-                label = "Intensity",
-                value = intensityLabel(pstate.beatIntensity),
-                sub = "How hard the background reacts to the beat",
-                onDec = { playerVm.stepBeatIntensity(-1) },
-                onInc = { playerVm.stepBeatIntensity(1) },
-            )
-            // Orb drift speed — only meaningful in Projector.
-            if (pstate.nowPlayingBackground.label == "Projector") Stepper(
-                label = "Orb speed",
-                value = orbSpeedLabel(pstate.orbSpeed),
-                sub = "How fast the orbs drift around",
-                onDec = { playerVm.stepOrbSpeed(-1) },
-                onInc = { playerVm.stepOrbSpeed(1) },
+                label = "Lyrics Renderer v2", on = pstate.lyricsRendererV2,
+                sub = if (pstate.lyricsRendererV2) "Spicy Player engine — spring motion, gradient wipe, credits"
+                      else "Built-in renderer",
+                onToggle = { playerVm.toggleLyricsRendererV2() },
             )
             Stepper(
                 label = "Lyrics size",
@@ -182,22 +161,6 @@ fun DevMenuScreen(
                 sub = "Text size in the lyrics panel",
                 onDec = { playerVm.stepLyricsScale(-1) },
                 onInc = { playerVm.stepLyricsScale(1) },
-            )
-            Toggle(
-                label = "Rounded artwork", on = pstate.artworkRounded,
-                sub = if (pstate.artworkRounded) "Soft rounded album-art corners" else "Square album-art corners",
-                onToggle = { playerVm.toggleArtworkRounded() },
-            )
-            Toggle(
-                label = "Motion artwork", on = pstate.motionArtworkEnabled,
-                sub = if (pstate.motionArtworkEnabled) "Play animated album art when available" else "Off — lighter on the device",
-                onToggle = { playerVm.toggleMotionArtwork() },
-            )
-            Toggle(
-                label = "Lyrics Renderer v2", on = pstate.lyricsRendererV2,
-                sub = if (pstate.lyricsRendererV2) "Spicy Player engine — spring motion, gradient wipe, credits"
-                      else "Built-in renderer",
-                onToggle = { playerVm.toggleLyricsRendererV2() },
             )
             Toggle(
                 label = "Lyrics pronunciation", on = pstate.lyricsRomanize,
@@ -230,6 +193,47 @@ fun DevMenuScreen(
                       else "Gloss every foreign line (skips lines already in your language)",
                 onToggle = { playerVm.toggleTranslateNonLatin() },
             )
+          }
+
+          if (cat == "Now Playing") {
+            Stepper(
+                label = "Background",
+                value = pstate.nowPlayingBackground.label,
+                sub = "Colour orbs, projector glow, or solid black",
+                onDec = { playerVm.stepNowPlayingBackground(-1) },
+                onInc = { playerVm.stepNowPlayingBackground(1) },
+            )
+            Toggle(
+                label = "Show info", on = pstate.showNowPlayingInfo,
+                sub = if (pstate.showNowPlayingInfo) "Display the clock and panel hints" else "Hide them for an art-only view",
+                onToggle = { playerVm.toggleNowPlayingInfo() },
+            )
+            // Intensity is the orb SIZE/reactivity; hidden on Black (no orbs). Remembered per mode.
+            if (pstate.nowPlayingBackground.label != "Black") Stepper(
+                label = "Intensity",
+                value = intensityLabel(pstate.beatIntensity),
+                sub = "How hard the background reacts to the beat",
+                onDec = { playerVm.stepBeatIntensity(-1) },
+                onInc = { playerVm.stepBeatIntensity(1) },
+            )
+            // Orb drift speed — only meaningful in Projector.
+            if (pstate.nowPlayingBackground.label == "Projector") Stepper(
+                label = "Orb speed",
+                value = orbSpeedLabel(pstate.orbSpeed),
+                sub = "How fast the orbs drift around",
+                onDec = { playerVm.stepOrbSpeed(-1) },
+                onInc = { playerVm.stepOrbSpeed(1) },
+            )
+            Toggle(
+                label = "Rounded artwork", on = pstate.artworkRounded,
+                sub = if (pstate.artworkRounded) "Soft rounded album-art corners" else "Square album-art corners",
+                onToggle = { playerVm.toggleArtworkRounded() },
+            )
+            Toggle(
+                label = "Motion artwork", on = pstate.motionArtworkEnabled,
+                sub = if (pstate.motionArtworkEnabled) "Play animated album art when available" else "Off — lighter on the device",
+                onToggle = { playerVm.toggleMotionArtwork() },
+            )
             Toggle(
                 label = "Reduce motion", on = pstate.reduceMotion,
                 sub = if (pstate.reduceMotion) "Background holds still" else "Background drifts and pulses",
@@ -255,7 +259,7 @@ fun DevMenuScreen(
             )
           }
 
-          if (cat == "Storage") {
+          if (cat == "Playback") {
             val cacheCap by playerVm.cacheCapBytes.collectAsState()
             Stepper(
                 label = "Media cache",
@@ -266,7 +270,7 @@ fun DevMenuScreen(
             )
           }
 
-          if (cat == "Remote") {
+          if (cat == "System") {
             var remote by remember { mutableStateOf(playerVm.remoteOverride()) }
             val remoteOrder = listOf(
                 com.applemusicktv.data.OnboardingPreferences.REMOTE_AUTO,
@@ -291,7 +295,7 @@ fun DevMenuScreen(
             )
           }
 
-          if (cat == "A/V Sync") {
+          if (cat == "Audio & Sync") {
             // One delay drives both the beat visuals and the lyric clock. A ~200 ms display baseline is
             // built in (so this normally reads 0); Automatic adds a Bluetooth estimate on top when a BT
             // output is live. "Extra" is your own nudge on top of all that.
@@ -740,9 +744,11 @@ private fun Toggle(label: String, on: Boolean, sub: String, enabled: Boolean = t
  *  bright white floating card (black text); focused-but-not-selected lifts to a translucent card. */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SidebarItem(label: String, selected: Boolean, muted: Boolean = false, onSelect: () -> Unit) {
+private fun SidebarItem(label: String, selected: Boolean, muted: Boolean = false, selectOnFocus: Boolean = true, onSelect: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    LaunchedEffect(focused) { if (focused && !selected) onSelect() }
+    // Category rows select on focus (tvOS behaviour). An ACTION row (e.g. the Developer reveal) must
+    // NOT — focusing it would fire its action; it only acts on an explicit OK/click.
+    LaunchedEffect(focused) { if (focused && !selected && selectOnFocus) onSelect() }
     val bg = when { selected -> Color.White; focused -> Color(0xFF2A2A2E); else -> Color.Transparent }
     val fg = when { selected -> Color.Black; muted -> Color(0xFF888888); else -> Color(0xFFDDDDDD) }
     Surface(
