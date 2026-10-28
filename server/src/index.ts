@@ -114,4 +114,19 @@ if (addrs.length === 0) {
   console.log("   Enter this on the TV:")
   for (const a of addrs) console.log(`     http://${a.split("  ")[0]}:${PORT}   ${a.split("  ")[1]}`)
 }
+// Advertise over mDNS/Bonjour so the TV/Switch can auto-find this machine when its IP changes —
+// no more typing an IP or getting stuck in standalone when the server moves. The app browses for
+// `_amproxy._tcp`. Best-effort: if the dep/stack isn't available we just skip it.
+;(async () => {
+  try {
+    const mod: any = await import("bonjour-service")
+    const Bonjour = mod.Bonjour ?? mod.default
+    const bonjour = new Bonjour()
+    bonjour.publish({ name: "Apple Music TV Proxy", type: "amproxy", protocol: "tcp", port: PORT })
+    console.log("   mDNS: advertising _amproxy._tcp on this LAN")
+  } catch (e: any) {
+    console.log(`   mDNS advertise skipped (${e?.message ?? e})`)
+  }
+})()
+
 export default { port: PORT, fetch: app.fetch, idleTimeout: 0 }

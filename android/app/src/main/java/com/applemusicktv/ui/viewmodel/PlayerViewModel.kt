@@ -242,6 +242,9 @@ class PlayerViewModel @Inject constructor(
     val beatAnalyzer: BeatAnalyzer,
 ) : ViewModel() {
 
+    // mDNS auto-discovery of the PC proxy when the server goes unreachable (built from context).
+    private val serverDiscovery = com.applemusicktv.data.ServerDiscovery(context)
+
     private fun hasMUT() = mutPrefs.hasMUT()
     private fun isStandalone() = !serverPrefs.hasPcServer()
 
@@ -977,7 +980,7 @@ class PlayerViewModel @Inject constructor(
     }
 
     /** Health-check the configured server; flips to/from standalone accordingly. */
-    fun recheckServer() = viewModelScope.launch {
+    fun recheckServer(): kotlinx.coroutines.Job = viewModelScope.launch {
         val up = repo.pingServer()
         val wasDown = !serverPrefs.serverReachable
         serverPrefs.serverReachable = up
@@ -988,6 +991,14 @@ class PlayerViewModel @Inject constructor(
         if (!up) {
             if (!wasDown && announce) toast("Lost connection to the server")
             repo.prepareStandalone()
+            // Server unreachable — auto-find it on the LAN over mDNS (it may have changed IP). On a
+            // hit, point at the new address and re-check so playback leaves standalone on its own.
+            serverDiscovery.discover { url ->
+                if (url.trimEnd('/') != serverPrefs.effectiveBaseUrl().trimEnd('/')) {
+                    serverPrefs.setPcServerIp(url)
+                    recheckServer()
+                }
+            }
         } else if (wasDown) {
             // Recovered — reset standalone flag so next play uses proxy.
             usingStandalone = false

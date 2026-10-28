@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@syncfm/applemusic-api": "latest",
+    "bonjour-service": "^1.4.4",
     "hono": "^4.6.0"
   }
 }
