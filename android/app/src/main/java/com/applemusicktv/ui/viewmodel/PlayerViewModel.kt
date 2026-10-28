@@ -1778,6 +1778,11 @@ class PlayerViewModel @Inject constructor(
             previewUrl = null, hasLyrics = false,
         )
         _state.update { it.copy(queue = listOf(fakeSong), currentSong = fakeSong, song = fakeSong, queueIndex = 0, lyrics = emptyList(), isFullStream = true, motionUrl = null, isLiveRadio = true, userQueue = emptyList(), radioStationArt = art) }
+        hasPlayedSomething = true
+        // Persist the station right away so a cold reopen restores it into Now Playing (and press-play
+        // relaunches it) instead of the last SONG played before radio. saveState normally fires on song
+        // change / the play ticker, but the live-radio player doesn't drive those the same way.
+        saveState()
 
         // Live radio uses a STANDARD Widevine proxy (raw challenge → raw license) at Apple's
         // linear.tv key server — NOT the song `acquireWebPlaybackLicense` JSON wrapper. So the

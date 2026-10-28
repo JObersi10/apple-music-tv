@@ -4,6 +4,29 @@ User-facing changes, newest first. Each entry covers one PR/branch. Only net
 features and fixes to previously-shipped behavior are listed — not the internal
 back-and-forth of tuning something added in the same entry.
 
+## feat/radio-artist-shazam-v2 — 2026-10-27
+
+### Added
+- **Settings redesigned** as a tvOS split-view: a category sidebar (Playback / Lyrics /
+  Now Playing / Audio & Sync / System / Developer) with a content pane on the right.
+- **Game controller support**: R1/L1 switch tabs, Options = Now Playing / lyrics↔queue,
+  Y = play/pause, L2/R2 = previous/next.
+- **Sign in on the TV** during setup (in-app Apple Music login) — with a note that it
+  works best with a touchscreen or cursor; the phone token is still the reliable way.
+- **Music videos stream through the PC server** when it's reachable (no more cross-tab
+  video "bleed"); falls back to on-device otherwise.
+
+### Fixed
+- **Adding a Radio song to a playlist** works now (it added the station, not the track).
+- **Reopening while Apple Music radio is playing** restores the station (and Now Playing
+  shows it) instead of getting stuck on the last song.
+- **The current radio song updates live** on Now Playing without leaving and returning.
+- **Matched / iTunes-Match songs no longer skip**; uploaded songs play.
+- **Faster song start through the server** (~8× quicker) and correct high-quality audio.
+- **Motion album art is smooth again** (and full quality) instead of choppy.
+- **Lyric translation fades in** smoothly; held-word letters no longer clip the next word.
+- **A song that fails mid-play resumes where it was**, not from 0:00.
+
 ## feat/radio-artist-shazam-v2 — 2026-10-19
 
 ### Added
