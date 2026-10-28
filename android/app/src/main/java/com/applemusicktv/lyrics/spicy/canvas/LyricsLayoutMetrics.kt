@@ -36,8 +36,14 @@ internal data class LyricsLayoutMetrics(
         }
         val inset = if (wideDuet) 0.15f else 0.05f
         val startsAtInset = if (isRtl) !oppositeAligned else oppositeAligned
+        // Only the duet/call-response voice (the inset side) gets the narrow column. The primary
+        // voice — most lines in a song that merely has a few adlib lines — keeps full width, so a
+        // handful of opposite-aligned lines no longer shrink every line and force needless wraps.
+        if (!startsAtInset) {
+            return ContentSlot(viewportWidthPx * 0.05f, viewportWidthPx * 0.90f)
+        }
         return ContentSlot(
-            viewportWidthPx * (if (startsAtInset) inset else 0.05f),
+            viewportWidthPx * inset,
             viewportWidthPx * (0.95f - inset),
         )
     }

@@ -427,7 +427,13 @@ private fun DrawScope.drawSyllabicLetterFragment(
     // letter's own center. Recover the word's left edge from this fragment's offset within it.
     // ponytail: single-row word-center pivot; wrapped held words approximate.
     val wordLeftX = xPos - wLayout.startXOffset
-    val wordPivotX = wordLeftX + wLayout.fullWordWidth * anchor
+    // A word split across a wrap: this fragment's position within its ROW (relativeOffset.x) is
+    // left of its offset within the WORD (startXOffset), i.e. the word's true left edge sits on the
+    // previous row. The word-center pivot then lands off to the left and scaling shoves this
+    // fragment sideways — the wrapped row looked indented and drifted as the word swelled. Pivot
+    // such a fragment about its own centre instead.
+    val wrappedContinuation = wLayout.relativeOffset.x < wLayout.startXOffset - 0.5f
+    val wordPivotX = if (wrappedContinuation) sPivotX else wordLeftX + wLayout.fullWordWidth * anchor
     // Offsets are in lyric font sizes (--DefaultLyricsSize); a letter's is applied ×2.
     val lyricSize = lyricSizePx(wLayout.textLayoutResult, lineAnim.isBackground)
     val boost = config.wordMotionBoost
