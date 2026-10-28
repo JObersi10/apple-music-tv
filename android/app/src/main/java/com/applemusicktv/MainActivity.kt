@@ -132,18 +132,21 @@ class MainActivity : ComponentActivity() {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // ── Game controller (PS/Xbox) shortcuts, context-independent ──────────────
-        // R1/L1 = next/prev top nav tab; Options/Start = the Menu button (Now Playing / toggle the
-        // lyrics↔queue panel). Handled before the per-screen branches so they work everywhere.
+        // R1/L1 = next/prev top nav tab; X = the Menu button (Now Playing / toggle the lyrics↔queue
+        // panel); − (Select) = previous song, + (Start) = next song. Handled before the per-screen
+        // branches so they work everywhere.
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_BUTTON_R1 -> { navVm.cycleTab(1); return true }
                 KeyEvent.KEYCODE_BUTTON_L1 -> { navVm.cycleTab(-1); return true }
-                KeyEvent.KEYCODE_BUTTON_START -> {
+                KeyEvent.KEYCODE_BUTTON_X -> {
                     if (navVm.isOnNowPlaying) {
                         if (navVm.isOnMusicVideo) mvVm.toggleQueue() else navVm.toggleQueuePanel()
                     } else navVm.navigateToNowPlaying()
                     return true
                 }
+                KeyEvent.KEYCODE_BUTTON_SELECT -> { if (navVm.isOnMusicVideo) mvVm.prev() else playerVm.prev(); return true }
+                KeyEvent.KEYCODE_BUTTON_START -> { if (navVm.isOnMusicVideo) mvVm.next() else playerVm.next(); return true }
             }
         }
         // While a video is active, media keys drive the VIDEO — never the (paused) audio

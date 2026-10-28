@@ -15,6 +15,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -112,6 +113,18 @@ fun AppShell(modifier: Modifier = Modifier) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentEntry?.destination?.route
     val isOnNowPlaying = currentRoute == Screen.NowPlaying.route
+    // Go fullscreen on Now Playing: hide the top status bar and the bottom nav buttons (immersive,
+    // swipe to reveal), bring them back on every other screen. No-op on a TV (no system bars).
+    val immersiveView = LocalView.current
+    LaunchedEffect(isOnNowPlaying) {
+        (immersiveView.context as? Activity)?.window?.let { win ->
+            val controller = androidx.core.view.WindowCompat.getInsetsController(win, immersiveView)
+            controller.systemBarsBehavior =
+                androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if (isOnNowPlaying) controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            else controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        }
+    }
     val videoActive by mvVm.active.collectAsState()
     val mvState by mvVm.state.collectAsState()
     // Integrated queue: PlayerViewModel owns one queue of songs AND videos. When the current
