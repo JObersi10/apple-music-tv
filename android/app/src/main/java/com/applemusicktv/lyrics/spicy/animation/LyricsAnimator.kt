@@ -86,8 +86,11 @@ class LyricsAnimator(
         // Resting scale 1.0 (was 0.95): a shrunk pre-sung letter sat at its full-size kerned position,
         // so the smaller glyph left a wider gap — "spacing between letters on slow words kinda wide".
         // Full size at rest = natural spacing; the subtle grow still happens while sung (peak 1.06).
-        letterScaleSpline = if (simple) spline(0f to 1f, 0.7f to 1.05f, 1f to 1f)
-            else spline(0f to 1f, 0.7f to 1.06f, 1f to 1f)
+        // Peak trimmed (1.06→1.035): per-letter scale grows each glyph about its own centre, so a held
+        // word's edge letters pushed ~6% past the word box and clipped the next word. 3.5% stays within
+        // the inter-word gap on this layout while keeping a visible grow. (Fine-tune live if needed.)
+        letterScaleSpline = if (simple) spline(0f to 1f, 0.7f to 1.03f, 1f to 1f)
+            else spline(0f to 1f, 0.7f to 1.035f, 1f to 1f)
         letterYOffsetSpline = if (simple) spline(0f to 0.01f, 0.9f to -1f / 62f, 1f to 0f)
             else spline(0f to 0.01f, 0.9f to -1f / 56f, 1f to 0f)
         dotOpacitySpline = spline(0f to (if (simple) 0.27f else 0.35f), 0.6f to 1f, 1f to 1f)
