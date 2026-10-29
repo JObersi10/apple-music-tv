@@ -54,6 +54,12 @@ fun SpicyLyricsPanel(
     durationMs: Long = 0L,
     /** Off = unsynced (no-timing) lyrics stay put; user scrolls them by hand. */
     autoScrollUnsynced: Boolean = true,
+    /** Smooth Scrolling: spring motion instead of snap. */
+    smoothScroll: Boolean = false,
+    /** Early Scroll lead in ms (0 = off). */
+    earlyScrollMs: Int = 0,
+    /** Seek Fade-in Compensation: a lyric tap seeks slightly early. */
+    seekFadeComp: Boolean = false,
 ) {
     // Pronunciation: romanize the lyrics off the main thread (dictionary-backed Japanese etc. is heavy),
     // keyed on the lyrics + the toggle. Null until computed / when off. Applied per-word below so the
@@ -128,7 +134,14 @@ fun SpicyLyricsPanel(
         // zeroes glowSpline in LyricsAnimator, plus distanceBlurEnabled=false here kills the StackBlur —
         // the heaviest per-frame cost). So low-power on v2 is genuinely cheap.
         config = (if (richMotion) RenderConfig.FULL else RenderConfig.SIMPLE)
-            .copy(distanceBlurEnabled = richMotion),
+            .copy(
+                distanceBlurEnabled = richMotion,
+                scroll = com.applemusicktv.lyrics.spicy.ScrollConfig(
+                    leadMs = earlyScrollMs.toLong(),
+                    smooth = smoothScroll,
+                    seekFadeCompensation = seekFadeComp,
+                ),
+            ),
         lyricsType = built.type,
         romanize = romanizeActive,
         isPlaying = isPlaying,

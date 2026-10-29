@@ -168,6 +168,25 @@ fun DevMenuScreen(
                 },
                 onToggle = { playerVm.toggleLyricsRomanize() },
             )
+            SectionLabel("Scrolling")
+            Toggle(
+                label = "Smooth scrolling", on = pstate.smoothLyricScroll,
+                sub = if (pstate.smoothLyricScroll) "Lyrics glide between lines with a spring" else "Off — snap line to line (lighter on slow devices)",
+                onToggle = { playerVm.setSmoothLyricScroll(!pstate.smoothLyricScroll) },
+            )
+            Stepper(
+                label = "Early scroll",
+                value = if (pstate.earlyScrollMs <= 0) "Off" else "${pstate.earlyScrollMs} ms",
+                sub = "Start moving to the next line this early, so the move feels less abrupt.",
+                onDec = { playerVm.setEarlyScrollMs(pstate.earlyScrollMs - 50) },
+                onInc = { playerVm.setEarlyScrollMs(pstate.earlyScrollMs + 50) },
+            )
+            Toggle(
+                label = "Seek fade-in compensation", on = pstate.seekFadeComp,
+                sub = if (pstate.seekFadeComp) "Tapping a line jumps ~300ms before it, so the player's fade-in doesn't cut the start"
+                      else "Off — a lyric tap seeks exactly to that line",
+                onToggle = { playerVm.setSeekFadeComp(!pstate.seekFadeComp) },
+            )
             Toggle(
                 label = "Auto-scroll unsynced lyrics", on = pstate.autoScrollUnsynced,
                 sub = if (pstate.autoScrollUnsynced) "Lyrics without timing scroll through at the song's pace, top to bottom"

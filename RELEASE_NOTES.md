@@ -19,8 +19,15 @@ Phone / touchscreen and vibration polish on top of PR #5.
 - **Music haptics strength** — 0–200% intensity.
 - **Try the music haptics** — Kick / Snare / Note / Drop test taps.
 
-### Lyrics
+### Lyrics — Scrolling
+- **Smooth scrolling** toggle — spring glide between lines (off = snap, lighter on slow devices).
+- **Early scroll** — start moving to the next line up to 600 ms early so it feels less abrupt.
+- **Seek fade-in compensation** — a lyric tap jumps ~300 ms early so the player's fade-in doesn't eat the line's start.
 - **Auto-scroll unsynced lyrics** toggle — lyrics with no timing glide top→bottom at the song's pace.
+
+### Fixed
+- **Now Playing controls on touch** — tapping while the chrome is hidden now reveals the play/pause/skip buttons instead of a dead "ghost" tap.
+- **Cold open on live radio** — reopening shows "Apple Music Radio" and relaunches the live stream, not the last song played before radio.
 
 ### Other
 - **Extra offset** now steps ±10 ms (was ±50 ms) for fine lyric/beat sync.

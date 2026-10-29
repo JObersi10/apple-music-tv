@@ -141,6 +141,12 @@ data class PlayerState(
     val lyricsRomanize:   Boolean         = false,
     /** Unsynced (no-timing) lyrics glide top→bottom at the song's pace. */
     val autoScrollUnsynced: Boolean       = true,
+    /** Smooth Scrolling: a spring moves the lyrics instead of snapping line-to-line. */
+    val smoothLyricScroll: Boolean        = false,
+    /** Early Scroll: begin moving to the next line this many ms before it goes active (0 = off). */
+    val earlyScrollMs:    Int             = 0,
+    /** Seek Fade-in Compensation: a lyric tap seeks ~300ms early so the player's fade-in doesn't eat the line. */
+    val seekFadeComp:     Boolean         = false,
     val isFullStream:     Boolean         = false,
     val motionUrl:        String?         = null,
     /** A/V-sync EXTRA the user dials on top of everything. 0 normally; the only value shown in the UI. */
@@ -531,6 +537,9 @@ class PlayerViewModel @Inject constructor(
     /** The station's own cover (Apple Music 1 logo, etc.) — shown when paused, since a paused
      *  stream has no "current track". Kept across the metadata track-art swaps. */
     private var radioStationArt: String? = null
+    /** The live station's own `ra.…` id, kept because onRadioMetadata mutates currentSong.id to the
+     *  playing track — without this, saveState persists the track and a cold reopen shows it, not radio. */
+    private var radioStationId: String? = null
 
     /** Warn (throttled) when the device is under memory pressure — the Fire TV reclaims the media
      *  codec when RAM runs low, which is what drops live radio. Thermal isn't readable without
@@ -562,6 +571,7 @@ class PlayerViewModel @Inject constructor(
         if (!radioActive) return
         radioActive = false
         radioRecoveries = 0
+        radioStationId = null
         _state.update { it.copy(isLiveRadio = false) }
         swapPlayer { buildExoPlayer() }
     }
@@ -1082,7 +1092,13 @@ class PlayerViewModel @Inject constructor(
     private fun saveState() = saveState(false)
     private fun saveState(commit: Boolean) {
         val s = _state.value
-        val song = s.currentSong ?: return
+        val cur = s.currentSong ?: return
+        // Live radio: onRadioMetadata rewrote currentSong.id to the playing TRACK. Persist the STATION
+        // (ra.…) instead, with the station name, so a cold reopen shows "Apple Music Radio" and press-play
+        // relaunches the live stream — not the last track that happened to be on.
+        val song = if (s.isLiveRadio && radioStationId != null)
+            cur.copy(id = radioStationId!!, title = "Apple Music Radio", artistName = "Apple Music", durationMs = 0L)
+        else cur
         // Mid-crossfade _state already points at the NEXT song while `player` is still
         // the outgoing one, so a save here pairs one song's title with another song's
         // position — which is how a restore lands on the wrong track.
@@ -1161,7 +1177,7 @@ class PlayerViewModel @Inject constructor(
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), autoScrollUnsynced = prefs.getBoolean("auto_scroll_unsynced", true), progressMs = posMs) }
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), autoScrollUnsynced = prefs.getBoolean("auto_scroll_unsynced", true), smoothLyricScroll = prefs.getBoolean("smooth_lyric_scroll", false), earlyScrollMs = prefs.getInt("early_scroll_ms", 0), seekFadeComp = prefs.getBoolean("seek_fade_comp", false), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {
@@ -1835,6 +1851,7 @@ class PlayerViewModel @Inject constructor(
         lastErrorKey = null
         val art = stationArt ?: radioStationArt
         radioStationArt = art
+        radioStationId = stationId
         val fakeSong = com.applemusicktv.data.model.Song(
             id = stationId, title = "Apple Music Radio", artistName = "Apple Music",
             albumName = "", durationMs = 0L, artworkUrl = art, artworkBgColor = null,
@@ -2390,6 +2407,22 @@ class PlayerViewModel @Inject constructor(
     fun setAutoScrollUnsynced(on: Boolean) {
         _state.update { it.copy(autoScrollUnsynced = on) }
         prefs.edit { putBoolean("auto_scroll_unsynced", on) }
+    }
+
+    fun setSmoothLyricScroll(on: Boolean) {
+        _state.update { it.copy(smoothLyricScroll = on) }
+        prefs.edit { putBoolean("smooth_lyric_scroll", on) }
+    }
+
+    fun setEarlyScrollMs(ms: Int) {
+        val v = ms.coerceIn(0, 600)
+        _state.update { it.copy(earlyScrollMs = v) }
+        prefs.edit { putInt("early_scroll_ms", v) }
+    }
+
+    fun setSeekFadeComp(on: Boolean) {
+        _state.update { it.copy(seekFadeComp = on) }
+        prefs.edit { putBoolean("seek_fade_comp", on) }
     }
 
     fun toggleLyricsRomanize() {

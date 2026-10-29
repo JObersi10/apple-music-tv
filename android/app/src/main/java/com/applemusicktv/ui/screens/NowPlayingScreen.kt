@@ -714,6 +714,9 @@ fun NowPlayingScreen(
                                 romanizeReloadKey = state.jaPackDownloading,
                                 durationMs = state.currentSong?.durationMs ?: 0L,
                                 autoScrollUnsynced = state.autoScrollUnsynced,
+                                smoothScroll = state.smoothLyricScroll,
+                                earlyScrollMs = state.earlyScrollMs,
+                                seekFadeComp = state.seekFadeComp,
                             )
                         }
                     } else if (state.lyricsLoaded) {
@@ -745,6 +748,21 @@ fun NowPlayingScreen(
         }
             }
         } }
+        // Touch-to-wake: while the chrome is auto-hidden, the transport buttons are invisible but a tap
+        // still "ghost-hit" them. This overlay sits on top only while hidden and the first tap just
+        // reveals the controls (like a D-pad nav press does); once visible it's gone so taps reach the
+        // real play/pause/skip buttons. D-pad path is untouched.
+        if (!screensaverOn && !chromeVisible) {
+            Box(
+                Modifier.fillMaxSize().clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                ) {
+                    val now = System.currentTimeMillis()
+                    lastInteractionMs = now; lastNavMs = now; chromeVisible = true
+                },
+            )
+        }
         if (!screensaverOn) NextUpToast(
             progressState = smoothProgress,
             durationMs = song.durationMs,
