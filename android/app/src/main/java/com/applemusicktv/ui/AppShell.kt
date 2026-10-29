@@ -5,6 +5,8 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -818,10 +820,11 @@ fun AppShell(modifier: Modifier = Modifier) {
         if (isOnNowPlaying && !navRevealed) {
             Box(
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(navBarHeight)
-                    .clickable(
-                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                        indication = null,
-                    ) { navRevealed = true },
+                    // pointerInput, NOT clickable — clickable is focusable and stole D-pad Up focus (you
+                    // had to press OK to reveal the bar). This is touch-only; the remote ignores it.
+                    .pointerInput(Unit) {
+                        detectTapGestures { navRevealed = true }
+                    },
             )
         }
 

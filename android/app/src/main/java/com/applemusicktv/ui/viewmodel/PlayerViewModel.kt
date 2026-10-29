@@ -141,8 +141,8 @@ data class PlayerState(
     val lyricsRomanize:   Boolean         = false,
     /** Unsynced (no-timing) lyrics glide top→bottom at the song's pace. */
     val autoScrollUnsynced: Boolean       = true,
-    /** Smooth Scrolling: a spring moves the lyrics instead of snapping line-to-line. */
-    val smoothLyricScroll: Boolean        = false,
+    /** Smooth Scrolling: a spring glides the lyrics; OFF snaps line-to-line. Default on. */
+    val smoothLyricScroll: Boolean        = true,
     /** Early Scroll: begin moving to the next line this many ms before it goes active (0 = off). */
     val earlyScrollMs:    Int             = 0,
     /** Seek Fade-in Compensation: a lyric tap seeks ~300ms early so the player's fade-in doesn't eat the line. */
@@ -1177,7 +1177,7 @@ class PlayerViewModel @Inject constructor(
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), autoScrollUnsynced = prefs.getBoolean("auto_scroll_unsynced", true), smoothLyricScroll = prefs.getBoolean("smooth_lyric_scroll", false), earlyScrollMs = prefs.getInt("early_scroll_ms", 0), seekFadeComp = prefs.getBoolean("seek_fade_comp", false), progressMs = posMs) }
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), autoScrollUnsynced = prefs.getBoolean("auto_scroll_unsynced", true), smoothLyricScroll = prefs.getBoolean("smooth_lyric_scroll", true), earlyScrollMs = prefs.getInt("early_scroll_ms", 0), seekFadeComp = prefs.getBoolean("seek_fade_comp", false), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {

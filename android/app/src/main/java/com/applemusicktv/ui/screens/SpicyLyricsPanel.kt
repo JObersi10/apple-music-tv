@@ -201,7 +201,7 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
         return SpicyDoc(
             buildList {
                 lyrics.forEachIndexed { i, ln ->
-                    add(SLine(tokenize(ln.text, 0L, 0L).mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) },
+                    add(SLine(splitRomanizedForWrap(tokenize(ln.text, 0L, 0L).mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) }),
                         0L, 0L, role = LineRole.LEAD))
                     transLine(i, 0L, 0L, ln.text, rightAligned = false)?.let { add(it) }
                 }
@@ -219,6 +219,7 @@ private fun buildSpicyDocument(lyrics: List<LyricLine>, romanized: List<List<Str
             ln.words.map { SWord(it.text, it.startMs, it.endMs) }
         } else tokenize(ln.text, ln.startMs, ln.endMs)) // line-synced: split so the line can wrap
             .mapIndexed { wi, w -> w.copy(romanizedText = rom(i, wi)) }
+            .let(::splitRomanizedForWrap)
         out.add(SLine(leadWords, ln.startMs, ln.endMs, role = LineRole.LEAD, groupId = i,
             oppositeAligned = ln.oppositeAligned)) // duet/alternate vocals → right-aligned
         // The lead's translation goes DIRECTLY under the lead (not after the bg vocal), so the gloss
@@ -250,4 +251,19 @@ private fun tokenize(text: String, startMs: Long, endMs: Long): List<SWord> {
     val toks = text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
     if (toks.isEmpty()) return listOf(SWord(text, startMs, endMs))
     return toks.map { SWord(it, startMs, endMs) }
+}
+
+/**
+ * A Japanese/CJK line has NO spaces, so it tokenizes to a single Word holding the whole line. Romanized,
+ * that one Word becomes a long multi-word romaji run ("hachi hyaku man no itami ya kanashimi") that the
+ * renderer can't break — it runs off the right edge. When a Word's romanization DOES have spaces but its
+ * original text doesn't, split it into one Word per romaji token (sharing the line's timing) so the line
+ * wraps. No-op when romanization is off (romanizedText is null) or already space-delimited.
+ */
+private fun splitRomanizedForWrap(words: List<SWord>): List<SWord> = words.flatMap { w ->
+    val rt = w.romanizedText?.trim()
+    if (rt != null && rt.contains(' ') && !w.text.trim().contains(Regex("\\s"))) {
+        rt.split(Regex("\\s+")).filter { it.isNotBlank() }
+            .map { chunk -> w.copy(text = chunk, romanizedText = chunk, isPartOfWord = false) }
+    } else listOf(w)
 }

@@ -535,7 +535,8 @@ fun LyricsView(
                         } else {
                             navIndex = targetIndex
                             navTargetY = targetY
-                            navSnap = decision.motion == ScrollMotion.SNAP
+                            // Smooth off → snap straight to each line (no glide). On → the normal motion.
+                            navSnap = decision.motion == ScrollMotion.SNAP || !scrollConfigUpdated.smooth
                         }
                         scrollManager.updateScroll(
                             deltaTime, totalContentHeight, navIndex.takeIf { navTargetY != null }, navTargetY,
