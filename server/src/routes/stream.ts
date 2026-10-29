@@ -10,6 +10,7 @@ const stream = new Hono();
 
 const PYTHON = process.env.PYTHON_BIN || "python3";
 const DECRYPT_SCRIPT = path.join(import.meta.dir, "../../stream_decrypt.py");
+const MV_DECRYPT_SCRIPT = path.join(import.meta.dir, "../../mv_decrypt.py");
 
 const CACHE_DIR = path.join(os.tmpdir(), "am_stream_cache");
 fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -162,7 +163,40 @@ async function ensureDecrypted(songId: string, mut: string, background = false):
     try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
     console.log(`[stream] decrypt start ${songId}`);
 
-    const { streamUrl, adamId, keyUri } = await getStreamParams(songId, mut);
+    const params = await getStreamParams(songId, mut);
+    const { streamUrl, adamId, keyUri } = params;
+    if ((params as any).direct) {
+      // Uploaded / iTunes-Match: the asset URL is the user's own unprotected file — download it straight
+      // to the cache (no decryption). ExoPlayer sniffs + Range-seeks it. Remux to a faststart MP4 (stream
+      // copy) so M4A with a trailing moov still seeks instantly; if copy can't container it (e.g. raw
+      // MP3), fall back to a plain download.
+      console.log(`[stream] direct download ${songId} ← ${streamUrl.substring(0, 60)}…`);
+      const ff = process.env.FFMPEG_BIN || "ffmpeg";
+      const remuxed = await new Promise<boolean>((resolve) => {
+        const child = spawn(ff, ["-y", "-i", streamUrl, "-map", "0:a:0", "-c:a", "copy",
+          "-movflags", "+faststart", "-f", "mp4", tmpOut]);
+        entry.child = child;
+        let stderr = "";
+        child.stderr.on("data", (d) => { stderr += d.toString(); });
+        child.on("error", () => resolve(false));
+        child.on("close", (code) => {
+          if (code === 0 && fs.existsSync(tmpOut) && fs.statSync(tmpOut).size > 0) resolve(true);
+          else { console.log(`[stream] direct remux copy failed (${code}), raw download`); resolve(false); }
+        });
+      });
+      if (!remuxed) {
+        try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+        const resp = await axios.get(streamUrl, { responseType: "stream", timeout: 60_000,
+          headers: { "User-Agent": "AppleMusicTV" } });
+        await new Promise<void>((resolve, reject) => {
+          const ws = fs.createWriteStream(tmpOut);
+          resp.data.pipe(ws);
+          ws.on("finish", () => resolve());
+          ws.on("error", reject);
+          resp.data.on("error", reject);
+        });
+      }
+    } else {
     const args = JSON.stringify({
       adamId, keyUri, streamUrl, bearer: getBearerToken(), mut, outPath: tmpOut,
     });
@@ -177,12 +211,19 @@ async function ensureDecrypted(songId: string, mut: string, background = false):
         if (code === 0) resolve();
         else {
           try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
-          const err = new Error(`decrypt exited ${code}: ${stderr}`);
+          // The one failure that looks like a dead MUT but isn't: the decrypt script's TLS handshake
+          // hitting a MITM proxy. Name it so the log doesn't send the next reader hunting for a token.
+          const hint = stderr.includes("CERTIFICATE_VERIFY_FAILED")
+            ? " — TLS cert rejected; a system/VPN proxy is intercepting. stream_decrypt.py ignores OS "
+              + "proxy settings; set AM_HTTP_PROXY + AM_CA_BUNDLE in server/.env to use one deliberately."
+            : "";
+          const err = new Error(`decrypt exited ${code}: ${stderr}${hint}`);
           (err as any).exitCode = code;
           reject(err);
         }
       });
     });
+    }
     fs.renameSync(tmpOut, out);
     const sizeMb = (fs.statSync(out).size / 1_048_576).toFixed(1);
     console.log(`[stream] decrypt done ${songId} ${sizeMb} MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -295,11 +336,13 @@ async function getStreamParams(songId: string, mut: string) {
   const assets: any[] = entry.assets ?? [];
   console.log(`[stream] adamId=${adamId} assets=${assets.map((a: any) => a.flavor).join(", ")}`);
 
-  // Prefer ctrp64 (smaller/compressed) over ctrp256 (likely lossless/hi-res).
-  // ctrp = CTR-mode protected; 64 vs 256 suffix appears to be quality tier, not key size.
+  // Prefer 28:ctrp256 (AAC-LC 256k) over 32:ctrp64 (HE-AAC 64k). Apple's own asset metadata states
+  // the distinction — `metadata.bitRate` is 256 for ctrp256, 64 for ctrp64 — so the suffix is a
+  // quality tier, and preferring ctrp64 was serving 64k HE-AAC (whose SBR also makes Android's FDK
+  // decoder emit silence on some tracks).
   const asset =
-    assets.find((a: any) => a.flavor === "32:ctrp64") ||
     assets.find((a: any) => a.flavor === "28:ctrp256") ||
+    assets.find((a: any) => a.flavor === "32:ctrp64") ||
     assets.find((a: any) => a.flavor?.includes("ctrp")) ||
     assets.find((a: any) => typeof a.URL === "string" && a.URL);
 
@@ -315,6 +358,19 @@ async function getStreamParams(songId: string, mut: string) {
 
   console.log(`[stream] asset flavor=${asset.flavor} url=${asset.URL.substring(0, 80)}…`);
 
+  // GENUINE uploads hand back the user's OWN file directly — an unprotected audio blob
+  // (store-***.blobstore.apple.com) with NO flavor and no CENC key; the asset URL IS the playable
+  // file, so we serve it directly (download + remux), skipping decrypt. The ONLY reliable signal is a
+  // flavorless chosen asset. `is-itunes-stream` is NOT enough: iTunes-MATCHED tracks also carry that
+  // flag but DO have real ctrp (CENC) assets — flagging those direct downloaded the ENCRYPTED ctrp URL
+  // raw → garbage → ERROR_CODE_DECODING_FAILED → every matched song skipped. Only fall direct when the
+  // asset selection landed on a flavorless blob (no ctrp existed).
+  const isDirectUpload = asset.flavor == null;
+  if (isDirectUpload) {
+    console.log(`[stream] DIRECT upload (no CENC) ${songId} — serving the raw asset`);
+    return { streamUrl: asset.URL, adamId, keyUri: "", direct: true };
+  }
+
   const { url: mediaUrl, text: hlsText } = await resolveMediaPlaylist(asset.URL);
   console.log(`[stream] mediaUrl=${mediaUrl.substring(0, 80)}… hlsLen=${hlsText.length}`);
 
@@ -329,6 +385,84 @@ async function getStreamParams(songId: string, mut: string) {
 
   return { streamUrl: mediaUrl, adamId, keyUri };
 }
+
+// ── Music video (decrypt Widevine → plain MP4) ───────────────────────────────
+// On-device, MVs can only run through the SECURE Widevine video decoder, whose protected surface
+// plane bleeds across tabs on this Fire TV. Decrypting server-side and serving a plain progressive
+// MP4 lets the app use a NON-secure decoder, so the bleed is gone. mv_decrypt.py licenses + decrypts
+// the chosen video variant AND the audio rendition and ffmpeg-muxes them to one +faststart MP4.
+const mvInFlight = new Map<string, Promise<string>>();
+function mvCachePath(id: string, h: number) {
+  return path.join(CACHE_DIR, `mv_${id.replace(/[^a-zA-Z0-9._-]/g, "_")}_${h}.mp4`);
+}
+
+async function ensureMvDecrypted(mvId: string, mut: string, maxHeight: number): Promise<string> {
+  const out = mvCachePath(mvId, maxHeight);
+  if (fs.existsSync(out) && fs.statSync(out).size > 0) {
+    const now = new Date();
+    try { fs.utimesSync(out, now, now); } catch (_) {}
+    return out;
+  }
+  const key = `${mvId}_${maxHeight}`;
+  const existing = mvInFlight.get(key);
+  if (existing) return existing;
+
+  const p = (async () => {
+    await ensureBearer();
+    const tmpOut = out + ".tmp";
+    try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+    const args = JSON.stringify({ mvId, bearer: getBearerToken(), mut, outPath: tmpOut, maxHeight });
+    const t0 = Date.now();
+    console.log(`[mv] decrypt start ${mvId} ≤${maxHeight}p`);
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(PYTHON, [MV_DECRYPT_SCRIPT, args]);
+      let stderr = "";
+      child.stderr.on("data", (d) => { const s = d.toString(); stderr += s; process.stdout.write("[mv] " + s); });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code === 0) resolve();
+        else { try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {} reject(new Error(`mv decrypt exited ${code}: ${stderr.slice(-400)}`)); }
+      });
+    });
+    fs.renameSync(tmpOut, out);
+    console.log(`[mv] decrypt done ${mvId} ${(fs.statSync(out).size / 1_048_576).toFixed(1)}MB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    evictCache();
+    return out;
+  })();
+  mvInFlight.set(key, p);
+  try { return await p; } finally { mvInFlight.delete(key); }
+}
+
+// GET /api/stream/mv/:id?h=1080 — decrypted music video as a seekable MP4 with Range support.
+stream.get("/mv/:id", async (c) => {
+  const mut = c.req.header("X-Music-User-Token") || getMUT();
+  if (!mut) return c.json({ error: "Music-User-Token not set" }, 401);
+  const mvId = c.req.param("id");
+  const maxHeight = Math.min(2160, Math.max(240, parseInt(c.req.query("h") || "1080", 10) || 1080));
+  try {
+    const filePath = await ensureMvDecrypted(mvId, mut, maxHeight);
+    const size = fs.statSync(filePath).size;
+    const rangeHeader = c.req.header("range");
+    const common: Record<string, string> = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Cache-Control": "no-store" };
+    const file = Bun.file(filePath);
+    if (rangeHeader) {
+      const m = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+      let start = m && m[1] ? parseInt(m[1], 10) : 0;
+      let end = m && m[2] ? parseInt(m[2], 10) : size - 1;
+      if (isNaN(start) || start < 0) start = 0;
+      if (isNaN(end) || end >= size) end = size - 1;
+      if (start > end) return new Response(null, { status: 416, headers: { ...common, "Content-Range": `bytes */${size}` } });
+      return new Response(file.slice(start, end + 1), {
+        status: 206,
+        headers: { ...common, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": String(end - start + 1) },
+      });
+    }
+    return new Response(file, { status: 200, headers: { ...common, "Content-Length": String(size) } });
+  } catch (e: any) {
+    console.error(`[mv] ${mvId}:`, e.message);
+    return c.json({ error: e.message }, 500);
+  }
+});
 
 // GET /api/stream/cached/:songId — quick check: is this song already in the cache file?
 stream.get("/cached/:songId", (c) => {

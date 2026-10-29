@@ -1,0 +1,112 @@
+package com.applemusicktv.lyrics.spicy
+
+import kotlin.math.abs
+import kotlin.math.exp
+
+/**
+ * A smooth playback clock built in two stages.
+ *
+ * **Stage 1 — anchor extrapolation** (`position + (now - syncedAt)`):
+ * the raw player position is only trusted as an *anchor*; between changes it is extrapolated
+ * on wall-clock time. This is essential — if the platform position steps coarsely (e.g. a
+ * `MediaController` that refreshes over IPC), feeding it raw into a smoother makes the
+ * predicted clock rubber-band and eventually *snap* (the sweep visibly jumping to complete).
+ * Anchoring makes the measured signal itself continuous first.
+ *
+ * **Stage 2 — jitter filter** (`normalizeProgress`): a predicted clock advancing on wall-clock
+ * time, pulled toward the extrapolated measurement with a frame-rate-independent low-pass
+ * (`alpha = 1 − exp(−elapsed / 300ms)`); deltas above 500ms (seeks, track changes) snap.
+ *
+ * While paused the clock returns the raw measured position and forgets its state; while
+ * playing a fixed +100ms lead compensates audio-output latency.
+ */
+class PlaybackClock {
+
+    // Stage 1: anchor for extrapolating the (possibly coarse) measured position.
+    private var anchorMs = 0.0
+    private var anchorAtMs = 0L
+    private var lastMeasuredMs = Long.MIN_VALUE
+    private var lastPlaybackSpeed = Float.NaN
+
+    // Stage 2: predicted clock.
+    private var predictedMs = 0.0
+    private var updatedAtMs = 0L
+    private var initialized = false
+
+    companion object {
+        const val PROGRESS_POSITION_OFFSET_MS = 100L
+        const val JITTER_RESYNC_THRESHOLD_MS = 500.0
+        const val JITTER_TIME_CONSTANT_MS = 300.0
+    }
+
+    /** Forgets all predictive state (call on track change). */
+    fun reset() {
+        initialized = false
+        lastMeasuredMs = Long.MIN_VALUE
+        lastPlaybackSpeed = Float.NaN
+    }
+
+    /**
+     * @param measuredMs the player-reported position (may step coarsely).
+     * @param isPlaying whether playback is advancing.
+     * @param nowMs a monotonic wall-clock timestamp in ms (frame time).
+     * @return the smoothed position, with the +100ms lead applied while playing.
+     */
+    fun positionMs(
+        measuredMs: Long,
+        isPlaying: Boolean,
+        playbackSpeed: Float,
+        nowMs: Long,
+        durationMs: Long,
+    ): Long {
+        val speed = playbackSpeed.coerceAtLeast(0f).toDouble()
+        fun clamp(position: Long): Long = if (durationMs > 0L) position.coerceIn(0L, durationMs)
+        else position.coerceAtLeast(0L)
+
+        if (!isPlaying) {
+            reset()
+            return clamp(measuredMs)
+        }
+
+        // A speed change invalidates both predictors. Re-anchor at the measured media position.
+        if (lastPlaybackSpeed.isNaN() || playbackSpeed != lastPlaybackSpeed) {
+            initialized = false
+            anchorMs = measuredMs.toDouble()
+            anchorAtMs = nowMs
+            lastMeasuredMs = measuredMs
+            lastPlaybackSpeed = playbackSpeed
+        } else if (lastMeasuredMs == Long.MIN_VALUE || measuredMs != lastMeasuredMs) {
+            anchorMs = measuredMs.toDouble()
+            anchorAtMs = nowMs
+            lastMeasuredMs = measuredMs
+        }
+        val extrapolated = anchorMs + (nowMs - anchorAtMs).coerceAtLeast(0L) * speed
+
+        // Stage 2: predicted clock pulled toward the extrapolated measurement.
+        if (!initialized) {
+            predictedMs = extrapolated
+            updatedAtMs = nowMs
+            initialized = true
+            return clamp(predictedMs.toLong() + PROGRESS_POSITION_OFFSET_MS)
+        }
+
+        val elapsed = (nowMs - updatedAtMs).coerceAtLeast(0L).toDouble()
+        var predicted = predictedMs + elapsed * speed
+
+        val error = extrapolated - predicted
+        if (abs(error) > JITTER_RESYNC_THRESHOLD_MS) {
+            android.util.Log.d("SpicyClock", String.format(
+                "SNAP err=%.0fms measured=%d extrapolated=%.0f predicted=%.0f",
+                error, measuredMs, extrapolated, predicted,
+            ))
+            predicted = extrapolated
+        } else {
+            val alpha = 1.0 - exp(-elapsed / JITTER_TIME_CONSTANT_MS)
+            predicted += error * alpha
+        }
+
+        predictedMs = predicted.coerceAtLeast(0.0)
+        updatedAtMs = nowMs
+        return clamp(predictedMs.toLong() + PROGRESS_POSITION_OFFSET_MS)
+    }
+}

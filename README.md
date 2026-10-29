@@ -24,11 +24,13 @@
 ## Features
 
 - **Listen Now, Browse, Library, Search** — Apple's real editorial shelves, laid out for a remote.
-- **Now Playing** with a live album-colour background and **word-by-word synced lyrics**.
+- **Now Playing** with a live album-colour background and **word-by-word synced lyrics** — plus **translation** and **pronunciation** (romaji / pinyin, downloadable kanji pack) in your language.
 - **Artist pages, playlists, albums** — full catalog navigation.
 - **Music videos** and **radio / stations** — all playable.
-- **Background playback** and an ambient **screensaver**.
-- **Runs standalone on the TV** — a pure-Kotlin Widevine pipeline decrypts each song on-device, no computer required. An optional PC proxy server is also supported.
+- **Uploaded & iTunes-Match songs** from your own library play too.
+- **Game controller support** — map tabs, transport and the menu to a gamepad, with optional **rumble to the bass**.
+- **Background playback**, Picture-in-Picture, and an ambient **screensaver**.
+- **Runs standalone on the TV** — a pure-Kotlin Widevine pipeline decrypts each song on-device, no computer required. An optional PC proxy server is also supported, with **automatic rediscovery** (mDNS) when its address changes.
 
 ---
 
@@ -62,6 +64,7 @@
    ```
    (Or use a sideload app like Downloader with the release URL.)
 3. **Add your Music-User-Token** — open `http://<TV_IP>:8080` on your phone and paste it in. [How to find your token →](docs/TECHNICAL.md#getting-your-music-user-token)
+   Easiest way to get the token: the companion phone app **[AM MUT Extractor](https://github.com/JObersi10/am-mut-extractor)** — sign into Apple Music on your phone (where the keyboard works), copy the token, paste it here.
 
 Standalone mode needs no server. The optional PC proxy path is described in the [technical guide](docs/TECHNICAL.md#optional-pc-proxy-server).
 
@@ -80,6 +83,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to build it, [SECURITY.md](SECURITY.md) f
 ## Credits
 
 The Apple Music decryption workflow was adapted from [gamdl](https://github.com/glomatico/gamdl) (MIT) and relies on [pywidevine](https://github.com/devine-dl/pywidevine) (GPL-3.0).
+
+**Lyrics** are provided by [Spicy Lyrics](https://spicylyrics.org) via its API. The **Spotify-search → Spicy lyrics** lookup and the **"Lyrics Renderer v2"** Canvas renderer (spring physics, gradient wipe, romanization, and the "lavalamp" dynamic background) are adapted from [spicy-player](https://github.com/TheX24/spicy-player) (AGPL-3.0) — whose own lyrics renderer derives from [Spicy Lyrics](https://github.com/Spikerko/spicy-lyrics). Those ported files remain under the AGPL-3.0; GPL-3.0 §13 permits combining them with this project.
 
 Full attribution for every third-party component is in **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**.
 

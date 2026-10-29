@@ -116,11 +116,40 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Background audio is for Picture-in-Picture only: leaving the app any other way pauses.
-        if (!isInPictureInPictureMode) playerVm.pause()
+        if (isInPictureInPictureMode) return   // background audio is for PiP only
+        // Low Power quit-on-exit (toggle, default OFF): leaving the app — home, recents, standby —
+        // saves the position SYNCHRONOUSLY and ends the process so nothing stays resident holding the
+        // Widevine CDM, decoders and artwork caches on these 1.5–2GB boxes. Every launch is then a
+        // cold start; Now Playing restores the last track paused at the position left.
+        if (playerVm.isQuitOnExit()) {
+            playerVm.prepareForQuit()
+            finishAndRemoveTask()
+            android.os.Process.killProcess(android.os.Process.myPid())
+            return
+        }
+        playerVm.pause()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // ── Game controller (PS/Xbox) shortcuts, context-independent ──────────────
+        // R1/L1 = next/prev top nav tab; X = the Menu button (Now Playing / toggle the lyrics↔queue
+        // panel); − (Select) = previous song, + (Start) = next song. Handled before the per-screen
+        // branches so they work everywhere.
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_BUTTON_R1 -> { navVm.cycleTab(1); return true }
+                KeyEvent.KEYCODE_BUTTON_L1 -> { navVm.cycleTab(-1); return true }
+                KeyEvent.KEYCODE_BUTTON_X -> {
+                    if (navVm.isOnNowPlaying) {
+                        if (navVm.isOnMusicVideo) mvVm.toggleQueue() else navVm.toggleQueuePanel()
+                    } else navVm.navigateToNowPlaying()
+                    return true
+                }
+                KeyEvent.KEYCODE_BUTTON_SELECT -> { if (navVm.isOnMusicVideo) mvVm.prev() else playerVm.prev(); return true }
+                KeyEvent.KEYCODE_BUTTON_START -> { if (navVm.isOnMusicVideo) mvVm.next() else playerVm.next(); return true }
+                KeyEvent.KEYCODE_BUTTON_THUMBR -> { playerVm.toggleRumble(); return true }
+            }
+        }
         // While a video is active, media keys drive the VIDEO — never the (paused) audio
         // player. D-pad keys still fall through so the fullscreen video screen (or the UI
         // behind an in-app PiP) can handle them.
@@ -128,8 +157,10 @@ class MainActivity : ComponentActivity() {
             if (event.action == KeyEvent.ACTION_DOWN) when (event.keyCode) {
                 KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { mvVm.next(); return true }
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_REWIND -> { mvVm.prev(); return true }
-                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE ->
-                    { mvVm.togglePlayPause(); return true }
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE,
+                KeyEvent.KEYCODE_BUTTON_Y -> { mvVm.togglePlayPause(); return true }
+                KeyEvent.KEYCODE_BUTTON_R2 -> { mvVm.next(); return true }
+                KeyEvent.KEYCODE_BUTTON_L2 -> { mvVm.prev(); return true }
                 // A video can be the current track while you browse other tabs (it keeps playing).
                 // Only toggle the in-video queue when actually ON the video screen; elsewhere Menu
                 // brings the video fullscreen (Now Playing), same as for audio.
@@ -149,9 +180,12 @@ class MainActivity : ComponentActivity() {
                 }
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                 KeyEvent.KEYCODE_MEDIA_PLAY,
-                KeyEvent.KEYCODE_MEDIA_PAUSE -> { playerVm.togglePlayPause(); return true }
+                KeyEvent.KEYCODE_MEDIA_PAUSE,
+                KeyEvent.KEYCODE_BUTTON_Y -> { playerVm.togglePlayPause(); return true }
                 KeyEvent.KEYCODE_MEDIA_NEXT     -> { playerVm.next(); return true }
                 KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { playerVm.prev(); return true }
+                KeyEvent.KEYCODE_BUTTON_R2      -> { playerVm.next(); return true }
+                KeyEvent.KEYCODE_BUTTON_L2      -> { playerVm.prev(); return true }
                 KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { playerVm.next(); return true }
                 KeyEvent.KEYCODE_MEDIA_REWIND       -> { playerVm.prev(); return true }
             }

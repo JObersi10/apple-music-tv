@@ -18,6 +18,8 @@ data class WebPlaybackResult(
     val keyUri:   String,
     /** Raw media playlist — needed so the EXT-X-KEY line can be rewritten. */
     val hlsText:  String = "",
+    /** Uploaded / iTunes-Match: [hlsUrl] is the user's own UNPROTECTED file (no CENC/HLS). Play directly. */
+    val direct:   Boolean = false,
 )
 
 const val MV_VIDEO_FILE = "mv_video.m3u8"
@@ -282,14 +284,24 @@ class AppleDirectClient @Inject constructor() {
             }
             val assetUrl = ctrp256.ifEmpty { ctrp64.ifEmpty { anyCtrp } }
             Log.i("AMWP", "chose asset flavor=${if (ctrp256.isNotEmpty()) "28:ctrp256" else if (ctrp64.isNotEmpty()) "32:ctrp64" else "other-ctrp"}")
-            if (assetUrl.isEmpty()) error("No CENC stream asset for $songId")
 
-            // Resolve to media playlist and extract keyUri
-            val (mediaUrl, hlsText) = resolveMediaPlaylist(assetUrl, bearer, mut)
-            val keyUri = Regex("""URI="(data:[^"]+)"""").find(hlsText)?.groupValues?.get(1)
-                ?: error("No key URI in HLS manifest")
-
-            WebPlaybackResult(adamId = adamId, hlsUrl = mediaUrl, keyUri = keyUri, hlsText = hlsText)
+            if (assetUrl.isEmpty()) {
+                // Uploaded / iTunes-Match (is-itunes-stream): no CENC asset — Apple returns the user's
+                // OWN unprotected file directly. Take the first asset that has a URL and play it as-is.
+                val directUrl = (0 until assets.length())
+                    .map { assets.getJSONObject(it).optString("URL") }
+                    .firstOrNull { it.isNotEmpty() }
+                if (directUrl != null) {
+                    Log.i("AMWP", "DIRECT upload asset (no CENC) for $songId")
+                    WebPlaybackResult(adamId = adamId, hlsUrl = directUrl, keyUri = "", direct = true)
+                } else error("No CENC stream asset for $songId")
+            } else {
+                // Resolve to media playlist and extract keyUri (normal Widevine path)
+                val (mediaUrl, hlsText) = resolveMediaPlaylist(assetUrl, bearer, mut)
+                val keyUri = Regex("""URI="(data:[^"]+)"""").find(hlsText)?.groupValues?.get(1)
+                    ?: error("No key URI in HLS manifest")
+                WebPlaybackResult(adamId = adamId, hlsUrl = mediaUrl, keyUri = keyUri, hlsText = hlsText)
+            }
         }
 
     /**
@@ -360,11 +372,24 @@ class AppleDirectClient @Inject constructor() {
                 ?: variants.maxByOrNull { it.height } ?: error("No video variant in MV master")
             Log.i("AMMV", "quality cap=${maxHeight}p → picked ${vPick.height}p (avail=${variants.map { it.height }})")
 
-            // The audio group this variant references, else the first/highest audio rendition.
+            // Audio: pick the HIGHEST-quality rendition, NOT whatever the (maybe-480p) video
+            // variant references — Apple ties a low-bitrate audio group to the small video tier,
+            // so binding audio to the variant made picture AND sound low together. Score each
+            // rendition by the largest bitrate token in its GROUP-ID/NAME (…-stereo-256 > …-64);
+            // Atmos/binaural renditions ("atmos"/"binaural") are skipped as they don't decode on
+            // every TV. Fall back to the variant's own group, then the last rendition.
             val wantGroup = Regex("""AUDIO="([^"]+)"""").find(vPick.attrs)?.groupValues?.get(1)
             val audioLines = lines.filter { it.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") }
-            val aLine = audioLines.firstOrNull { wantGroup != null && it.contains("GROUP-ID=\"$wantGroup\"") }
+            fun bitrateScore(l: String): Int {
+                val id = (Regex("""GROUP-ID="([^"]+)"""").find(l)?.groupValues?.get(1) ?: "") + " " +
+                         (Regex("""NAME="([^"]+)"""").find(l)?.groupValues?.get(1) ?: "")
+                if (id.contains("atmos", true) || id.contains("binaural", true)) return -1
+                return Regex("""\d+""").findAll(id).map { it.value.toIntOrNull() ?: 0 }.maxOrNull() ?: 0
+            }
+            val aLine = audioLines.filter { bitrateScore(it) > 0 }.maxByOrNull { bitrateScore(it) }
+                ?: audioLines.firstOrNull { wantGroup != null && it.contains("GROUP-ID=\"$wantGroup\"") }
                 ?: audioLines.lastOrNull() ?: error("No audio rendition in MV master")
+            Log.i("AMMV", "audio rendition picked: ${Regex("""GROUP-ID="([^"]+)"""").find(aLine)?.groupValues?.get(1)} (avail=${audioLines.mapNotNull { Regex("""GROUP-ID="([^"]+)"""").find(it)?.groupValues?.get(1) }})")
             val aUri = Regex("""URI="([^"]+)"""").find(aLine)?.groupValues?.get(1) ?: error("No audio URI")
 
             val video = rewriteMvMedia(abs(vPick.uri))

@@ -29,8 +29,8 @@ android {
         applicationId = "com.applemusicktv"
         minSdk = 23
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
         // Set your proxy server IP here
         // Proxy server URL. Set `proxyBaseUrl` in local.properties (gitignored)
         // to your machine's LAN IP, e.g. http://192.168.1.50:3000/. Falls back
@@ -38,6 +38,10 @@ android {
         val proxyBaseUrl = localProps.getProperty("proxyBaseUrl") ?: "http://10.0.2.2:3000/"
         buildConfigField("String", "PROXY_BASE_URL", "\"$proxyBaseUrl\"")
         buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+        // Spicy Lyrics CLIENT key (sl_pk_…) for standalone/no-PC lyrics. Shippable by design, but kept
+        // in local.properties (gitignored) so it's not committed. Blank → standalone falls to Apple.
+        val spicyKey = localProps.getProperty("spicyLyricsClientKey") ?: ""
+        buildConfigField("String", "SPICY_LYRICS_KEY", "\"$spicyKey\"")
     }
 
     buildFeatures {
@@ -50,6 +54,43 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+
+    // A committed, stable debug keystore so EVERY build — local and CI — is signed with the
+    // same key. Without it, Gradle auto-generates a throwaway ~/.android/debug.keystore per
+    // machine/CI-run, so each APK is signed differently and Android refuses to update in place
+    // ("App not installed" / the in-app updater fails). This is a DEBUG keystore: it uses
+    // Android's universal public password ("android") and cannot publish to Play — safe to commit.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    packaging {
+        resources {
+            // Kuromoji's IPADIC dictionary (~33MB of .bin) is NOT shipped in the APK — it's downloaded
+            // on demand (JapaneseDictionaryPack) when the user turns on Japanese pronunciation. We keep
+            // only the kuromoji classes; the dictionary binaries are excluded from packaging.
+            excludes += listOf(
+                "com/atilika/kuromoji/ipadic/*.bin",
+                "com/atilika/kuromoji/ipadic/compile/**",
+                "META-INF/*.md",
+                "META-INF/*.txt",
+                "META-INF/NOTICE*",
+                "META-INF/LICENSE*",
+                "META-INF/DEPENDENCIES",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -98,6 +139,13 @@ dependencies {
 
     // Images
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // Kuromoji (IPADIC) for Japanese kanji → reading romanization. The classes ship in the APK but the
+    // ~33MB dictionary .bin are excluded (see packaging{} above) and downloaded on demand from Maven
+    // Central by JapaneseDictionaryPack when the user enables Japanese pronunciation.
+    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
+
+    // Gson — used by the ported Spicy renderer's AudioAnalysis (kawarp background beat data).
+    implementation("com.google.code.gson:gson:2.11.0")
 
     // Palette (artwork → accent color)
     implementation("androidx.palette:palette-ktx:1.0.0")

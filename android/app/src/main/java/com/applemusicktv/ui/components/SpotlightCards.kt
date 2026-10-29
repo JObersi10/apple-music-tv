@@ -48,18 +48,15 @@ private fun spotlightLabel(album: Album): String = when {
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit) {
+fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
     val tint = bgColor(album.artworkBgColor)
-    Card(
+    AmClickBox(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = Modifier.width(width.dp),
-        scale = CardDefaults.scale(focusedScale = 1.05f, pressedScale = 0.97f),
-        glow = CardDefaults.glow(focusedGlow = Glow(Color.White.copy(alpha = 0.28f), 22.dp)),
-        border = CardDefaults.border(focusedBorder = Border(
-            border = BorderStroke(2.5.dp, Color.White.copy(alpha = 0.85f)),
-            shape = RoundedCornerShape(9.dp))),
-        colors = CardDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-        shape = CardDefaults.shape(RoundedCornerShape(9.dp)),
+        shape = RoundedCornerShape(9.dp),
+        containerColor = Color.Transparent, focusedColor = Color.Transparent,
+        focusedScale = 1.05f,
     ) {
         Column(Modifier.width(width.dp).padding(horizontal = 2.dp)) {
             // Fixed-height text block so every card's image starts at the same Y — radio/curator
@@ -108,17 +105,13 @@ fun SpotlightHeroCard(album: Album, width: Int = 360, onClick: () -> Unit) {
 fun GradientCard(album: Album, width: Int = 250, onClick: () -> Unit, onLongClick: () -> Unit = {}, motionEnabled: Boolean = true) {
     var focused by remember { mutableStateOf(false) }
     val tint = bgColor(album.artworkBgColor)
-    Card(
+    AmClickBox(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = Modifier.width(width.dp).onFocusChanged { focused = it.isFocused || it.hasFocus },
-        scale = CardDefaults.scale(focusedScale = 1.06f, pressedScale = 0.97f),
-        glow = CardDefaults.glow(focusedGlow = Glow(Color.White.copy(alpha = 0.28f), 22.dp)),
-        border = CardDefaults.border(focusedBorder = Border(
-            border = BorderStroke(2.dp, Color.White.copy(alpha = 0.7f)),
-            shape = RoundedCornerShape(16.dp))),
-        colors = CardDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-        shape = CardDefaults.shape(RoundedCornerShape(16.dp)),
+        shape = RoundedCornerShape(16.dp),
+        containerColor = Color.Transparent, focusedColor = Color.Transparent,
+        focusedScale = 1.06f,
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(15.dp)).background(tint)) {
             if (album.artworkUrl != null) {

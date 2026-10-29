@@ -1,7 +1,10 @@
 package com.applemusicktv.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.*
+import com.applemusicktv.ui.components.AmClickBox
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -13,6 +16,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -47,6 +53,7 @@ fun DevMenuScreen(
     var pcIpDraft by remember(state.pcServerIp) { mutableStateOf(state.pcServerIp) }
     var showDev by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+    var showSignIn by remember { mutableStateOf(false) }
     // PC IP is a press-to-edit button, not a live field: a focused BasicTextField pops the
     // Fire TV IME by itself the moment D-pad focus lands on it.
     var pcIpEditing by remember { mutableStateOf(false) }
@@ -64,21 +71,56 @@ fun DevMenuScreen(
         while (showDev) { netLogs = vm.networkLogs(); kotlinx.coroutines.delay(1000) }
     }
 
+    // tvOS-style split view: a persistent category sidebar on the left, the selected category's
+    // settings in a scrolling pane on the right. Categories are focus-to-select (moving the remote
+    // onto one shows its pane), like Apple TV Settings.
+    val categories = buildList {
+        add("Playback"); add("Lyrics"); add("Now Playing"); add("Audio & Sync"); add("System")
+        if (showDev) add("Developer")
+    }
+    var selectedCat by rememberSaveable { mutableStateOf(0) }
+    if (selectedCat > categories.lastIndex) selectedCat = categories.lastIndex
+
     Box(modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+      Row(Modifier.fillMaxSize()) {
+        // ── Sidebar ────────────────────────────────────────────────────────
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 60.dp, vertical = 36.dp)
+            Modifier.width(300.dp).fillMaxHeight().background(Color(0xFF0E0E10))
+                .padding(horizontal = 18.dp, vertical = 40.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Settings", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.padding(start = 10.dp, bottom = 18.dp))
+            categories.forEachIndexed { i, label ->
+                SidebarItem(label, selected = selectedCat == i) { selectedCat = i }
+            }
+            Spacer(Modifier.height(18.dp))
+            // Reveal / hide the Developer category. selectOnFocus=false — merely highlighting it must
+            // NOT toggle it (that was the "focusing opens it" finnicky bug); only an OK press does.
+            SidebarItem(if (showDev) "Hide Developer" else "Developer…", selected = false, muted = true, selectOnFocus = false) {
+                showDev = !showDev
+                if (showDev) selectedCat = categories.size   // jump to the newly-added Developer pane
+            }
+        }
+
+        // ── Content pane ────────────────────────────────────────────────────
+        Column(
+            modifier = Modifier.weight(1f).fillMaxHeight()
+                .padding(horizontal = 40.dp, vertical = 40.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Settings", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color.White)
+          val cat = categories.getOrElse(selectedCat) { "Playback" }
+          Text(cat, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White,
+              modifier = Modifier.padding(bottom = 6.dp))
 
-            // ── SOFTWARE ──────────────────────────────────────────────────
-            SectionLabel("Software")
+          if (cat == "System") {
             UpdatesSection(initialUpdate)
             PhoneServerRow(state.webServerUrl, playerVm)
+          }
 
-            // ── PLAYBACK ──────────────────────────────────────────────────
-            SectionLabel("Playback")
+          if (cat == "Playback") {
             Stepper(
                 label = "Crossfade", value = "%.1fs".format(state.crossfadeMs / 1000f),
                 sub = "Overlap the end of one song into the next",
@@ -97,12 +139,85 @@ fun DevMenuScreen(
             )
             Toggle(
                 label = "Background play", on = pstate.backgroundPlayEnabled,
-                sub = if (pstate.backgroundPlayEnabled) "Keep playing when you leave the app" else "Pause when the app goes to the background",
+                sub = if (pstate.quitOnExit) "Off — Quit on exit ends the app instead"
+                      else if (pstate.backgroundPlayEnabled) "Keep playing when you leave the app" else "Pause when the app goes to the background",
+                enabled = !pstate.quitOnExit,
                 onToggle = { playerVm.toggleBackgroundPlay() },
             )
+            Toggle(
+                label = "Quit on exit (Low Power)", on = pstate.quitOnExit,
+                sub = if (pstate.quitOnExit) "End the app on exit to free memory (cold start next time)" else "Keep the app resident when you leave",
+                onToggle = { playerVm.toggleQuitOnExit() },
+            )
+          }
 
-            // ── NOW PLAYING ───────────────────────────────────────────────
-            SectionLabel("Now Playing")
+          if (cat == "Lyrics") {
+            Stepper(
+                label = "Lyrics size",
+                value = lyricsScaleLabel(pstate.lyricsScale),
+                sub = "Text size in the lyrics panel",
+                onDec = { playerVm.stepLyricsScale(-1) },
+                onInc = { playerVm.stepLyricsScale(1) },
+            )
+            Toggle(
+                label = "Lyrics pronunciation", on = pstate.lyricsRomanize,
+                sub = when {
+                    pstate.jaPackDownloading -> "Downloading Japanese pronunciation pack (~13MB)…"
+                    pstate.lyricsRomanize -> "Show romaji / pinyin under non-Latin lyrics (v2 renderer)"
+                    else -> "Off — original script only (Japanese kanji downloads a pack on first use)"
+                },
+                onToggle = { playerVm.toggleLyricsRomanize() },
+            )
+            SectionLabel("Scrolling")
+            Toggle(
+                label = "Smooth scrolling", on = pstate.smoothLyricScroll,
+                sub = if (pstate.smoothLyricScroll) "Lyrics glide between lines with a spring" else "Off — snap line to line (lighter on slow devices)",
+                onToggle = { playerVm.setSmoothLyricScroll(!pstate.smoothLyricScroll) },
+            )
+            Stepper(
+                label = "Early scroll",
+                value = if (pstate.earlyScrollMs <= 0) "Off" else "${pstate.earlyScrollMs} ms",
+                sub = "Start moving to the next line this early, so the move feels less abrupt.",
+                onDec = { playerVm.setEarlyScrollMs(pstate.earlyScrollMs - 50) },
+                onInc = { playerVm.setEarlyScrollMs(pstate.earlyScrollMs + 50) },
+            )
+            Toggle(
+                label = "Seek fade-in compensation", on = pstate.seekFadeComp,
+                sub = if (pstate.seekFadeComp) "Tapping a line jumps ~300ms before it, so the player's fade-in doesn't cut the start"
+                      else "Off — a lyric tap seeks exactly to that line",
+                onToggle = { playerVm.setSeekFadeComp(!pstate.seekFadeComp) },
+            )
+            Toggle(
+                label = "Auto-scroll unsynced lyrics", on = pstate.autoScrollUnsynced,
+                sub = if (pstate.autoScrollUnsynced) "Lyrics without timing scroll through at the song's pace, top to bottom"
+                      else "Off — scroll no-timing lyrics by hand",
+                onToggle = { playerVm.setAutoScrollUnsynced(!pstate.autoScrollUnsynced) },
+            )
+            Toggle(
+                label = "Lyrics credits", on = pstate.showLyricsCredits,
+                sub = if (pstate.showLyricsCredits) "Show the “Written by / Provided by / Made by” footer under lyrics"
+                      else "Hide the lyrics credits footer",
+                onToggle = { playerVm.toggleLyricsCredits() },
+            )
+            Stepper(
+                label = "Translate lyrics",
+                value = if (!pstate.translateLyrics) "Off"
+                    else com.applemusicktv.ui.viewmodel.TRANSLATE_LANGS
+                        .firstOrNull { it.first == pstate.translateLang }?.second ?: pstate.translateLang,
+                sub = if (!pstate.translateLyrics) "Off — no translation gloss under the lyrics"
+                      else "Showing a gloss translated into this language",
+                onDec = { playerVm.stepTranslateLang(-1) },
+                onInc = { playerVm.stepTranslateLang(1) },
+            )
+            if (pstate.translateLyrics) Toggle(
+                label = "   ↳ Only non-Latin lines", on = pstate.translateNonLatinOnly,
+                sub = if (pstate.translateNonLatinOnly) "Gloss only Japanese / Chinese / Korean / … lines"
+                      else "Gloss every foreign line (skips lines already in your language)",
+                onToggle = { playerVm.toggleTranslateNonLatin() },
+            )
+          }
+
+          if (cat == "Now Playing") {
             Stepper(
                 label = "Background",
                 value = pstate.nowPlayingBackground.label,
@@ -130,13 +245,6 @@ fun DevMenuScreen(
                 sub = "How fast the orbs drift around",
                 onDec = { playerVm.stepOrbSpeed(-1) },
                 onInc = { playerVm.stepOrbSpeed(1) },
-            )
-            Stepper(
-                label = "Lyrics size",
-                value = lyricsScaleLabel(pstate.lyricsScale),
-                sub = "Text size in the lyrics panel",
-                onDec = { playerVm.stepLyricsScale(-1) },
-                onInc = { playerVm.stepLyricsScale(1) },
             )
             Toggle(
                 label = "Rounded artwork", on = pstate.artworkRounded,
@@ -171,8 +279,20 @@ fun DevMenuScreen(
                 sub = if (pstate.screensaverKeepBackground) "Keep the moving background while dimmed" else "Fade to plain black while dimmed",
                 onToggle = { playerVm.toggleScreensaverKeepBackground() },
             )
+          }
 
-            SectionLabel("Remote")
+          if (cat == "Playback") {
+            val cacheCap by playerVm.cacheCapBytes.collectAsState()
+            Stepper(
+                label = "Media cache",
+                value = cacheLabel(cacheCap),
+                sub = "Cap for downloaded audio/video (album artwork is capped separately)",
+                onDec = { playerVm.stepCacheCap(-1) },
+                onInc = { playerVm.stepCacheCap(1) },
+            )
+          }
+
+          if (cat == "System") {
             var remote by remember { mutableStateOf(playerVm.remoteOverride()) }
             val remoteOrder = listOf(
                 com.applemusicktv.data.OnboardingPreferences.REMOTE_AUTO,
@@ -195,12 +315,12 @@ fun DevMenuScreen(
                 onDec = { stepRemote(-1) },
                 onInc = { stepRemote(1) },
             )
+          }
 
-            // ── A/V SYNC ──────────────────────────────────────────────────
+          if (cat == "Audio & Sync") {
             // One delay drives both the beat visuals and the lyric clock. A ~200 ms display baseline is
             // built in (so this normally reads 0); Automatic adds a Bluetooth estimate on top when a BT
             // output is live. "Extra" is your own nudge on top of all that.
-            SectionLabel("A/V Sync")
             Text(
                 "Output: ${pstate.avOutputLabel}",
                 fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium,
@@ -217,23 +337,53 @@ fun DevMenuScreen(
                       else "Manual — only your extra below is added to the baseline",
                 onToggle = { playerVm.setAvSyncAuto(!pstate.avSyncAuto) },
             )
+            Toggle(
+                label = "Haptics to the music", on = pstate.rumbleEnabled,
+                sub = if (pstate.rumbleEnabled) "Controller or phone vibrates to the song, with a swell into every drop (R3 toggles too)" else "Off — no haptics",
+                onToggle = { playerVm.toggleRumble() },
+            )
+            if (pstate.rumbleEnabled) {
+                Stepper(
+                    label = "Music haptics follow",
+                    value = if (pstate.hapticFollow == "drums") "The drums" else "The beat",
+                    sub = "The beat: a steady pulse, firmer on each hit. The drums: kicks deep, snares crisp.",
+                    onDec = { playerVm.setHapticFollow(if (pstate.hapticFollow == "drums") "beat" else "drums") },
+                    onInc = { playerVm.setHapticFollow(if (pstate.hapticFollow == "drums") "beat" else "drums") },
+                )
+                Stepper(
+                    label = "Music haptics strength",
+                    value = "${pstate.hapticStrength} %",
+                    sub = "How strong the vibrations are. Android's media-vibration setting can also turn them off.",
+                    onDec = { playerVm.setHapticStrength(pstate.hapticStrength - 10) },
+                    onInc = { playerVm.setHapticStrength(pstate.hapticStrength + 10) },
+                )
+                Text("Try the music haptics", fontSize = 12.sp, color = Color.White,
+                    fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+                Text("Feel each one at the strength set above.", fontSize = 10.sp, color = Color(0xFF999999),
+                    modifier = Modifier.padding(bottom = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ActionBtn("Kick",  Color(0xFF3A3A3C), small = true) { playerVm.testHaptic("kick") }
+                    ActionBtn("Snare", Color(0xFF3A3A3C), small = true) { playerVm.testHaptic("snare") }
+                    ActionBtn("Note",  Color(0xFF3A3A3C), small = true) { playerVm.testHaptic("note") }
+                    ActionBtn("Drop",  Color(0xFF3A3A3C), small = true) { playerVm.testHaptic("drop") }
+                }
+            }
             Stepper(
                 label = "Extra offset", value = "${state.lyricsOffsetMs}ms",
                 sub = "Applies to lyrics, beat AND music-video lip-sync. Negative = earlier, positive = later",
-                onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 50) },
-                onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 50) },
+                onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 10) },
+                onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 10) },
             )
+          }
 
-            Spacer(Modifier.height(6.dp))
-            // ── Reveal dev menu ───────────────────────────────────────────
-            ActionBtn(if (showDev) "▾ Hide Dev Menu" else "▸ Open Dev Menu", Color(0xFF1C1C1E)) { showDev = !showDev }
-
-            if (showDev) {
+          if (cat == "Developer") {
                 SectionLabel("Account")
                 StatusChip("Bearer token", state.hasBearer, if (!state.hasBearer) "Refresh to scrape" else "Active")
                 StatusChip("Music-User-Token", state.hasMUT, state.mutSetAt?.let { "Set $it" } ?: if (!state.hasMUT) "Set via phone web server" else "Active")
                 StatusChip("Server", state.serverOk, if (state.serverOk) "Reachable" else "Unreachable — standalone")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Sign in via an in-app Apple Music browser window — captures the token, no paste.
+                    ActionBtn("Sign In", Color(0xFF1A2233), small = true) { showSignIn = true }
                     ActionBtn("Re-check Server", Color(0xFF1A2A1A), small = true) { vm.recheckServer(playerVm, onDone = onDataRefresh) }
                     ActionBtn("Refresh", Color(0xFF2A2A2A), small = true) { vm.refresh(onDone = onDataRefresh) }
                     ActionBtn("Replay Setup", Color(0xFF2A2A1A), small = true) { playerVm.resetOnboarding() }
@@ -242,6 +392,18 @@ fun DevMenuScreen(
                     ActionBtn("Force Quit", Color(0xFF3A1A1A), small = true) {
                         playerVm.stopPlayback()
                         android.os.Process.killProcess(android.os.Process.myPid())
+                    }
+                }
+                // In-app Apple Music sign-in: full-screen WebView that captures the media-user-token.
+                if (showSignIn) {
+                    androidx.compose.ui.window.Dialog(
+                        onDismissRequest = { showSignIn = false },
+                        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+                    ) {
+                        AppleSignInScreen(
+                            onToken = { token -> vm.setMUT(token); showSignIn = false; onDataRefresh() },
+                            onClose = { showSignIn = false },
+                        )
                     }
                 }
 
@@ -274,7 +436,7 @@ fun DevMenuScreen(
                                     textStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.Monospace),
                                     cursorBrush = SolidColor(Color(0xFFFA233B)),
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                    keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }),
+                                    keyboardActions = KeyboardActions(onDone = { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme(); vm.recheckServer(playerVm, onDone = onDataRefresh) }),
                                     modifier = Modifier.fillMaxWidth().focusRequester(pcIpFocus),
                                     decorationBox = { inner ->
                                         if (pcIpDraft.isEmpty()) Text("192.168.x.x", fontSize = 13.sp, color = Color(0xFF444444), fontFamily = FontFamily.Monospace)
@@ -282,13 +444,13 @@ fun DevMenuScreen(
                                     },
                                 )
                             }
-                            ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme() }
+                            ActionBtn("Done", Color(0xFF2A2A2A), small = true) { vm.setPcServerIp(pcIpDraft); pcIpEditing = false; hideIme(); vm.recheckServer(playerVm, onDone = onDataRefresh) }
                         } else {
                             // Idle: a plain button. Focus can land here with no IME. OK opens the editor.
-                            Surface(
+                            AmClickBox(
                                 onClick = { pcIpEditing = true },
-                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF0D0D0D), focusedContainerColor = Color(0xFF1E1E1E)),
+                                shape = RoundedCornerShape(6.dp),
+                                containerColor = Color(0xFF0D0D0D), focusedColor = Color(0xFF1E1E1E),
                                 modifier = Modifier.weight(1f),
                             ) {
                                 Text(
@@ -299,7 +461,7 @@ fun DevMenuScreen(
                                 )
                             }
                         }
-                        if (pcIpDraft.isNotEmpty()) ActionBtn("Clear", Color(0xFF3A1A1A), small = true) { pcIpDraft = ""; vm.setPcServerIp("") }
+                        if (pcIpDraft.isNotEmpty()) ActionBtn("Clear", Color(0xFF3A1A1A), small = true) { pcIpDraft = ""; vm.setPcServerIp(""); vm.recheckServer(playerVm, onDone = onDataRefresh) }
                     }
                     if (state.pcServerIp.isNotEmpty())
                         Text("Active: ${state.pcServerIp}:3000", fontSize = 10.sp, color = Color(0xFF6BCB77), fontFamily = FontFamily.Monospace)
@@ -335,8 +497,9 @@ fun DevMenuScreen(
                 ActionBtn("Reset App", Color(0xFF4A1414)) { confirmReset = true }
                 Text("Wipes token, pins & settings, then restarts.", fontSize = 10.sp, color = Color(0xFF775555))
                 Spacer(Modifier.height(20.dp))
-            }
+          }
         }
+      }
     }
 
     if (confirmReset) {
@@ -372,13 +535,11 @@ private fun PhoneServerRow(webServerUrl: String, playerVm: PlayerViewModel) {
                 Text(if (enabled) "On — reachable on your network" else "Off", fontSize = 10.sp, color = Color(0xFF777777))
             }
             // Toggle to turn the :8080 page on/off (it's on by default).
-            Surface(
+            AmClickBox(
                 onClick = { enabled = !enabled; playerVm.setWebServerEnabled(enabled) },
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = if (enabled) Color(0xFF34C759) else Color(0xFF3A3A3C),
-                    focusedContainerColor = if (enabled) Color(0xFF4AD866) else Color(0xFF5A5A5C),
-                ),
+                shape = RoundedCornerShape(50),
+                containerColor = if (enabled) Color(0xFF34C759) else Color(0xFF3A3A3C),
+                focusedColor = if (enabled) Color(0xFF4AD866) else Color(0xFF5A5A5C),
             ) {
                 Text(if (enabled) "On" else "Off", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
@@ -553,6 +714,13 @@ internal fun orbSpeedLabel(f: Float): String = when {
     else      -> "Fast"
 }
 
+internal fun cacheLabel(bytes: Long): String = when {
+    bytes <= 0L -> "Off"
+    // OPTIONS uses 1000*MB / 2000*MB (MB = 1024²), so label those as 1 GB / 2 GB.
+    bytes >= 1000L * 1024 * 1024 -> "${bytes / (1000L * 1024 * 1024)} GB"
+    else -> "${bytes / (1024 * 1024)} MB"
+}
+
 internal fun lyricsScaleLabel(f: Float): String = when {
     f < 1.1f  -> "Small"
     f < 1.4f  -> "Normal"
@@ -580,14 +748,14 @@ private fun Stepper(label: String, value: String, sub: String, onDec: () -> Unit
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun StepBtn(sym: String, onClick: () -> Unit) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A2C), focusedContainerColor = Color(0xFFFA233B)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.12f),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color(0xFF2A2A2C),
+        focusedColor = Color(0xFFFA233B),
+        focusedScale = 1.12f,
         modifier = Modifier.size(38.dp),
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -598,13 +766,15 @@ private fun StepBtn(sym: String, onClick: () -> Unit) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun Toggle(label: String, on: Boolean, sub: String, onToggle: () -> Unit) {
-    Surface(
-        onClick = onToggle,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF161618), focusedContainerColor = Color(0xFF232325)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        modifier = Modifier.fillMaxWidth(),
+private fun Toggle(label: String, on: Boolean, sub: String, enabled: Boolean = true, onToggle: () -> Unit) {
+    val dim = if (enabled) 1f else 0.4f
+    AmClickBox(
+        onClick = { if (enabled) onToggle() },
+        shape = RoundedCornerShape(10.dp),
+        containerColor = Color(0xFF161618),
+        focusedColor = Color(0xFF232325),
+        focusedScale = 1.02f,
+        modifier = Modifier.fillMaxWidth().alpha(dim),
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -622,10 +792,41 @@ private fun Toggle(label: String, on: Boolean, sub: String, onToggle: () -> Unit
     }
 }
 
+/** tvOS-style sidebar category row. Focus-to-select: moving the remote onto it selects it. Selected =
+ *  bright white floating card (black text); focused-but-not-selected lifts to a translucent card. */
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun SidebarItem(label: String, selected: Boolean, muted: Boolean = false, selectOnFocus: Boolean = true, onSelect: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    // Category rows select on focus (tvOS behaviour). An ACTION row (e.g. the Developer reveal) must
+    // NOT — focusing it would fire its action; it only acts on an explicit OK/click.
+    LaunchedEffect(focused) { if (focused && !selected && selectOnFocus) onSelect() }
+    val bg = when { selected -> Color.White; focused -> Color(0xFF2A2A2E); else -> Color.Transparent }
+    val fg = when { selected -> Color.Black; muted -> Color(0xFF888888); else -> Color(0xFFDDDDDD) }
+    // Foundation clickable → touch tap selects; stays focusable so D-pad focus (and select-on-focus) work.
+    Box(
+        Modifier.fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .clickable { onSelect() },
+    ) {
+        Text(label, fontSize = 15.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            color = fg, modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp))
+    }
+}
+
 @Composable
 private fun SectionLabel(text: String) {
-    Text(text.uppercase(), fontSize = 10.sp, color = Color(0xFF666666),
-        fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp, modifier = Modifier.padding(top = 8.dp))
+    Row(
+        Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.width(3.dp).height(14.dp).background(Color(0xFFFA233B), RoundedCornerShape(50)))
+        Text(text.uppercase(), fontSize = 11.sp, color = Color(0xFF9A9A9A),
+            fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
+    }
 }
 
 @Composable
@@ -639,13 +840,14 @@ private fun StatusChip(label: String, ok: Boolean, sub: String? = null) {
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun ActionBtn(label: String, color: Color, small: Boolean = false, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = color, focusedContainerColor = color.copy(alpha = 0.7f)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-        modifier = Modifier.height(if (small) 32.dp else 40.dp)) {
+    AmClickBox(
+        onClick = onClick, shape = RoundedCornerShape(6.dp),
+        containerColor = color, focusedColor = color.copy(alpha = 0.7f),
+        focusedScale = 1.05f,
+        modifier = Modifier.height(if (small) 32.dp else 40.dp),
+    ) {
         Box(Modifier.padding(horizontal = if (small) 12.dp else 18.dp), Alignment.Center) {
             Text(label, fontSize = if (small) 11.sp else 13.sp, color = Color.White, fontWeight = FontWeight.Medium)
         }

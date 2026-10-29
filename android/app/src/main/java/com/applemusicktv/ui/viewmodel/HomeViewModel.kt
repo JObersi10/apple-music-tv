@@ -3,6 +3,7 @@ package com.applemusicktv.ui.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.applemusicktv.data.MutPreferences
 import com.applemusicktv.data.model.Album
 import com.applemusicktv.data.repository.MusicRepository
 import com.squareup.moshi.Moshi
@@ -20,14 +21,22 @@ data class HomeUiState(
     val isLoading: Boolean       = true,
     val error:     String?       = null,
     val sections:  List<HomeSection> = emptyList(),
+    /** True when the shown feed is the non-personalized fallback AND a MUT is set — recommendations
+     *  failed to load, so Home shows a "retry" banner. Never set without a MUT (no-MUT Home is
+     *  charts-only by design, not an error). */
+    val needsRefresh: Boolean    = false,
 )
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repo: MusicRepository,
+    private val mutPrefs: MutPreferences,
     @ApplicationContext context: Context,
     moshi: Moshi,
 ) : ViewModel() {
+
+    /** Whether a non-personalized [feed] should raise the retry banner (only with a MUT present). */
+    private fun fallbackBanner(feed: List<HomeSection>) = !feed.isPersonalized() && mutPrefs.hasMUT()
 
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state
@@ -60,10 +69,51 @@ class HomeViewModel @Inject constructor(
             }
         }
         load()
+        startPeriodicRefresh()
     }
 
-    fun load() {
+    /** A cheap signature of the shown feed, to skip re-pushing an identical one (which would reset the
+     *  scroll / re-raise the banner — the old oscillation). */
+    private fun List<HomeSection>.signature() = joinToString("|") { "${it.title}:${it.albums.size}" }
+
+    /**
+     * Keep Home fresh on its own: every 20s re-fetch and swap in a new feed when it actually changed —
+     * so it self-heals after a network/DNS blip and picks up personalization when /me/recommendations
+     * recovers, without the user ever pressing refresh. Commits only when the content differs AND is at
+     * least as good (personalized, or the current feed isn't personalized / is empty), so an identical
+     * or weaker feed never churns the screen.
+     */
+    private fun startPeriodicRefresh() {
         viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(20_000)
+                if (loadJob?.isActive == true) continue        // don't race a foreground load
+                val r = repo.getHome().getOrNull() ?: continue
+                val secs = r.sections.map { s ->
+                    HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style)
+                }
+                if (secs.isEmpty()) continue
+                val cur = _state.value.sections
+                val personalized = secs.isPersonalized()
+                val better = personalized || cur.isEmpty() || !cur.isPersonalized()
+                if (better && secs.signature() != cur.signature()) {
+                    _state.value = HomeUiState(isLoading = false, sections = secs, needsRefresh = fallbackBanner(secs))
+                    if (personalized) launch(kotlinx.coroutines.Dispatchers.Default) {
+                        runCatching { prefs.edit().putString("sections", adapter.toJson(secs)).apply() }
+                    }
+                }
+            }
+        }
+    }
+
+    private var loadJob: kotlinx.coroutines.Job? = null
+
+    fun load() {
+        // One load at a time: tapping the "needs refresh" banner repeatedly used to stack several
+        // background self-heal loops, each re-pushing state every few seconds → the banner flickered
+        // back ("loads, says refresh, click, normal, refresh again a sec later"). Cancel the prior run.
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             val cached = _state.value.sections
             if (cached.isEmpty()) _state.value = HomeUiState(isLoading = true)
             var lastErr: String? = null
@@ -81,22 +131,48 @@ class HomeViewModel @Inject constructor(
                         val fresh = sections.isPersonalized()
                         val haveCached = cached.isPersonalized()
                         val show = if (!fresh && haveCached) cached else sections
-                        _state.value = HomeUiState(isLoading = false, sections = show)
+                        _state.value = HomeUiState(isLoading = false, sections = show, needsRefresh = fallbackBanner(show))
                         if (fresh) {   // only cache a genuinely personalized feed
                             launch(kotlinx.coroutines.Dispatchers.Default) {
                                 runCatching { prefs.edit().putString("sections", adapter.toJson(sections)).apply() }
                             }
                         }
                         // A non-personalized fetch isn't the final word — recs may recover on a later
-                        // attempt in this same load. Only stop early once we actually have personalization.
-                        if (fresh || !haveCached) return@launch
+                        // attempt. Only stop the foreground loop once we actually have personalization;
+                        // otherwise fall through to the background self-heal below.
+                        if (fresh) return@launch
                     }
                 }.onFailure { lastErr = it.message }
                 if (attempt < 3) kotlinx.coroutines.delay(1500)
             }
-            // Total failure: keep any cached feed rather than blanking.
-            if (cached.isNotEmpty()) _state.value = HomeUiState(isLoading = false, sections = cached)
+            // We got here WITHOUT personalization (every attempt 500'd, or only charts/moods came back —
+            // /me/recommendations streaks 500s and is often not ready on a cold start). Show the best feed
+            // we have (cached or the last non-personalized fetch), then keep retrying in the BACKGROUND
+            // with backoff so Home self-heals once recs recover — instead of stranding the user on the
+            // "needs refresh" banner until they relaunch. This is the fix for "home keeps needing refresh
+            // on startup": the banner now clears itself when personalization lands.
+            val best = if (cached.isNotEmpty()) cached else _state.value.sections
+            if (best.isNotEmpty()) _state.value = HomeUiState(isLoading = false, sections = best, needsRefresh = fallbackBanner(best))
             else _state.value = HomeUiState(isLoading = false, error = lastErr)
+            var backoff = 4_000L
+            repeat(15) {
+                kotlinx.coroutines.delay(backoff)
+                backoff = (backoff * 3 / 2).coerceAtMost(30_000L)
+                val r = repo.getHome().getOrNull() ?: return@repeat
+                val secs = r.sections.map { s -> HomeSection(title = s.title, albums = s.albums.map(repo::albumFromDto), style = s.style) }
+                if (secs.isEmpty()) return@repeat
+                val personalized = secs.isPersonalized()
+                // Only COMMIT when personalization finally lands. While it's still non-personalized we
+                // leave the already-shown feed untouched — re-pushing an equivalent non-personalized feed
+                // every few seconds was what re-raised the banner and reset the scroll ("refresh again a
+                // sec later"). We keep retrying silently; nothing on screen changes until recs recover.
+                if (!personalized) return@repeat
+                _state.value = HomeUiState(isLoading = false, sections = secs, needsRefresh = false)
+                launch(kotlinx.coroutines.Dispatchers.Default) {
+                    runCatching { prefs.edit().putString("sections", adapter.toJson(secs)).apply() }
+                }
+                return@launch   // healed — stop retrying
+            }
         }
     }
 }

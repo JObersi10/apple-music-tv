@@ -31,6 +31,7 @@ import coil.compose.AsyncImage
 import com.applemusicktv.data.model.Song
 import com.applemusicktv.ui.components.Glyph
 import com.applemusicktv.ui.components.Icon
+import com.applemusicktv.ui.components.AmClickBox
 import com.applemusicktv.ui.viewmodel.AlbumDetailViewModel
 import com.applemusicktv.ui.viewmodel.PlayerViewModel
 
@@ -56,6 +57,26 @@ fun AlbumDetailScreen(
     val album = state.album ?: return
     var menuSong by remember { mutableStateOf<Song?>(null) }
     var addToSong by remember { mutableStateOf<Song?>(null) }
+    // Per-row focus requesters → closing the context menu returns focus to the long-pressed row.
+    val rowFocus = remember { mutableMapOf<String, FocusRequester>() }
+    // Down from the top nav bar / on entry lands on Play, not the artist-name link (which sits higher
+    // in the left column and used to win the focus search).
+    val playFocus = remember { FocusRequester() }
+    var didFocusPlay by remember { mutableStateOf(false) }
+    LaunchedEffect(state.tracks.isNotEmpty()) {
+        if (state.tracks.isNotEmpty() && !didFocusPlay) {
+            kotlinx.coroutines.delay(80)
+            runCatching { playFocus.requestFocus() }
+            didFocusPlay = true
+        }
+    }
+    var refocusId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(refocusId) {
+        val id = refocusId ?: return@LaunchedEffect
+        kotlinx.coroutines.delay(60)
+        runCatching { rowFocus[id]?.requestFocus() }
+        refocusId = null
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
     Row(modifier = Modifier.fillMaxSize().padding(48.dp), horizontalArrangement = Arrangement.spacedBy(48.dp)) {
@@ -77,11 +98,10 @@ fun AlbumDetailScreen(
                 color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
             val albumArtistId = album.artistId ?: state.tracks.firstOrNull()?.artistId
             if (albumArtistId != null) {
-                Surface(
+                AmClickBox(
                     onClick = { onArtistClick(albumArtistId) },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0x1AFA233B)),
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                    shape = RoundedCornerShape(4.dp),
+                    containerColor = Color.Transparent, focusedColor = Color(0x1AFA233B),
                     modifier = Modifier.padding(top = 4.dp),
                 ) {
                     Text(album.artistName, fontSize = 15.sp, color = Color(0xFFFA233B),
@@ -107,7 +127,8 @@ fun AlbumDetailScreen(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    PillButton(Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54)) {
+                    PillButton(Glyph.PLAY, "Play", Color(0xFFFA233B), Color(0xFFFF3B54),
+                        modifier = Modifier.focusRequester(playFocus)) {
                         playerVm.playAlbum(state.tracks)
                     }
                     PillButton(Glyph.SHUFFLE, "Shuffle", Color(0xFF2A2A2C), Color(0xFF3A3A3C)) {
@@ -120,9 +141,47 @@ fun AlbumDetailScreen(
                 TrackRow(
                     track       = track,
                     index       = index + 1,
+                    isPopular   = track.title.trim().lowercase() in state.popularTitles,
                     onClick     = { playerVm.playAlbum(state.tracks, index) },
                     onLongClick = { menuSong = track },
+                    focusRequester = rowFocus.getOrPut(track.id) { FocusRequester() },
                 )
+            }
+            // Music Videos shelf — the album's own MVs (or the artist's related ones), at the bottom.
+            if (state.musicVideos.isNotEmpty()) {
+                item {
+                    Text("Music Videos", color = androidx.compose.ui.graphics.Color.White,
+                        fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 4.dp, top = 20.dp, bottom = 8.dp))
+                }
+                item {
+                    androidx.compose.foundation.lazy.LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(end = 24.dp, top = 4.dp, bottom = 10.dp),
+                    ) {
+                        itemsIndexed(state.musicVideos) { i, v ->
+                            AmClickBox(
+                                onClick = { playerVm.playAlbum(state.musicVideos, i) },
+                                shape = RoundedCornerShape(10.dp),
+                                focusedScale = 1.06f,
+                                containerColor = androidx.compose.ui.graphics.Color.Transparent, focusedColor = androidx.compose.ui.graphics.Color.Transparent,
+                            ) {
+                                Column(Modifier.width(220.dp).padding(bottom = 6.dp)) {
+                                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(androidx.compose.ui.graphics.Color(0xFF1A1A1A))) {
+                                        v.artworkUrl?.let {
+                                            coil.compose.AsyncImage(model = v.artworkUrl(480), contentDescription = null,
+                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                        }
+                                    }
+                                    Text(v.title, color = androidx.compose.ui.graphics.Color.White, fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold, maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 6.dp, end = 4.dp))
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     } // Row
@@ -136,46 +195,23 @@ fun AlbumDetailScreen(
                     menuSong = s.copy(artistId = aId ?: s.artistId, albumId = alId ?: s.albumId)
             }
         }
-        val dismissMenu = { menuSong = null }
-        Box(
-            Modifier.fillMaxSize()
-                .background(Color(0x88000000))
-                .onKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown &&
-                        (event.key == Key.Back || event.key == Key.Escape)) {
-                        dismissMenu(); true
-                    } else false
-                },
-            contentAlignment = Alignment.Center,
-        ) {
-            val firstFocus = remember { FocusRequester() }
-            var clickBlocked by remember(s.id) { mutableStateOf(true) }
-            LaunchedEffect(s.id) {
-                kotlinx.coroutines.delay(800)
-                clickBlocked = false
-                runCatching { firstFocus.requestFocus() }
-            }
-            Column(
-                Modifier.width(320.dp).heightIn(max = 340.dp).clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF1C1C1E))
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
-            ) {
-                Text(s.title, fontSize = 13.sp, color = Color(0xFF999999), fontWeight = FontWeight.Medium, maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                AlbumContextItem(Glyph.PLAY_NEXT, "Play Next",    { if (!clickBlocked) { playerVm.playNext(s);    dismissMenu() } }, Modifier.focusRequester(firstFocus))
-                AlbumContextItem(Glyph.QUEUE_ADD, "Add to Queue", { if (!clickBlocked) { playerVm.addToQueue(s); dismissMenu() } })
-                AlbumContextItem(Glyph.ADD_TO, "Add to…", { if (!clickBlocked) { addToSong = s; dismissMenu() } })
-                AlbumContextItem(Glyph.RADIO, "Create Station", { if (!clickBlocked) { playerVm.createSongStation(s); dismissMenu() } })
-                val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
-                val goAlbum  = s.albumId ?: album.id
-                HorizontalDivider(color = Color(0xFF2E2E30), thickness = 0.5.dp, modifier = Modifier.padding(horizontal = 8.dp))
-                if (goArtist != null) AlbumContextItem(Glyph.ARTIST, "Go to Artist", onClick = { if (!clickBlocked) { onArtistClick(goArtist); dismissMenu() } })
-                if (goAlbum  != null) AlbumContextItem(Glyph.ALBUM, "Go to Album",  onClick = { if (!clickBlocked) { onAlbumClick(goAlbum);   dismissMenu() } })
-            }
-        }
+        val dismissMenu = { refocusId = menuSong?.id; menuSong = null }
+        val goArtist = s.artistId ?: album.artistId ?: state.tracks.firstOrNull()?.artistId
+        val goAlbum  = s.albumId ?: album.id
+        com.applemusicktv.ui.components.AmContextMenu(
+            title = s.title,
+            subtitle = s.artistName,
+            artworkUrl = s.artworkUrl,
+            onDismiss = dismissMenu,
+            actions = buildList {
+                add(com.applemusicktv.ui.components.AmMenuAction("Play Next", com.applemusicktv.ui.components.Glyph.PLAY_NEXT) { playerVm.playNext(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to Queue", com.applemusicktv.ui.components.Glyph.QUEUE_ADD) { playerVm.addToQueue(s); dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Add to…", com.applemusicktv.ui.components.Glyph.ADD_TO) { addToSong = s; dismissMenu() })
+                add(com.applemusicktv.ui.components.AmMenuAction("Create Station", com.applemusicktv.ui.components.Glyph.RADIO) { playerVm.createSongStation(s); dismissMenu() })
+                if (goArtist != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Artist", com.applemusicktv.ui.components.Glyph.ARTIST) { onArtistClick(goArtist); dismissMenu() })
+                if (goAlbum  != null) add(com.applemusicktv.ui.components.AmMenuAction("Go to Album", com.applemusicktv.ui.components.Glyph.ALBUM) { onAlbumClick(goAlbum); dismissMenu() })
+            },
+        )
     }
 
     addToSong?.let { s ->
@@ -188,11 +224,11 @@ fun AlbumDetailScreen(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun AlbumContextItem(icon: Glyph, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
+    AmClickBox(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color(0xFF2E2E30)),
+        shape = RoundedCornerShape(8.dp),
+        containerColor = Color.Transparent, focusedColor = Color(0xFF2E2E30),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
@@ -209,23 +245,26 @@ private fun AlbumContextItem(icon: Glyph, label: String, onClick: () -> Unit, mo
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TrackRow(track: Song, index: Int, onClick: () -> Unit, onLongClick: () -> Unit = {}) {
-    Surface(
+private fun TrackRow(track: Song, index: Int, isPopular: Boolean = false, onClick: () -> Unit, onLongClick: () -> Unit = {}, focusRequester: FocusRequester? = null) {
+    AmClickBox(
         onClick     = onClick,
         onLongClick = onLongClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = Color.Transparent,
-            focusedContainerColor = Color(0xFF1C1C1E),
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        modifier = (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier).fillMaxWidth(),
+        shape    = RoundedCornerShape(6.dp),
+        containerColor = Color.Transparent,
+        focusedColor = Color(0xFF1C1C1E),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // Apple's "popular" dot: a small grey filled circle to the LEFT of the track number
+            // on the album's best songs. Fixed-width slot so numbers stay aligned whether or not
+            // a dot is present.
+            Box(Modifier.width(8.dp), contentAlignment = Alignment.Center) {
+                if (isPopular) Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFF9A9A9A)))
+            }
             Text("$index", fontSize = 13.sp, color = Color(0xFF555555), modifier = Modifier.width(24.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(track.title, fontSize = 14.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)

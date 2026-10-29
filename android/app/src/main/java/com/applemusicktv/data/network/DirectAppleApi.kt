@@ -24,6 +24,9 @@ data class AppleSongAttrs(
     val artistName: String = "",
     val albumName: String = "",
     val durationInMillis: Long = 0,
+    // Apple's per-track popularity (0..1), returned with ?extend=popularity. Drives the album's
+    // grey "popular" dot (Apple gates it on a threshold — see AlbumDetailScreen).
+    val popularity: Double? = null,
     val artwork: AppleArtwork? = null,
     val previews: List<ApplePreview> = emptyList(),
     val hasLyrics: Boolean = false,
@@ -135,6 +138,7 @@ fun AppleItem<AppleSongAttrs>.toSongDto() = SongDto(
     artistId       = relationships?.artists?.data?.firstOrNull()?.id,
     albumId        = relationships?.albums?.data?.firstOrNull()?.id,
     durationMs     = attributes?.durationInMillis ?: 0,
+    popularity     = attributes?.popularity,
     artworkUrl     = attributes?.artwork?.url,
     artworkBgColor = attributes?.artwork?.bgColor,
     previewUrl     = attributes?.previews?.firstOrNull()?.url,
@@ -280,6 +284,12 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("limit") limit: Int = 100,
+        // include=artists so each track carries relationships.artists → toSongDto fills artistId.
+        // Without it artistId is null on the direct path, which breaks album MVs, the popular dot,
+        // and related albums (all resolve the artist from a track).
+        @Query("include") include: String = "artists",
+        // extend=popularity → attributes.popularity for the grey popular dot (Apple's own signal).
+        @Query("extend") extend: String = "popularity",
     ): AppleList<AppleItem<AppleSongAttrs>>
 
     /** Library albums need the library endpoint; `include=catalog` gives us the id. */
@@ -342,8 +352,8 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("views") views: String =
-            "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos",
-        @Query("extend") extend: String = "editorialArtwork,artistBio",
+            "top-songs,latest-release,full-albums,featured-albums,similar-artists,top-music-videos,playlists",
+        @Query("extend") extend: String = "editorialArtwork,artistBio,bornOrFormed,origin",
     ): Map<String, Any>
 
     @GET("v1/catalog/{sf}/artists/{id}/albums")
@@ -375,6 +385,13 @@ interface DirectAppleApi {
         @Path("sf") storefront: String,
         @Path("id") id: String,
         @Query("include") include: String = "tracks,contents,radio-show",
+    ): Map<String, Any>
+
+    /** Batch station fetch (comma-separated ids) — used to seed the Radio page's live-station grid. */
+    @GET("v1/catalog/{sf}/stations")
+    suspend fun catalogStationsByIds(
+        @Path("sf") storefront: String,
+        @Query("ids") ids: String,
     ): Map<String, Any>
 
     /** Live-radio playback assets. Absolute @Url — lives on amp-api.music.apple.com, not the

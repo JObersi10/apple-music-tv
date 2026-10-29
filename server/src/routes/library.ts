@@ -92,6 +92,27 @@ library.get("/songs", async (c) => {
   }
 });
 
+// Music videos in the user's library — same shape as /songs, typed so the client plays them as MVs.
+library.get("/music-videos", async (c) => {
+  const mut = guard(c); if (!mut) return;
+  try {
+    const all: any[] = [];
+    let url: string | null = "https://amp-api-edge.music.apple.com/v1/me/library/music-videos";
+    while (url && all.length < 2000) {
+      const res = await (all.length === 0
+        ? appleGet(url, { limit: 100, include: "catalog" }, mut)
+        : axios.get(url, { headers: appleHeaders(mut) }));
+      all.push(...(res.data?.data ?? []));
+      url = res.data?.next ? `https://amp-api-edge.music.apple.com${res.data.next}` : null;
+    }
+    const videos = all.map((s: any) => ({ ...normaliseSong(s), type: "music-videos" }));
+    return c.json({ songs: videos });
+  } catch (e: any) {
+    console.error("[library/music-videos]", e?.response?.data ?? e.message);
+    return c.json({ error: e.message }, 500);
+  }
+});
+
 library.get("/albums", async (c) => {
   const mut = guard(c); if (!mut) return;
   try {
@@ -244,17 +265,23 @@ library.post("/playlists/:id/tracks/add", async (c) => {
   const { id, type } = await c.req.json().catch(() => ({} as any));
   if (!mut) return c.json({ error: "no MUT" }, 401);
   if (!id) return c.json({ error: "song id required" }, 400);
+  // Apple's playlist-add needs the item's type to match the id namespace: a LIBRARY song id
+  // (`i.…`) must be added as `library-songs`, a catalog id (numeric) as `songs`. Sending a plain
+  // `songs` for an `i.` id 500s — which is why adding a regular (already-in-library) song failed.
+  const resolvedType = id.startsWith("i.") ? "library-songs" : (type ?? "songs");
+  console.log(`[library/playlist-add] pl=${playlistId} id=${id} type=${resolvedType}`);
   try {
     await ensureBearer();
     const res = await axios.post(
       `https://amp-api-edge.music.apple.com/v1/me/library/playlists/${playlistId}/tracks`,
-      { data: [{ id, type: type ?? "songs" }] },
+      { data: [{ id, type: resolvedType }] },
       { headers: { ...appleHeaders(mut), "Content-Type": "application/json" } },
     );
     return c.json({ ok: true, status: res.status });
   } catch (e: any) {
     if (e?.response?.status === 401 || e?.response?.status === 403) invalidateBearer();
-    console.warn("[library/playlist-add] failed:", e?.response?.status, e?.message);
+    console.warn(`[library/playlist-add] FAILED id=${id} type=${type ?? "songs"} status=${e?.response?.status} body=`,
+      JSON.stringify(e?.response?.data)?.slice(0, 400) ?? e?.message);
     return c.json({ error: e?.response?.data ?? e.message }, e?.response?.status ?? 500);
   }
 });

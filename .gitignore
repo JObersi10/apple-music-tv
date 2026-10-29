@@ -21,6 +21,9 @@ android/local.properties
 *.apk
 *.aab
 *.keystore
+# …but DO track the shared debug keystore, so every build signs identically and
+# updates in place. It's a debug-only key (public password), safe to commit.
+!android/app/debug.keystore
 *.jks
 .cxx/
 
@@ -36,3 +39,6 @@ __pycache__/
 *.pyc
 /tmp/
 scratchpad/
+
+# Reverse-engineering reference sources (local only — large APK + 3rd-party src)
+inspo : source codes/

@@ -3,6 +3,7 @@ package com.applemusicktv.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -54,15 +55,31 @@ fun TopNavBar(
     isPlaying: Boolean = false,
     updateAvailable: Boolean = false,
     beatAnalyzer: com.applemusicktv.media.BeatAnalyzer? = null,
+    /** Auto-hide the bar (fade to 0 until focused). True ONLY on the actual Now Playing route —
+     *  which covers lyrics + fullscreen video too. Route-based, NOT selectedTab-based: detail
+     *  routes (album/artist) don't update selectedTab, so keying off `selected==NowPlaying` used to
+     *  keep the bar hidden on an album opened from Now Playing. */
+    autoHide: Boolean = false,
+    /** Touch reveal: a tap on the top strip of Now Playing sets this so the bar shows (and its tabs
+     *  become tappable) even with no D-pad focus. Auto-clears on the caller's side. */
+    forceVisible: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // Apple's tab set: Home / New / Videos / Radio / Library / Search / Now Playing / Dev.
+    val tabs = listOf(TopNavTab.ListenNow, TopNavTab.Browse, TopNavTab.Videos, TopNavTab.Radio,
+               TopNavTab.Library, TopNavTab.Search, TopNavTab.NowPlaying, TopNavTab.Dev)
+    fun labelFor(tab: TopNavTab): String = when (tab) {
+        TopNavTab.ListenNow -> "Home"
+        TopNavTab.Browse    -> "New"
+        else -> tab.label
+    }
     var isFocused by remember { mutableStateOf(false) }
     // When the Now Playing screen is up, ANY upward entry into the nav bar (from the
     // ··· button, transport row, lyrics, etc.) must land on the Now Playing tab, not
     // whichever tab sits nearest the pressed control.
     val npTabFocus = remember { FocusRequester() }
     val alpha by animateFloatAsState(
-        targetValue = if (selected == TopNavTab.NowPlaying && !isFocused) 0f else 1f,
+        targetValue = if (autoHide && !isFocused && !forceVisible) 0f else 1f,
         animationSpec = tween(500),
         label = "navBarAlpha"
     )
@@ -93,21 +110,23 @@ fun TopNavBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                TopNavTab.entries.forEach { tab ->
+                tabs.forEach { tab ->
                     val isSelected = tab == selected
                     val bgColor by animateColorAsState(
                         if (isSelected) Color.White else Color.Transparent, tween(180))
                     val textColor by animateColorAsState(
                         if (isSelected) Color.Black else Color(0xFF9A9A9A), tween(180))
 
-                    Surface(
-                        onClick = { onSelect(tab) },
-                        modifier = if (tab == TopNavTab.NowPlaying) Modifier.focusRequester(npTabFocus) else Modifier,
-                        shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors  = ClickableSurfaceDefaults.colors(
-                            containerColor        = bgColor,
-                            focusedContainerColor = if (isSelected) Color.White else Color(0xFF2C2C2E),
-                        ),
+                    // Foundation clickable (not a tv Surface) so a TOUCH TAP selects the tab as well
+                    // as a D-pad press; it stays focusable, so remote nav + npTabFocus still work.
+                    var tabFocused by remember { mutableStateOf(false) }
+                    val tabBg = if (tabFocused) (if (isSelected) Color.White else Color(0xFF2C2C2E)) else bgColor
+                    Box(
+                        modifier = (if (tab == TopNavTab.NowPlaying) Modifier.focusRequester(npTabFocus) else Modifier)
+                            .onFocusChanged { tabFocused = it.isFocused }
+                            .clip(RoundedCornerShape(50))
+                            .background(tabBg)
+                            .clickable { onSelect(tab) },
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
@@ -122,7 +141,7 @@ fun TopNavBar(
                                 )
                             } else {
                                 Text(
-                                    text       = tab.label,
+                                    text       = labelFor(tab),
                                     fontSize   = 13.sp,
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                                     letterSpacing = if (isSelected) (-0.1).sp else 0.sp,

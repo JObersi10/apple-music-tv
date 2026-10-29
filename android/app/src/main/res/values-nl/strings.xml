@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dutch (nl) — EXAMPLE translation, to show contributors the pattern. Copy res/values/strings.xml here
+  and translate only the text, never the name="…" keys. Anything you leave out falls back to English.
+-->
+<resources>
+    <string name="tab_listen_now">Nu luisteren</string>
+    <string name="tab_library">Bibliotheek</string>
+    <string name="tab_search">Zoeken</string>
+    <string name="tab_now_playing">Speelt nu</string>
+
+    <string name="exit_title">Apple Music TV afsluiten?</string>
+    <string name="action_cancel">Annuleren</string>
+    <string name="action_exit">Afsluiten</string>
+
+    <string name="no_lyrics_found">Geen songtekst gevonden</string>
+
+    <string name="action_play">Afspelen</string>
+    <string name="action_shuffle">Shuffle</string>
+    <string name="action_play_next">Hierna afspelen</string>
+    <string name="action_add_to_queue">Toevoegen aan wachtrij</string>
+    <string name="action_go_to_artist">Ga naar artiest</string>
+    <string name="action_go_to_album">Ga naar album</string>
+</resources>

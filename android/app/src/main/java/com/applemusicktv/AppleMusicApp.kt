@@ -38,11 +38,19 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
             .allowRgb565(true)
             .respectCacheHeaders(false)
             .crossfade(false)
+            // Retry artwork fetches through DNS/timeout blips (Fire TV DNS flakes in bursts), so a cover
+            // doesn't stay blank after one failed resolve.
+            .okHttpClient {
+                okhttp3.OkHttpClient.Builder()
+                    .addInterceptor(com.applemusicktv.data.RetryInterceptor(maxRetries = 3))
+                    .build()
+            }
             .build()
 
     @Inject lateinit var webServer: InAppWebServer
     @Inject lateinit var repo: MusicRepository
     @Inject lateinit var mutPrefs: MutPreferences
+    @Inject lateinit var cachePrefs: com.applemusicktv.data.CachePreferences
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -50,10 +58,29 @@ class AppleMusicApp : Application(), ImageLoaderFactory {
         super.onCreate()
         com.applemusicktv.util.CrashReporter.install(this)
         clearStaleCaches()
+        // Bound the downloaded-media scratch (standalone decrypt + music video) to the user's cap;
+        // Coil's artwork cache is capped separately above. This is the cache that grew past 300 MB.
+        appScope.launch {
+            runCatching { com.applemusicktv.util.MediaCacheManager.trim(this@AppleMusicApp, cachePrefs.getCap()) }
+        }
         webServer.boot(appScope)   // starts only if the Dev toggle is on
         // Route volume-leveling diagnostics into the APP log (so they show under App Log, not Network,
         // and stream live on the :8081 event port).
-        com.applemusicktv.media.GainProcessor.logger = { tag, msg -> webServer.addLog(tag, msg) }
+        // Also mirror to logcat (`adb logcat -s AMVOL`) — webServer.addLog skips the HTTP mirror when the
+        // proxy is unreachable and never writes to logcat, so leveling diagnostics were invisible there.
+        com.applemusicktv.media.GainProcessor.logger = { tag, msg ->
+            webServer.addLog(tag, msg)
+            android.util.Log.i("AMVOL", "$tag $msg")
+        }
+        // Japanese pronunciation pack: point the romanizer at the on-device dictionary dir, and if the
+        // user already has pronunciation on, fetch the (downloadable, not-bundled) Kuromoji dictionary.
+        com.applemusicktv.lyrics.spicy.romanization.JapaneseRomanizer.dictDir =
+            com.applemusicktv.lyrics.spicy.romanization.JapaneseDictionaryPack.dir(this)
+        if (getSharedPreferences("player_state", MODE_PRIVATE).getBoolean("lyrics_romanize", false)) {
+            appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { com.applemusicktv.lyrics.spicy.romanization.JapaneseDictionaryPack.download(this@AppleMusicApp) }
+            }
+        }
         // Sync locally-stored MUT to proxy server on startup so ExoPlayer stream requests work
         val mut = mutPrefs.getMUT()
         if (mut.isNotEmpty()) {

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  English (default) UI strings. This is the base locale: every other language is a copy of this file
+  under res/values-<lang>/ (e.g. res/values-nl/ for Dutch, res/values-es/ for Spanish). Android picks
+  the right one automatically from the device language and falls back to this file for anything missing.
+
+  To translate the app: copy this file to res/values-<lang>/strings.xml and translate the text between
+  the tags — never change the `name="…"` keys. See docs/CONTRIBUTING-i18n.md.
+
+  Migration is in progress: strings are moved out of the Kotlin code into here over time. When you add a
+  user-facing string in code, add it here as @string/… instead of hardcoding it.
+-->
+<resources>
+    <string name="app_name">Apple Music TV</string>
+
+    <!-- Navigation tabs -->
+    <string name="tab_listen_now">Listen Now</string>
+    <string name="tab_library">Library</string>
+    <string name="tab_search">Search</string>
+    <string name="tab_now_playing">Now Playing</string>
+
+    <!-- Exit dialog -->
+    <string name="exit_title">Exit Apple Music TV?</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_exit">Exit</string>
+
+    <!-- Lyrics -->
+    <string name="no_lyrics_found">No Lyrics Found</string>
+
+    <!-- Common actions -->
+    <string name="action_play">Play</string>
+    <string name="action_shuffle">Shuffle</string>
+    <string name="action_play_next">Play Next</string>
+    <string name="action_add_to_queue">Add to Queue</string>
+    <string name="action_go_to_artist">Go to Artist</string>
+    <string name="action_go_to_album">Go to Album</string>
+</resources>

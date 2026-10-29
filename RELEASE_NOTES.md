@@ -1,47 +1,142 @@
-# Apple Music TV — v1.2
+# Release Notes
 
-- A big one. Standalone on-device playback is now the default, radio plays, and the whole Now Playing / Browse experience got a facelift.
+## Unreleased — Touch & Haptics pass
 
-*🎵 Playback & Audio*
-Fully standalone by default — catalog, library, search, lyrics, artwork and on-device audio decryption, no computer needed.
-Dead library songs now play — obscure/matched tracks that used to skip instantly fall back to the catalog copy on-device automatically.
-Live radio — Apple Music 1 / Hits / Country and station shows play, with live in-band track metadata, a LIVE badge, and per-station lyric offset.
-Radio stations — station cards play their rolling queue (cracked Apple's next-tracks endpoint).
-Volume leveling — optional RMS auto-gain so quiet masters aren't buried.
-Gapless & crossfade — same-album tracks stay gapless; everything else crossfades (tunable 1–15s).
-Add to Library / Add to Playlist from the song menu.
+Phone / touchscreen and vibration polish on top of PR #5.
 
-*📺 Now Playing*
-Dynamic background — fluid color backdrop extracted live from the album art, beat-reactive (Normal / Strong / Insane), with motion (animated) covers.
-Projector mode — a calmer, slower ambient backdrop for the big screen.
-Screensaver — kicks in when idle so nothing burns in.
-Big-screen lyrics — full-screen, word-by-word synced lyrics with adjustable size.
-Scrub bar, sleep timer, shuffle/repeat, go-to-artist/album in the transport menu.
+### Touch
+- **App-wide tap + hold** — every card, row, tab, menu, dialog and transport control now responds to
+  a touch tap (and long-press where a hold menu exists). D-pad / remote behaviour is unchanged.
+- **Back to the top bar from Now Playing** — tap the top edge and the nav bar slides back in (it
+  auto-hides again after a few seconds).
+- **Tap the progress bar to seek**, tap a queue row to play it, tap Retry / Refresh / Exit buttons.
+- **Snap scrolling** on the Home and Browse shelves when you fling with a finger.
 
-*🎬 Music Videos*
-Music videos and interviews play, grouped ("Music Videos", "Behind the Songs"), and now show on artist pages.
-Fixed the secure-surface bleed, HDCP quality traps, and A/V lip-sync.
+### Haptics (phone & controller)
+- **Haptics to the music** — redesigned, PS5-style: each beat is an attack-decay thump that punches
+  harder on bigger hits instead of one flat buzz. Works on a game controller **or** the phone itself.
+- **Music haptics follow** — choose **The beat** (steady pulse) or **The drums** (sharp, kick-weighted).
+- **Music haptics strength** — 0–200% intensity.
+- **Try the music haptics** — Kick / Snare / Note / Drop test taps.
 
-*🗂️ Library — revamped*
-Left sidebar categories (Playlists / Albums / Artists / Songs), modernized.
-Sort via a round popup button — by name / artist / date, ascending/descending, remembered per playlist.
-Pin playlists to the top; instant load from cache.
+### Lyrics — Scrolling
+- **Smooth scrolling** toggle — spring glide between lines (off = snap, lighter on slow devices).
+- **Early scroll** — start moving to the next line up to 600 ms early so it feels less abrupt.
+- **Seek fade-in compensation** — a lyric tap jumps ~300 ms early so the player's fade-in doesn't eat the line's start.
+- **Auto-scroll unsynced lyrics** toggle — lyrics with no timing glide top→bottom at the song's pace.
 
-*🔎 Browse & Listen Now*
-Menu revamp — real Apple editorial shelves: Top Picks for You hero, the Featured "New" spotlight, Find Your Mood, genre/mood/decade tiles, "More to Explore".
-Personalization no longer vanishes during Apple's recommendation outages.
-Search — songs, categories, curators, multirooms, and editorial links.
-Loading skeletons that match the real layout.
+### Fixed
+- **Now Playing controls on touch** — tapping while the chrome is hidden now reveals the play/pause/skip buttons instead of a dead "ghost" tap.
+- **Cold open on live radio** — reopening shows "Apple Music Radio" and relaunches the live stream, not the last song played before radio.
 
-*⚙️ Settings — revamped*
-Reorganized Dev/Settings: background mode, orb speed, lyrics size, rounded/square art, motion toggle, reduce motion, Low Power Mode, beat intensity, crossfade, standalone toggle, PC server IP, and the in-app updater.
+### Other
+- **Extra offset** now steps ±10 ms (was ±50 ms) for fine lyric/beat sync.
 
-*⚡ Performance*
-Smoother scrolling — motion covers wait before animating; background logging no longer stalls menus.
-Off-main-thread Home cache, capped bitmap memory, RGB_565 palette.
+---
 
-*🐛 Fixes*
-Grey Now Playing background on colorful covers; missing-artwork songs get their own color.
-Editorial playlists showing "no songs"; double failure toasts; per-tab back-stack memory (every tab returns to its last page).
-Dev → Re-check Server / Refresh now actually reload Listen Now.
-Removed non-playable radio-show cards from Browse.
+## Unreleased — Radio, Artist V2, Spicy Lyrics & more (PR #5)
+
+The big feature branch since 1.3. Highlights:
+
+### New
+- **Radio & stations** — Apple Music radio and stations are playable, with a dedicated Radio tab.
+- **Artist page V2** — wide editorial hero, bio, top songs, latest release, albums, similar artists.
+- **Spicy Lyrics (word-synced) as the primary source**, with a new **Lyrics Renderer v2** (Canvas
+  engine: gradient wipe, spring motion, glow, "lavalamp" background). Now the default renderer.
+- **Lyric translation** in your language, drawn under each line — on the renderer the app uses.
+- **Pronunciation line** — romaji / pinyin, with a **downloadable Japanese kanji pack** for full readings.
+- **Uploaded & iTunes-Match songs play** (server and on-device) — tracks from your own files.
+- **Music videos stream through the PC server** when reachable — kills the cross-tab picture "bleed".
+- **Game controller support** with **rumble to the bass** (toggle / R3), tab + transport + menu mapping.
+- **Settings redesigned** as a tvOS split-view (categorised sidebar + content pane).
+- **Automatic PC-server rediscovery** (mDNS) when its address changes.
+- **Now Playing fullscreen** — hides the Android status bar + nav buttons.
+- **Picture-in-Picture**, low-power **quit-on-exit**, Shazam-based radio ID, i18n infrastructure.
+
+### Fixed (since 1.3)
+- Matched / iTunes-Match songs no longer skip; faster song start through the server (~8×).
+- Radio song → playlist add; radio restore on reopen; live radio metadata on Now Playing.
+- Motion album art smooth + full quality; a failed track resumes where it was, not 0:00.
+- Lyric translation fade, held-word clipping, one-frame flash, unsynced auto-scroll.
+
+Per-commit detail is in [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Unreleased (post-1.3, Spicy Lyrics + Renderer v2)
+- **Spicy Lyrics is the new primary lyrics source** — word-synced lyrics aggregated from Apple Music,
+  Spotify and a community pool, resolved via an anonymous Spotify search (no login). Apple + lrclib
+  remain as fallbacks. Works with the PC server (secret key) and standalone (client key).
+- **Songwriter + community credits** under the lyrics: "Written by", "Provided by", "Made by /
+  Uploaded by" (with avatars). Duet/alternate vocals render right-aligned.
+- **New "Lyrics Renderer v2"** (Dev/Settings toggle) — the Spicy Player Canvas engine: spring motion,
+  gradient wipe, kana/pinyin romanization, distance blur, fade-in, smaller non-active lines. Tuned for
+  Fire TV (no glow flash, tighter spacing, low-power drops the blur). Default off — toggle to try it.
+- Standalone skip no longer briefly resumes the previous song during the on-device decrypt.
+- Home shows a "refresh" banner when recommendations fail (with a token set).
+- Bug report (`:8080/bug-report`) now includes Spotify/Spicy network activity.
+- Credit: lyrics renderer + lookup adapted from spicy-player (AGPL-3.0); see README / THIRD_PARTY_NOTICES.
+
+## (earlier) post-1.3 lyrics polish
+- **Karaoke lyrics reworked to match Apple Music.** Words do a left→right gradient wipe and rise a
+  small **uniform** amount (rises fast, then holds). **Held words** (≥1s) swell and their letters glow
+  in sequence, then settle at the same level as the rest — no reflow of the lines below, no end-jump.
+  The swell/glow respects Low Power / Reduce Motion.
+- **Background vocals fixed** — no longer show up pre-lifted/lit before their turn or stay frozen lifted
+  on already-sung lines; more gap above them.
+- **"No Lyrics Found"** shows only after the fetch completes; **real lyrics stay on idle** (queue and
+  the message fade); **next song's lyrics are prefetched**; lyrics + motion reload on cold reopen.
+- **Standalone lyrics** now merge syllable spans ("fa vo rite" → "favorite").
+- Motion cover fills the box (no black gap on fast skip); translated lyrics dimmer + left-aligned.
+
+## v1.3
+
+### Sign-in / getting your token
+- **New companion phone app — [AM MUT Extractor](https://github.com/JObersi10/am-mut-extractor).**
+  Sign into Apple Music on your phone (where the keyboard works), copy the token, paste it on the TV's
+  `:8080` page. This is now the recommended way to get your Music-User-Token.
+- **On-TV "Connect to Apple Music" sign-in is disabled for now** (shows a "Coming soon!" toast). The
+  in-app WebView login is unreliable on Fire TV — Amazon's WebView keyboard mangles password fields
+  (first character doubled, backspace broken, passwords barely register). The code stays in for a
+  future revisit; use the phone extractor meanwhile.
+- Docs (README, technical guide, MUT flow) now point at the extractor app.
+
+### Now Playing
+- **Dynamic background** is more colourful (richer saturation/brightness), still smooth on Fire TV.
+- **No more green flash** when opening Now Playing — artwork palettes are cached.
+- **Crossfade fixes** — the on-screen song now flips at the fade midpoint (no more "wrong song on
+  screen" during a crossfade); no more two tracks playing at once when skipping mid-crossfade.
+- **Translated lyrics** are indented and dimmer when inactive, so the translation reads as a secondary
+  gloss instead of competing with the main line.
+- Cover art fetched at a lighter resolution — loads a bit faster on this panel.
+
+### Navigation / UI
+- **New UI is now the only UI** (Home / New / Videos / Radio). The old screens and the Dev "New UI"
+  toggle were removed.
+- **Album page:** pressing down from the top bar (or opening an album) now lands on **Play**, not the
+  artist-name link.
+- **Dev menu:** setting/clearing the PC server IP now re-checks reachability immediately, so the
+  Server status updates without a manual re-check.
+
+### Playback
+- **Standalone (on-device) no longer turns itself off when there's no PC server.** It used to disable
+  the toggle after a few failures even though standalone was the only path — now it only falls back to
+  the proxy (and disables) when a server is actually reachable.
+
+### Library
+- **Playlist song count is accurate.** Placeholder/unavailable rows in Apple's feed no longer inflate
+  the "N songs" count (e.g. a 297-song playlist that reported 300).
+
+### Music videos & artist page (from the prior branch work)
+- Album "Music Videos" shelf shows this album's videos, not every video the artist made.
+- Artist page V2 with the wide editorial hero banner.
+- "Popular" dot uses Apple's real popularity signal, only on standout tracks.
+
+### App
+- Version bumped to **1.3** (versionCode 4) — shown in Dev → App version and Android app details.
+
+### Known limits / parked
+- On-TV Apple sign-in (use the phone extractor for now).
+- Music-video picture "bleed" across tabs on this MediaTek Fire TV (firmware, not app-fixable).
+- Dolby Atmos / spatial / hi-res passthrough.
+- Native lyrics pronunciation (romaji/pinyin).

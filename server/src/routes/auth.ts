@@ -24,6 +24,18 @@ async function detectStorefront(mut: string, bearer: string) {
   } catch (e: any) { console.warn("Storefront detect failed:", e.message); }
 }
 
+// MusicKit JS on the Fire TV needs a developer token to init. The bearer we scrape off
+// music.apple.com IS Apple's own web MusicKit developer token, so hand it back for the on-TV
+// "Connect to Apple Music" page (which then calls music.authorize() to get the user's MUT).
+auth.get("/developer-token", async (c) => {
+  if (!getBearerToken()) {
+    try { const token = await scrapeBearerFromWeb(); if (token) setBearerToken(token); } catch (e) { console.warn("Bearer scrape failed:", e); }
+  }
+  const token = getBearerToken();
+  if (!token) return c.json({ error: "No developer token available" }, 503);
+  return c.json({ token });
+});
+
 auth.post("/token", async (c) => {
   const { mut } = await c.req.json<{ mut: string }>();
   if (!mut || typeof mut !== "string" || mut.trim().length < 20)

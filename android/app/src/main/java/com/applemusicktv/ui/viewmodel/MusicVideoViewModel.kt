@@ -83,7 +83,16 @@ class MusicVideoViewModel @Inject constructor(
     private val appleClient: AppleDirectClient,
     private val videoQueue: com.applemusicktv.media.VideoQueue,
     private val lyricsOffsetPrefs: com.applemusicktv.data.LyricsOffsetPreferences,
+    private val serverPrefs: com.applemusicktv.data.ServerPreferences,
+    private val standalonePrefs: com.applemusicktv.data.StandalonePreferences,
 ) : ViewModel() {
+
+    /** MV via proxy: the server decrypts the Widevine video+audio to a plain MP4, so the app plays it
+     *  with a NON-secure decoder — no protected surface plane, so the cross-tab library bleed is gone.
+     *  Only when the proxy is reachable and standalone is OFF; otherwise fall to the on-device secure
+     *  path. The proxy MP4 URL for the current video (null = on-device path). */
+    private var curProxyUrl: String? = null
+    private fun useProxyForMv(): Boolean = serverPrefs.serverReachable && !standalonePrefs.isEnabled()
 
     private val prefs = context.getSharedPreferences("mv_prefs", Context.MODE_PRIVATE)
 
@@ -249,6 +258,23 @@ class MusicVideoViewModel @Inject constructor(
                     _state.value = _state.value.copy(loading = false, error = "Sign-in required")
                     return@launch
                 }
+                // PROXY PATH: server decrypts to a plain MP4 → non-secure decoder → no bleed. Skip the
+                // on-device webPlayback/playlist/DRM work entirely; just point ExoPlayer at the proxy.
+                if (useProxyForMv()) {
+                    curMv = null; curBearer = bearer; curMut = mut; curAdamId = mvId
+                    val base = serverPrefs.effectiveBaseUrl().trimEnd('/')
+                    curProxyUrl = "$base/api/stream/mv/$mvId?h=${effHeight()}"
+                    _state.value = _state.value.copy(availableQualities = qualityTiers(MV_QUALITY_TIERS))
+                    buildAndPlayProxy(curProxyUrl!!, mut, seekMs = pendingSeekMs, playWhenReady = !userPaused)
+                    pendingSeekMs = 0
+                    launch {
+                        withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(mvId, bearer, mut) }?.let { d ->
+                            _state.value = _state.value.copy(info = d.info, artistId = d.artistId)
+                        }
+                    }
+                    return@launch
+                }
+                curProxyUrl = null
                 // Use the prefetched result if the queue warmed this id ahead of time.
                 val mv = prefetchCache.remove(mvId)
                     ?: withContext(Dispatchers.IO) { appleClient.getMusicVideoPlayback(mvId, bearer, mut, effHeight()) }
@@ -294,8 +320,23 @@ class MusicVideoViewModel @Inject constructor(
             java.io.File(context.cacheDir, com.applemusicktv.media.MV_MASTER_FILE)).toString()
         run {
                 val drmCallback = AppleMusicDrmCallback(mv.adamId, mv.keyUri, bearer, mut, mv.keyMap)
+                // Force Widevine L3. THE bleed root cause: at L1 the session reports
+                // requiresSecureDecoder=true, so ExoPlayer picks the ".secure" MediaCodec
+                // (OMX.MTK.VIDEO.DECODER.AVC.secure) which renders to a PROTECTED hardware plane —
+                // that plane is what bled onto Library/Videos, and it ignores our TextureView. This
+                // display has no HDCP so L1 was capped to SD (~432p) anyway. L3 = software decrypt +
+                // NON-secure output → a normal decoder that renders into the TextureView, confined to
+                // Now Playing. Same SD quality, no bleed. Falls back to the default provider if the
+                // device rejects the L3 property.
+                val l3DrmProvider = androidx.media3.exoplayer.drm.ExoMediaDrm.Provider { uuid ->
+                    runCatching {
+                        FrameworkMediaDrm.newInstance(uuid).apply {
+                            runCatching { setPropertyString("securityLevel", "L3") }
+                        }
+                    }.getOrElse { FrameworkMediaDrm.DEFAULT_PROVIDER.acquireExoMediaDrm(uuid) }
+                }
                 val drmManager = DefaultDrmSessionManager.Builder()
-                    .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                    .setUuidAndExoMediaDrmProvider(C.WIDEVINE_UUID, l3DrmProvider)
                     // MV HLS carries SEPARATE key ids for the audio and video tracks.
                     // multiSession=true opens one Widevine session per KID so both the
                     // audio key and the video key load — with a single session only one
@@ -349,6 +390,51 @@ class MusicVideoViewModel @Inject constructor(
                 exo.prepare()
                 exo.playWhenReady = playWhenReady
                 _state.value = _state.value.copy(paused = !playWhenReady)
+                attachListeners(exo)
+                player = exo
+                _playerFlow.value = exo
+                _state.value = _state.value.copy(loading = false)
+                startProgress()
+        }
+    }
+
+    /** Proxy MV path: a plain progressive MP4 from the server (already decrypted), no DRM, no secure
+     *  decoder. Renders into the TextureView like any video → no protected plane → no library bleed. */
+    @OptIn(UnstableApi::class)
+    private fun buildAndPlayProxy(url: String, mut: String, seekMs: Long, playWhenReady: Boolean) {
+        releasePlayer()
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(60_000).setReadTimeoutMs(60_000)
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(mapOf("X-Music-User-Token" to mut))
+        val dataFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
+        val source = androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(dataFactory)
+            .createMediaSource(MediaItem.fromUri(url))
+        val exo = ExoPlayer.Builder(context)
+            .setRenderersFactory(
+                com.applemusicktv.media.DelayVideoRenderersFactory(context) { avVideoDelayUs() })
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(15_000, 60_000, 1_500, 3_000)
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .setTargetBufferBytes(64 * 1024 * 1024)
+                    .build())
+            .build()
+        exo.setMediaSource(source)
+        if (seekMs > 0) exo.seekTo(seekMs)
+        exo.prepare()
+        exo.playWhenReady = playWhenReady
+        _state.value = _state.value.copy(paused = !playWhenReady)
+        attachListeners(exo)
+        player = exo
+        _playerFlow.value = exo
+        _state.value = _state.value.copy(loading = false)
+        startProgress()
+    }
+
+    /** Shared Player.Listener for both the on-device and proxy MV players. */
+    @OptIn(UnstableApi::class)
+    private fun attachListeners(exo: ExoPlayer) {
                 exo.addListener(object : Player.Listener {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         _state.value = _state.value.copy(playing = isPlaying)
@@ -444,11 +530,6 @@ class MusicVideoViewModel @Inject constructor(
                         )
                     }
                 })
-                player = exo
-                _playerFlow.value = exo
-                _state.value = _state.value.copy(loading = false)
-                startProgress()
-        }
     }
 
     private fun startProgress() {
@@ -515,13 +596,17 @@ class MusicVideoViewModel @Inject constructor(
     /** Open the artist page. Uses the resolved id if we have it, else fetches it on demand
      *  (the details fetch can lag or fail, but the button stays usable). */
     fun openArtist(navigate: (String) -> Unit) {
-        _state.value.artistId?.let { navigate(it); return }
+        // Only navigate with a NON-BLANK id. A blank id builds a malformed ArtistDetail route and the
+        // NavController silently falls back to the start destination — that was the "Go to Artist
+        // jumps to Home" bug. Blank → resolve on demand instead of navigating to nothing.
+        _state.value.artistId?.takeIf { it.isNotBlank() }?.let { Log.i("AMMV", "openArtist -> navigate(cached) id=$it"); navigate(it); return }
         val id = curAdamId ?: curMvId ?: return
+        Log.i("AMMV", "openArtist -> resolving from mv id=$id")
         viewModelScope.launch {
             val bearer = appleClient.getBearer(); val mut = mutPrefs.getMUT()
             if (bearer.isEmpty() || mut.isEmpty()) return@launch
             val d = withContext(Dispatchers.IO) { appleClient.getMusicVideoDetails(id, bearer, mut) }
-            d?.artistId?.let { _state.value = _state.value.copy(artistId = it); navigate(it) }
+            d?.artistId?.takeIf { it.isNotBlank() }?.let { _state.value = _state.value.copy(artistId = it); navigate(it) }
         }
     }
 
@@ -560,21 +645,69 @@ class MusicVideoViewModel @Inject constructor(
         if (videoDetached) return
         videoDetached = true
         val exo = player ?: return
-        Log.i("AMMV", "detachVideo: clearVideoSurface + disable video track (keep player+audio+DRM)")
-        // Detach the output surface FIRST so no protected frame stays latched, THEN disable the video
-        // renderer to free the secure codec. AppShell then destroys the (now content-free) SurfaceView.
-        exo.clearVideoSurface()
+        val pos = exo.currentPosition
+        // TRACK-DISABLE, not a rebuild. The v2 "audio-only rebuild" released and re-created the whole
+        // player on every tab leave/return — that is the ~0.5s audio cut the user heard, and it STILL
+        // bled anyway. Disabling the video track on the SAME live player releases the secure video
+        // codec (ExoPlayer frees the disabled renderer's decoder) while the audio renderer keeps
+        // running uninterrupted — no blip. The bleed is handled in AppShell by moving the surface
+        // off-screen (it is a compositor/plane issue, not something the VM can reap).
+        Log.i("AMMV", "detachVideo: disable video track at ${pos}ms (audio keeps playing, no rebuild)")
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
+        exo.clearVideoSurface()
+        detachDone.value = true
     }
+    private var detachJob: kotlinx.coroutines.Job? = null
+    /** Flips true only when detachVideo's audio-only rebuild has actually released the secure decoder. */
+    val detachDone = kotlinx.coroutines.flow.MutableStateFlow(true)
+    /** Await the in-flight audio-only rebuild so the SurfaceView is destroyed only after the secure
+     *  decoder is gone (nothing latched to orphan). */
+    suspend fun awaitDetach() { detachJob?.join() }
     @OptIn(UnstableApi::class)
     fun attachVideo() {
         if (!videoDetached) return
         videoDetached = false
         val exo = player ?: return
-        Log.i("AMMV", "attachVideo: re-enable video track (remounted PlayerView reattaches surface)")
+        // Re-enable the video track on the SAME player. The recomposed PlayerView re-attaches the
+        // surface (in AppShell's update lambda). No rebuild, no license re-fetch, no blip.
+        Log.i("AMMV", "attachVideo: re-enable video track")
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).build()
+    }
+
+    // ── Bleed fix, Avenue 4: HARD STOP on leaving Now Playing ────────────────────
+    // This MediaTek Fire TV forces the SECURE video decoder for Apple's Widevine content (L1) — L3
+    // override, TextureView, and track-disable all failed: the .secure codec renders to a protected
+    // SurfaceFlinger plane that bleeds onto other tabs, and keeping it alive off-screen stutters
+    // Bluetooth audio. The ONLY reliable cure is to fully RELEASE the codec when leaving Now Playing.
+    // Cross-tab MV audio therefore stops (accepted). Returning rebuilds from the on-disk playlists at
+    // the saved position (no network) — ~1s reload.
+    private var hardStopped = false
+    @OptIn(UnstableApi::class)
+    fun hardStopVideo() {
+        val exo = player ?: return
+        if (hardStopped) return
+        hardStopped = true
+        pendingSeekMs = exo.currentPosition
+        Log.i("AMMV", "hardStopVideo: releasing secure codec at ${pendingSeekMs}ms (audio stops)")
+        releasePlayer()   // stop + release ExoPlayer + DRM → the .secure MediaCodec is destroyed
+    }
+    @OptIn(UnstableApi::class)
+    fun resumeVideo() {
+        if (!hardStopped) return
+        hardStopped = false
+        val proxy = curProxyUrl
+        if (proxy != null) {
+            Log.i("AMMV", "resumeVideo (proxy): rebuild at ${pendingSeekMs}ms")
+            buildAndPlayProxy(proxy, curMut, seekMs = pendingSeekMs, playWhenReady = !userPaused); pendingSeekMs = 0
+            return
+        }
+        val mv = curMv; val b = curBearer; val m = curMut
+        if (mv != null && b != null && m != null) {
+            Log.i("AMMV", "resumeVideo: rebuild at ${pendingSeekMs}ms")
+            viewModelScope.launch { buildAndPlay(mv, b, m, disableVideo = false, seekMs = pendingSeekMs, playWhenReady = !userPaused); pendingSeekMs = 0 }
+        }
     }
 
     fun togglePlayPause() { player?.let { userPaused = it.playWhenReady; it.playWhenReady = !it.playWhenReady } }
