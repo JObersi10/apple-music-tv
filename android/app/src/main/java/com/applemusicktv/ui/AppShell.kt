@@ -4,6 +4,7 @@ import android.app.Activity
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -281,6 +282,14 @@ fun AppShell(modifier: Modifier = Modifier) {
     // equal to the bar so their content isn't hidden underneath it.
     val navBarHeight = 64.dp
 
+    // Touch reveal of the auto-hidden nav bar on Now Playing: a tap on the top strip shows the bar
+    // (and makes its tabs tappable) for a few seconds, then it fades back. D-pad users never need it.
+    var navRevealed by remember { mutableStateOf(false) }
+    LaunchedEffect(navRevealed) {
+        if (navRevealed) { kotlinx.coroutines.delay(4500); navRevealed = false }
+    }
+    LaunchedEffect(isOnNowPlaying) { if (!isOnNowPlaying) navRevealed = false }
+
     // Exit confirmation on back from root
     var showExitDialog by remember { mutableStateOf(false) }
     BackHandler(enabled = showExitDialog) { showExitDialog = false }
@@ -508,10 +517,11 @@ fun AppShell(modifier: Modifier = Modifier) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     androidx.compose.material3.Text("Token expired — re-enter at :8080", color = androidx.compose.ui.graphics.Color.White, fontSize = 13.sp)
-                    androidx.tv.material3.Surface(
+                    com.applemusicktv.ui.components.AmClickBox(
                         onClick = { playerVm.dismissMutExpired() },
-                        shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(50)),
-                        colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(containerColor = androidx.compose.ui.graphics.Color(0x33FFFFFF), focusedContainerColor = androidx.compose.ui.graphics.Color(0x55FFFFFF)),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(50),
+                        containerColor = androidx.compose.ui.graphics.Color(0x33FFFFFF),
+                        focusedColor = androidx.compose.ui.graphics.Color(0x55FFFFFF),
                     ) { androidx.compose.foundation.layout.Box(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
                         com.applemusicktv.ui.components.Icon(com.applemusicktv.ui.components.Glyph.CLOSE, size = 13.dp, color = androidx.compose.ui.graphics.Color.White)
                     } }
@@ -562,14 +572,12 @@ fun AppShell(modifier: Modifier = Modifier) {
                         fontWeight = FontWeight.SemiBold,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        androidx.tv.material3.Surface(
+                        com.applemusicktv.ui.components.AmClickBox(
                             onClick = { showExitDialog = false },
                             modifier = Modifier.focusRequester(cancelFocus),
-                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                                containerColor = Color(0xFF3A3A3C),
-                                focusedContainerColor = Color(0xFF5A5A5C),
-                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            containerColor = Color(0xFF3A3A3C),
+                            focusedColor = Color(0xFF5A5A5C),
                         ) {
                             androidx.compose.material3.Text(
                                 androidx.compose.ui.res.stringResource(com.applemusicktv.R.string.action_cancel),
@@ -577,7 +585,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
                             )
                         }
-                        androidx.tv.material3.Surface(
+                        com.applemusicktv.ui.components.AmClickBox(
                             onClick = {
                                 showExitDialog = false
                                 // A real exit must stop the audio: the player lives in the ViewModel,
@@ -592,11 +600,9 @@ fun AppShell(modifier: Modifier = Modifier) {
                                 // popup never just sits there doing nothing.
                                 if (activity?.moveTaskToBack(true) != true) activity?.finish()
                             },
-                            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                                containerColor = Color(0xFFB22222),
-                                focusedContainerColor = Color(0xFFD44040),
-                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            containerColor = Color(0xFFB22222),
+                            focusedColor = Color(0xFFD44040),
                         ) {
                             androidx.compose.material3.Text(
                                 androidx.compose.ui.res.stringResource(com.applemusicktv.R.string.action_exit),
@@ -753,6 +759,7 @@ fun AppShell(modifier: Modifier = Modifier) {
                 // Auto-hide only on the real Now Playing route (covers lyrics + fullscreen video).
                 // Detail routes (album/artist) keep the bar visible even when reached from Now Playing.
                 autoHide = isOnNowPlaying,
+                forceVisible = navRevealed,
                 onSelect = onSelect@ { tab ->
                     // Swallow a stray click bled onto the nav bar right after a video→pushed-screen
                     // navigation (focus escaped here while the new screen was still loading). Without
@@ -802,6 +809,19 @@ fun AppShell(modifier: Modifier = Modifier) {
                         }
                     }
                 },
+            )
+        }
+
+        // Touch-only reveal strip: while the nav bar is auto-hidden on Now Playing, a tap on the top
+        // edge brings it back (and makes its tabs tappable). Sits above the hidden bar so the tap
+        // lands here; once revealed it's gone, so the now-visible tabs get the next tap. D-pad unaffected.
+        if (isOnNowPlaying && !navRevealed) {
+            Box(
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().height(navBarHeight)
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null,
+                    ) { navRevealed = true },
             )
         }
 

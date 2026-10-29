@@ -52,6 +52,8 @@ fun SpicyLyricsPanel(
     romanizeReloadKey: Any = Unit,
     /** Song length (ms); when >0 and the lyrics are unsynced, they auto-scroll in time with the song. */
     durationMs: Long = 0L,
+    /** Off = unsynced (no-timing) lyrics stay put; user scrolls them by hand. */
+    autoScrollUnsynced: Boolean = true,
 ) {
     // Pronunciation: romanize the lyrics off the main thread (dictionary-backed Japanese etc. is heavy),
     // keyed on the lyrics + the toggle. Null until computed / when off. Applied per-word below so the
@@ -115,7 +117,7 @@ fun SpicyLyricsPanel(
         onSeekWord = onSeek,
         staticAutoScroll = {
             // Unsynced lyrics (Static) with a known duration → scroll fraction = elapsed fraction.
-            if (built.type == LyricsType.Static && durationMs > 0L)
+            if (autoScrollUnsynced && built.type == LyricsType.Static && durationMs > 0L)
                 ((progressState.value + offsetMs).toFloat() / durationMs).coerceIn(0f, 1f) else -1f
         },
         modifier = modifier.fillMaxSize(),

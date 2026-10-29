@@ -169,6 +169,12 @@ fun DevMenuScreen(
                 onToggle = { playerVm.toggleLyricsRomanize() },
             )
             Toggle(
+                label = "Auto-scroll unsynced lyrics", on = pstate.autoScrollUnsynced,
+                sub = if (pstate.autoScrollUnsynced) "Lyrics without timing scroll through at the song's pace, top to bottom"
+                      else "Off — scroll no-timing lyrics by hand",
+                onToggle = { playerVm.setAutoScrollUnsynced(!pstate.autoScrollUnsynced) },
+            )
+            Toggle(
                 label = "Lyrics credits", on = pstate.showLyricsCredits,
                 sub = if (pstate.showLyricsCredits) "Show the “Written by / Provided by / Made by” footer under lyrics"
                       else "Hide the lyrics credits footer",
@@ -313,15 +319,41 @@ fun DevMenuScreen(
                 onToggle = { playerVm.setAvSyncAuto(!pstate.avSyncAuto) },
             )
             Toggle(
-                label = "Controller rumble", on = pstate.rumbleEnabled,
-                sub = if (pstate.rumbleEnabled) "Game controller vibrates to the bass (R3 toggles too)" else "Off — no haptics",
+                label = "Haptics to the music", on = pstate.rumbleEnabled,
+                sub = if (pstate.rumbleEnabled) "Controller or phone vibrates to the song, with a swell into every drop (R3 toggles too)" else "Off — no haptics",
                 onToggle = { playerVm.toggleRumble() },
             )
+            if (pstate.rumbleEnabled) {
+                Stepper(
+                    label = "Music haptics follow",
+                    value = if (pstate.hapticFollow == "drums") "The drums" else "The beat",
+                    sub = "The beat: a steady pulse, firmer on each hit. The drums: kicks deep, snares crisp.",
+                    onDec = { playerVm.setHapticFollow(if (pstate.hapticFollow == "drums") "beat" else "drums") },
+                    onInc = { playerVm.setHapticFollow(if (pstate.hapticFollow == "drums") "beat" else "drums") },
+                )
+                Stepper(
+                    label = "Music haptics strength",
+                    value = "${pstate.hapticStrength} %",
+                    sub = "How strong the vibrations are. Android's media-vibration setting can also turn them off.",
+                    onDec = { playerVm.setHapticStrength(pstate.hapticStrength - 10) },
+                    onInc = { playerVm.setHapticStrength(pstate.hapticStrength + 10) },
+                )
+                Text("Try the music haptics", fontSize = 12.sp, color = Color.White,
+                    fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+                Text("Feel each one at the strength set above.", fontSize = 10.sp, color = Color(0xFF999999),
+                    modifier = Modifier.padding(bottom = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ActionBtn("Kick",  Color(0xFF3A3A3C), small = true) { playerVm.testHaptic("kick") }
+                    ActionBtn("Snare", Color(0xFF3A3A3C), small = true) { playerVm.testHaptic("snare") }
+                    ActionBtn("Note",  Color(0xFF3A3A3C), small = true) { playerVm.testHaptic("note") }
+                    ActionBtn("Drop",  Color(0xFF3A3A3C), small = true) { playerVm.testHaptic("drop") }
+                }
+            }
             Stepper(
                 label = "Extra offset", value = "${state.lyricsOffsetMs}ms",
                 sub = "Applies to lyrics, beat AND music-video lip-sync. Negative = earlier, positive = later",
-                onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 50) },
-                onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 50) },
+                onDec = { vm.setLyricsOffset(state.lyricsOffsetMs - 10) },
+                onInc = { vm.setLyricsOffset(state.lyricsOffsetMs + 10) },
             )
           }
 

@@ -1,5 +1,32 @@
 # Release Notes
 
+## Unreleased — Touch & Haptics pass
+
+Phone / touchscreen and vibration polish on top of PR #5.
+
+### Touch
+- **App-wide tap + hold** — every card, row, tab, menu, dialog and transport control now responds to
+  a touch tap (and long-press where a hold menu exists). D-pad / remote behaviour is unchanged.
+- **Back to the top bar from Now Playing** — tap the top edge and the nav bar slides back in (it
+  auto-hides again after a few seconds).
+- **Tap the progress bar to seek**, tap a queue row to play it, tap Retry / Refresh / Exit buttons.
+- **Snap scrolling** on the Home and Browse shelves when you fling with a finger.
+
+### Haptics (phone & controller)
+- **Haptics to the music** — redesigned, PS5-style: each beat is an attack-decay thump that punches
+  harder on bigger hits instead of one flat buzz. Works on a game controller **or** the phone itself.
+- **Music haptics follow** — choose **The beat** (steady pulse) or **The drums** (sharp, kick-weighted).
+- **Music haptics strength** — 0–200% intensity.
+- **Try the music haptics** — Kick / Snare / Note / Drop test taps.
+
+### Lyrics
+- **Auto-scroll unsynced lyrics** toggle — lyrics with no timing glide top→bottom at the song's pace.
+
+### Other
+- **Extra offset** now steps ±10 ms (was ±50 ms) for fine lyric/beat sync.
+
+---
+
 ## Unreleased — Radio, Artist V2, Spicy Lyrics & more (PR #5)
 
 The big feature branch since 1.3. Highlights:

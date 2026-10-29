@@ -60,6 +60,9 @@ fun TopNavBar(
      *  routes (album/artist) don't update selectedTab, so keying off `selected==NowPlaying` used to
      *  keep the bar hidden on an album opened from Now Playing. */
     autoHide: Boolean = false,
+    /** Touch reveal: a tap on the top strip of Now Playing sets this so the bar shows (and its tabs
+     *  become tappable) even with no D-pad focus. Auto-clears on the caller's side. */
+    forceVisible: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // Apple's tab set: Home / New / Videos / Radio / Library / Search / Now Playing / Dev.
@@ -76,7 +79,7 @@ fun TopNavBar(
     // whichever tab sits nearest the pressed control.
     val npTabFocus = remember { FocusRequester() }
     val alpha by animateFloatAsState(
-        targetValue = if (autoHide && !isFocused) 0f else 1f,
+        targetValue = if (autoHide && !isFocused && !forceVisible) 0f else 1f,
         animationSpec = tween(500),
         label = "navBarAlpha"
     )

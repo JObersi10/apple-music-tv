@@ -53,7 +53,7 @@ fun HomeScreenV2(
                 Text("Could not connect to server", color = Color(0xFFFF453A), fontSize = 16.sp)
                 Text(state.error ?: "", color = Color(0xFF555555), fontSize = 12.sp)
                 Spacer(Modifier.height(16.dp))
-                Surface(onClick = vm::load, colors = ClickableSurfaceDefaults.colors(containerColor = AmTokens.Color.Accent)) {
+                com.applemusicktv.ui.components.AmClickBox(onClick = vm::load, containerColor = AmTokens.Color.Accent, focusedColor = AmTokens.Color.Accent) {
                     Text("Retry", color = Color.White, modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp))
                 }
             }
@@ -104,13 +104,11 @@ private fun HomeRefreshBanner(isLoading: Boolean, onRefresh: () -> Unit) {
     LaunchedEffect(pressed) {
         if (pressed) { kotlinx.coroutines.delay(8000); pressed = false }
     }
-    Surface(
+    com.applemusicktv.ui.components.AmClickBox(
         onClick = { if (!spinning) { pressed = true; onRefresh() } },
-        shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color(0x1AFF453A),
-            focusedContainerColor = Color(0x33FF453A),
-        ),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+        containerColor = Color(0x1AFF453A),
+        focusedColor = Color(0x33FF453A),
         modifier = Modifier.padding(horizontal = AmTokens.Space.lg, vertical = 2.dp).fillMaxWidth(),
     ) {
         Row(

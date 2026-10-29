@@ -139,6 +139,8 @@ data class PlayerState(
     val showLyricsCredits: Boolean        = true,
     /** Show on-device pronunciation (romaji / pinyin / …) under non-Latin lyrics (v2 renderer). */
     val lyricsRomanize:   Boolean         = false,
+    /** Unsynced (no-timing) lyrics glide top→bottom at the song's pace. */
+    val autoScrollUnsynced: Boolean       = true,
     val isFullStream:     Boolean         = false,
     val motionUrl:        String?         = null,
     /** A/V-sync EXTRA the user dials on top of everything. 0 normally; the only value shown in the UI. */
@@ -179,6 +181,10 @@ data class PlayerState(
      *  footprint on this Fire TV and the source of the surface errors. Opt in if the device can take it. */
     val motionArtworkEnabled: Boolean = false,
     val rumbleEnabled: Boolean = false,
+    /** Haptic intensity, percent (0..200). 100 = the tuned default. */
+    val hapticStrength: Int = 100,
+    /** What the rumble tracks: "beat" (steady pulse per onset) or "drums" (sharper, kick-weighted). */
+    val hapticFollow: String = "beat",
     /** Projector orb drift speed: 0.6 slow · 1.0 normal · 1.6 fast. */
     val orbSpeed: Float = 1.0f,
     /** Lyrics font scale: 0.85 small · 1.0 normal · 1.2 large. */
@@ -249,6 +255,10 @@ class PlayerViewModel @Inject constructor(
     private val rumble = com.applemusicktv.media.RumbleController(context)
     init {
         viewModelScope.launch {
+            // Seed the controller with persisted strength/follow before any onset fires (runs after
+            // construction, so `prefs` is initialized).
+            rumble.strength = prefs.getInt("haptic_strength", 100) / 100f
+            rumble.follow = prefs.getString("haptic_follow", "beat") ?: "beat"
             beatAnalyzer.energy.collect { e ->
                 if (_state.value.rumbleEnabled && _state.value.isPlaying) rumble.onEnergy(e)
             }
@@ -262,9 +272,27 @@ class PlayerViewModel @Inject constructor(
         _state.update { it.copy(rumbleEnabled = next) }
         if (!next) rumble.stop()
         toast(if (next) {
-            if (rumble.hasGamepadRumble()) "Controller rumble on" else "Rumble on (no controller detected)"
-        } else "Controller rumble off")
+            if (rumble.hasGamepadRumble()) "Haptics on" else "Haptics on (using phone/device vibration)"
+        } else "Haptics off")
     }
+
+    /** Haptic strength 0..200% (slider/stepper in Settings). */
+    fun setHapticStrength(pct: Int) {
+        val v = pct.coerceIn(0, 200)
+        prefs.edit { putInt("haptic_strength", v) }
+        rumble.strength = v / 100f
+        _state.update { it.copy(hapticStrength = v) }
+    }
+
+    /** What the rumble tracks: "beat" or "drums". */
+    fun setHapticFollow(mode: String) {
+        prefs.edit { putString("haptic_follow", mode) }
+        rumble.follow = mode
+        _state.update { it.copy(hapticFollow = mode) }
+    }
+
+    /** Fire one test pulse ("kick"/"snare"/"note"/"drop") at the current strength. */
+    fun testHaptic(kind: String) = rumble.test(kind)
 
     private fun hasMUT() = mutPrefs.hasMUT()
     private fun isStandalone() = !serverPrefs.hasPcServer()
@@ -914,6 +942,8 @@ class PlayerViewModel @Inject constructor(
             showNowPlayingInfo = prefs.getBoolean("np_info", true),
             motionArtworkEnabled = prefs.getBoolean("motion_art", false),
             rumbleEnabled = prefs.getBoolean("rumble_bass", false),
+            hapticStrength = prefs.getInt("haptic_strength", 100),
+            hapticFollow = prefs.getString("haptic_follow", "beat") ?: "beat",
             beatIntensity = prefs.getFloat(intensityKey(initBg), 1.0f),
             orbSpeed = prefs.getFloat("orb_speed", 1.0f),
             lyricsScale = prefs.getFloat("lyrics_scale", 1.0f),
@@ -1131,7 +1161,7 @@ class PlayerViewModel @Inject constructor(
             val motionArt = prefs.getBoolean("motion_art", false)
             com.applemusicktv.media.GainProcessor.enabled = prefs.getBoolean("volume_leveling", false)
             _state.update { it.copy(currentSong = song, song = song, queue = queue, userQueue = userQueue, queueIndex = idx, isFullStream = full, beatIntensity = beat, crossfadeEnabled = crossfade, screensaverTimeoutMin = screensaverMin, backgroundPlayEnabled = bgPlay, nowPlayingBackground = npBg, screensaverKeepBackground = keepBg, showNowPlayingInfo = npInfo, motionArtworkEnabled = motionArt,
-                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), progressMs = posMs) }
+                orbSpeed = prefs.getFloat("orb_speed", 1.0f), lyricsScale = prefs.getFloat("lyrics_scale", 1.0f), artworkRounded = prefs.getBoolean("artwork_rounded", true), reduceMotion = prefs.getBoolean("reduce_motion", false), lowPowerMode = prefs.getBoolean("low_power", false), quitOnExit = prefs.getBoolean("quit_on_exit", false), volumeLeveling = prefs.getBoolean("volume_leveling", false), isShuffled = prefs.getBoolean("shuffle_on", false), repeatMode = repeatFromPrefs(), translateLyrics = prefs.getBoolean("translate_lyrics", false), translateLang = translateLang, translateNonLatinOnly = prefs.getBoolean("translate_non_latin", false), showLyricsCredits = prefs.getBoolean("lyrics_credits_shown", true), lyricsRomanize = prefs.getBoolean("lyrics_romanize", false), autoScrollUnsynced = prefs.getBoolean("auto_scroll_unsynced", true), progressMs = posMs) }
             // A restored music video must go to the video player, NOT the audio stream — otherwise
             // it hits /api/stream, 404s ("No playable asset"), and gets skipped as if unavailable.
             if (song.isMusicVideo) {
@@ -2357,6 +2387,11 @@ class PlayerViewModel @Inject constructor(
     /** Show/hide on-device pronunciation (romaji/pinyin) under the lyrics (Settings). Turning it on
      *  fetches the downloadable Japanese (Kuromoji) dictionary pack if it isn't already present, so
      *  kanji readings work; Chinese/Korean/etc. don't need a download. */
+    fun setAutoScrollUnsynced(on: Boolean) {
+        _state.update { it.copy(autoScrollUnsynced = on) }
+        prefs.edit { putBoolean("auto_scroll_unsynced", on) }
+    }
+
     fun toggleLyricsRomanize() {
         val on = !_state.value.lyricsRomanize
         _state.update { it.copy(lyricsRomanize = on) }

@@ -15,9 +15,12 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.geometry.Offset
@@ -710,6 +713,7 @@ fun NowPlayingScreen(
                                 translateNonLatinOnly = state.translateNonLatinOnly,
                                 romanizeReloadKey = state.jaPackDownloading,
                                 durationMs = state.currentSong?.durationMs ?: 0L,
+                                autoScrollUnsynced = state.autoScrollUnsynced,
                             )
                         }
                     } else if (state.lyricsLoaded) {
@@ -992,6 +996,9 @@ private fun PlayerProgressBar(
     }
     val scrubProgress = (scrubMs.toFloat() / duration).coerceIn(0f, 1f)
     val noBorder = Border(BorderStroke(0.dp, Color.Transparent))
+    // Touch: tap anywhere on the bar to seek to that fraction of the track (D-pad scrub below is
+    // untouched). Captured width maps the tap x → position.
+    var barWidthPx by remember { mutableIntStateOf(0) }
     Surface(
         onClick = { if (seekBarFocused) { player.seekTo(scrubMs); runCatching { playFocus.requestFocus() } } },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
@@ -999,6 +1006,17 @@ private fun PlayerProgressBar(
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         border = ClickableSurfaceDefaults.border(border = noBorder, focusedBorder = noBorder),
         modifier = Modifier.fillMaxWidth()
+            .onSizeChanged { barWidthPx = it.width }
+            .pointerInput(duration, barWidthPx) {
+                detectTapGestures { pos ->
+                    if (barWidthPx > 0) {
+                        val frac = (pos.x / barWidthPx).coerceIn(0f, 1f)
+                        val target = (frac * duration).toLong()
+                        scrubMs = target
+                        player.seekTo(target)
+                    }
+                }
+            }
             .onFocusChanged { seekBarFocused = it.isFocused }
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
@@ -2117,17 +2135,14 @@ private fun LyricLineRow(
             clip = false
         }
     ) {
-        Surface(
+        com.applemusicktv.ui.components.AmClickBox(
             onClick = onSeek,
             modifier = Modifier.fillMaxWidth()
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .then(if (onFocused != null) Modifier.onFocusChanged { if (it.isFocused) onFocused() } else Modifier),
-            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = Color.Transparent,
-                focusedContainerColor = Color(0x1AFFFFFF),
-            ),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+            shape = RoundedCornerShape(8.dp),
+            containerColor = Color.Transparent,
+            focusedColor = Color(0x1AFFFFFF),
         ) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 if (isActive && line.words.isNotEmpty()) {
@@ -2233,11 +2248,11 @@ private fun QueuePanel(
                 }
                 items(userQueue.size, key = { "uq_${userQueue[it].id}_$it" }) { idx ->
                     val song = userQueue[idx]
-                    Surface(
+                    com.applemusicktv.ui.components.AmClickBox(
                         onClick = { onSelectUserQueue(idx) },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x15FA233B), focusedContainerColor = Color(0x25FA233B)),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+                        shape = RoundedCornerShape(6.dp),
+                        containerColor = Color(0x15FA233B), focusedColor = Color(0x25FA233B),
+                        focusedScale = 1.02f,
                         modifier = Modifier.fillMaxWidth().let { m ->
                             if (leftFocus != null) m.focusProperties { left = leftFocus } else m
                         },
@@ -2285,15 +2300,13 @@ private fun QueuePanel(
                         else -> false
                     }
                 } else Modifier
-                Surface(
+                com.applemusicktv.ui.components.AmClickBox(
                     onClick = { if (movingIndex == idx) movingIndex = null else onSelect(idx) },
                     onLongClick = { movingIndex = idx },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor        = when { isMoving -> Color(0x44FA233B); isCurrent -> Color(0x26FFFFFF); else -> Color.Transparent },
-                        focusedContainerColor = if (isMoving) Color(0x55FA233B) else Color(0x33FFFFFF),
-                    ),
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+                    shape = RoundedCornerShape(6.dp),
+                    containerColor = when { isMoving -> Color(0x44FA233B); isCurrent -> Color(0x26FFFFFF); else -> Color.Transparent },
+                    focusedColor = if (isMoving) Color(0x55FA233B) else Color(0x33FFFFFF),
+                    focusedScale = 1.02f,
                     modifier = Modifier.fillMaxWidth().then(movingMod).let { m ->
                         if (leftFocus != null) m.focusProperties { left = leftFocus } else m
                     },
